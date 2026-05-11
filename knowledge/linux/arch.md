@@ -1,8 +1,6 @@
 # Arch Linux Technical Reference
 
 ## Core philosophy
-- **Rolling release**: no partial upgrades; always suggest a full sync (`-Syu`).
-- **KISS**: prefer vanilla upstream packages over heavily patched ones.
 - Prefer actionable answers over theoretical explanations.
 
 ## Package management
@@ -17,8 +15,8 @@
 - Package: `docker`
 - Service: `docker.service`
 - Socket: `/var/run/docker.sock`
-- User group: `docker` (for non-root access; security tradeoff — group members effectively have root)
-- Compose: `docker-compose` (standalone v2)
+- User group: `docker`
+- Compose: `docker-compose`
 
 ## System diagnostics
 - Errors current boot: `journalctl -p 3 -xb`
@@ -28,6 +26,3 @@
 
 ## Btrfs essentials
 - List subvolumes: `sudo btrfs subvolume list /`
-- Snapshot: `sudo btrfs subvolume snapshot <src> <dst>`
-- Common snapshot manager: `snapper` or `timeshift` (BTRFS mode).
-- Before destructive ops, check for an existing snapshot as a recovery point.

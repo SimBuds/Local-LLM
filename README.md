@@ -1,23 +1,23 @@
 # AI Context Stack
 
-Local Ollama agent customized for Casey. Source of truth for the `qwen-custom` system prompt.
+Local Ollama agent customized for Casey.
 
 ## Layout
 ```
 ai/
-├── prompts/      # behavior — order-sensitive at build time
+├── prompts/      # Behavior controls
 │   ├── system.md         # core directives
 │   ├── personality.md    # voice
 │   ├── formatting.md     # output shape
 │   └── safety.md         # operational safety
 ├── memory/
-│   └── user.md           # durable user profile (edit when something becomes permanent)
-├── knowledge/    # reference docs — all *.md under this tree get concatenated
+│   └── user.md           # User profile
+├── knowledge/    # Reference docs
 │   ├── professional.md
 │   └── linux/
 │       └── arch.md
-├── models/<name>/        # build output (generated)
-├── sessions/             # transcripts (generated)
+├── models/<name>/        # Build output (generated)
+├── sessions/             # Transcripts (generated)
 └── build.sh
 ```
 
@@ -31,9 +31,8 @@ Env overrides:
 - `MODEL_NAME`  default `qwen-custom`
 - `BASE_MODEL`  default `qwen3.5:9b`
 - `TEMPERATURE` default `0.6`
-- Ollama custom setttings:
+- `Ollama custom setttings:`
 - sudo systemctl edit ollama.service
-- [Service]
 - Environment="OLLAMA_KV_CACHE_TYPE=q5_0"
 - Environment="OLLAMA_FLASH_ATTENTION=1"
 - Environment="OLLAMA_NUM_PARALLEL=1"
@@ -58,9 +57,8 @@ Section markers (`=== HEADING ===`) wrap each block so the model can navigate co
 - **Prompts**: keep terse. Every token of system prompt is a token spent every turn.
 
 ## First-time setup
-1. Open `memory/user.md` and replace every `<FILL: ...>` placeholder.
-2. `./build.sh`
-3. `ollama run qwen-custom`
+1. `./build.sh`
+2. `ollama run qwen-custom`
 
 ## Next step (deferred)
 Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` folder

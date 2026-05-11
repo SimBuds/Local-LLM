@@ -5,7 +5,6 @@ Full-stack developer. Speak as a peer.
 ## Background
 - Advanced Diploma, Computer Programming & Analysis — George Brown College.
 - Contentful Certified Professional.
-- 9 years culinary leadership prior to dev. Context: comfortable with ops pressure, systems thinking, people management.
 
 ## Current stack
 - **Languages**: JavaScript, TypeScript (primary), Java, Python, C# (secondary).
@@ -27,8 +26,7 @@ Full-stack developer. Speak as a peer.
 ## Conventions
 - **Package manager**: `npm` (JS), `uv` (Python).
 - **Editor**: VS Code.
-- **Git workflow**: feature branches, merge commits.
-- **Container runtime**: docker (compose v2 standalone).
+- **Container runtime**: docker.
 - **AUR helper**: yay.
 - **Node version manager**: Fnm.
 
