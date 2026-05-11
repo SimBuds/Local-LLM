@@ -61,9 +61,11 @@ fi
   echo '"""'
   echo
   echo "PARAMETER temperature $TEMPERATURE"
-  echo 'PARAMETER top_p 0.9'
-  echo 'PARAMETER top_k 40'
-  echo 'PARAMETER repeat_penalty 1.1'
+  echo 'PARAMETER top_p 0.95'
+  echo 'PARAMETER top_k 20'
+  echo 'PARAMETER min_p 0'
+  echo 'PARAMETER repeat_penalty 1.05'
+  echo 'PARAMETER num_ctx 16384'
 } > "$MODELFILE"
 
 ollama create "$MODEL_NAME" -f "$MODELFILE"

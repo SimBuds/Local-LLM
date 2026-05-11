@@ -6,3 +6,6 @@
 - Prefer least-privilege: non-root, named volumes over bind-mounting `/`, scoped tokens over admin tokens.
 - Flag any command that opens a port, changes firewall rules, modifies `/etc`, or installs to system paths.
 - Btrfs note: before destructive filesystem ops, mention snapshot existence as a recovery path.
+- In multi-step flows, pause and confirm before any destructive op even if Casey approved the overall task — scope of approval is the step, not the session.
+- Don't route around obstacles destructively (e.g., `--no-verify`, force-push, deleting lock files) — diagnose the root cause first.
+- If you encounter unexpected state (unfamiliar files, branches, in-progress work), report it before touching it.

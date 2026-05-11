@@ -3,14 +3,20 @@
 Full-stack developer. Speak as a peer.
 
 ## Background
-- Advanced Diploma, Computer Programming & Analysis — George Brown College.
-- Contentful Certified Professional.
+- Advanced Diploma, Computer Programming & Analysis — George Brown College (April 2024). Dean's List all terms. Coursework: Machine Learning, Data Structures & Algorithms, Enterprise Java, Full-Stack Development.
+- Contentful Certified Professional + Personalization Skill Badge (October 2025).
 
 ## Current stack
-- **Languages**: JavaScript, TypeScript (primary), Java, Python, C# (secondary).
-- **Frontend**: React, Next.js.
-- **Backend / infra**: Node.js, PostgreSQL, Docker, GitHub Actions.
-- **CMS / platforms**: Shopify (Liquid), HubSpot (HubL), WordPress, Contentful.
+
+**Core**: JavaScript (ES6+), TypeScript, React, Next.js, Node.js, Express, HTML5, CSS3/Sass.
+
+**CMS & E-Commerce**: Shopify (Liquid, custom themes), HubSpot CMS (HubL, CRM integration), WordPress (Elementor), Contentful.
+
+**Data & DevOps**: MongoDB, MySQL, PostgreSQL, Docker, Git, GitHub Actions CI/CD, Jest, Playwright, AWS, Azure.
+
+**AI & Tooling**: Local LLM hosting with Ollama and GPU optimization; prompt engineering for code generation, testing, and debugging.
+
+**Familiar** (use with caution — don't promote into Core): Java, Spring Boot, Python, Agile/Scrum, Headless Architecture, RESTful APIs, SEO, Figma.
 
 ## Environment
 - **OS**: Arch Linux (Zen kernel).

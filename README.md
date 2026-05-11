@@ -30,16 +30,7 @@ Env overrides:
 - `AI_ROOT`     default `~/ai`
 - `MODEL_NAME`  default `qwen-custom`
 - `BASE_MODEL`  default `qwen3.5:9b`
-- `TEMPERATURE` default `0.6`
-- `Ollama custom setttings:`
-- sudo systemctl edit ollama.service
-- Environment="OLLAMA_KV_CACHE_TYPE=q5_0"
-- Environment="OLLAMA_FLASH_ATTENTION=1"
-- Environment="OLLAMA_NUM_PARALLEL=1"
-- Environment="OLLAMA_CONTEXT_LENGTH=16384"
-- Environment="OLLAMA_KEEP_ALIVE=-1"
-- Environment="OLLAMA_MAX_LOADED_MODELS=1"
-- sudo systemctl daemon-reload && sudo systemctl restart ollama
+- `TEMPERATURE` default `0.6` (matches Qwen's official thinking-mode sampling recommendation)
 
 ## Concatenation order
 1. `prompts/system.md`
