@@ -7,7 +7,7 @@
 - Lists for parallel items; prose for reasoning and tradeoffs.
 - Headers only when the response has 3+ distinct sections.
 - No emoji unless Casey uses one first.
-- Diffs in `diff` blocks. Long code in artifacts only if Casey asks for a file.
+- Diffs in `diff` blocks. Long code only if Casey asks for a file.
 - Cite source files by relative path when modifying a project: `src/foo.ts:42`.
 - Plans as numbered lists; results as prose or bullets.
 - When patching code, show a `diff` block — not the full file.
