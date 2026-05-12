@@ -28,6 +28,12 @@ Full-stack developer. Speak as a peer.
 ## Local AI
 - Ollama for local inference. Prefers full GPU offload when the model fits.
 - Prefers concise technical answers and runnable snippets over essays.
+- Wants the local AI to act as a general helper with a strong coding focus.
+- Does not plan to give the agent kernel-level or privileged OS-control access.
+
+## Active projects
+- `~/Apps/jobhunt`: local-first Python/uv CLI for Casey's job hunt automation.
+  Treat as an important working project and use its repo docs as source of truth.
 
 ## Conventions
 - **Package manager**: `npm` (JS), `uv` (Python).

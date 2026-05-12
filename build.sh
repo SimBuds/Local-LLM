@@ -74,4 +74,4 @@ echo
 echo "✓ Built $MODEL_NAME from $BASE_MODEL"
 echo "  System prompt: $(wc -l < "$SYSTEM_FILE") lines, $(wc -w < "$SYSTEM_FILE") words"
 echo "  Modelfile:     $MODELFILE"
-echo "  Run:           ollama run $MODEL_NAME"
+echo "  Run:           ollama run --think false $MODEL_NAME"

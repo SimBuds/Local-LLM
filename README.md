@@ -1,25 +1,42 @@
 # AI Context Stack
 
-Local Ollama agent customized for Casey.
+Local Ollama agent structure for customizing `qwen3.5:9b` with layered prompts,
+personal memory, and project knowledge.
 
-## Layout
+The goal is to keep the model customization transparent: edit plain Markdown
+source files, run one build script, and let Ollama create a local model from the
+generated `Modelfile`.
+
+## Structure
 ```
 ai/
-├── prompts/      # Behavior controls
-│   ├── system.md         # core directives
-│   ├── personality.md    # voice
-│   ├── formatting.md     # output shape
-│   └── safety.md         # operational safety
-├── memory/
-│   └── user.md           # User profile
-├── knowledge/    # Reference docs
+├── prompts/              # Source: durable behavior controls
+│   ├── system.md         # Core directives and agent rules
+│   ├── personality.md    # Voice and interaction style
+│   ├── formatting.md     # Output conventions
+│   └── safety.md         # Operational safety rules
+├── memory/               # Source: durable user profile and preferences
+│   └── user.md
+├── knowledge/            # Source: reusable reference context
 │   ├── professional.md
+│   ├── projects/
+│   │   └── jobhunt.md
 │   └── linux/
 │       └── arch.md
-├── models/<name>/        # Build output (generated)
-├── sessions/             # Transcripts (generated)
+├── models/<name>/        # Generated: system.txt and Modelfile
+├── sessions/             # Future/generated: transcripts or run logs
 └── build.sh
 ```
+
+## Layer Responsibilities
+
+- `prompts/`: controls how the agent behaves. Keep these short and durable.
+- `memory/`: controls what the agent knows about Casey. Store stable preferences
+  and profile facts here, not one-off conversation details.
+- `knowledge/`: controls reusable domain context. Add files here when the same
+  technical reference would otherwise be repeated across conversations.
+- `models/`: generated build output. Do not hand-edit unless debugging a build.
+- `sessions/`: reserved for generated transcripts or runner logs.
 
 ## Build
 ```bash
@@ -32,7 +49,13 @@ Env overrides:
 - `BASE_MODEL`  default `qwen3.5:9b`
 - `TEMPERATURE` default `0.6` (matches Qwen's official thinking-mode sampling recommendation)
 
-## Concatenation order
+`build.sh` creates:
+
+- `models/<MODEL_NAME>/system.txt`
+- `models/<MODEL_NAME>/Modelfile`
+- an Ollama model named by `MODEL_NAME`
+
+## Prompt Assembly Order
 1. `prompts/system.md`
 2. `prompts/personality.md`
 3. `prompts/formatting.md`
@@ -42,15 +65,60 @@ Env overrides:
 
 Section markers (`=== HEADING ===`) wrap each block so the model can navigate context.
 
+## First-Time Setup
+```bash
+./build.sh
+ollama run --think false qwen-custom
+```
+
+## Editing Workflow
+
+1. Edit the relevant source file in `prompts/`, `memory/`, or `knowledge/`.
+2. Run `./build.sh`.
+3. Start a fresh model session with `ollama run --think false qwen-custom`.
+4. If behavior is wrong, adjust the smallest responsible layer and rebuild.
+
+Use this order when deciding where a change belongs:
+
+- Behavior rule? Put it in `prompts/`.
+- Stable fact about Casey? Put it in `memory/user.md`.
+- Reusable technical reference? Put it in `knowledge/`.
+- Temporary context? Keep it out of the build.
+
 ## Maintenance
 - **Memory**: update when a preference becomes permanent. One-off facts don't belong here.
 - **Knowledge**: add a file when you've explained the same technical context twice.
 - **Prompts**: keep terse. Every token of system prompt is a token spent every turn.
 
-## First-time setup
-1. `./build.sh`
-2. `ollama run qwen-custom`
+## Model Notes
 
-## Next step (deferred)
+The baseline is `qwen3.5:9b`, configured through Ollama parameters in the
+generated `Modelfile`. This repo does not fine-tune weights; it customizes the
+model through the system prompt and reference context.
+
+The current defaults are tuned for a concise technical assistant:
+
+- `temperature 0.6`
+- `top_p 0.95`
+- `top_k 20`
+- `repeat_penalty 1.05`
+- `num_ctx 16384`
+
+## Next Step: Tools
 Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` folder
 with a runner that wraps the Ollama native API. Out of scope for the baseline.
+
+## Thinking Mode
+
+Ollama exposes Qwen thinking mode as a runtime option, not a Modelfile
+parameter. Use this for normal interactive sessions:
+
+```bash
+ollama run --think false qwen-custom
+```
+
+If you want reasoning enabled but hidden in the terminal, use:
+
+```bash
+ollama run --hidethinking qwen-custom
+```
