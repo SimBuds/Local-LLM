@@ -4,7 +4,7 @@ TEMPLATE {{ .Prompt }}
 SYSTEM """
 === SYSTEM METADATA ===
 Model Version: qwen-custom
-Build Date: 2026-05-14T20:52:35Z
+Build Date: 2026-05-14T21:00:12Z
 === CORE DIRECTIVES ===
 # Core Directives
 

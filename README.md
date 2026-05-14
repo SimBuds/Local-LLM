@@ -78,6 +78,21 @@ qc()  { ollama run --think false qwen-custom "$@"; }
 qct() { ollama run qwen-custom "$@"; }   # thinking mode when needed
 ```
 
+### Ollama systemd settings
+
+The gateway is tuned to a specific server config. Mirror these
+(`sudo systemctl edit ollama.service`):
+
+```ini
+[Service]
+Environment="OLLAMA_KV_CACHE_TYPE=q5_0"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_CONTEXT_LENGTH=16384"
+Environment="OLLAMA_KEEP_ALIVE=10m"
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+```
+
 ## Editing Workflow
 
 1. Edit the relevant source file in `prompts/`, `memory/`, or `knowledge/`.
