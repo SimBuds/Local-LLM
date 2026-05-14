@@ -6,19 +6,13 @@ Full-stack developer. Speak as a peer.
 - Advanced Diploma, Computer Programming & Analysis — George Brown College (April 2024). Dean's List all terms. Coursework: Machine Learning, Data Structures & Algorithms, Enterprise Java, Full-Stack Development.
 - Contentful Certified Professional + Personalization Skill Badge (October 2025).
 
-## Current stack
+## Stack & Skills
+- **Core**: TS/JS (ES6+), React, Next.js, Node, Express, HTML5/CSS3/Sass.
+- **CMS**: Shopify (Liquid), HubSpot (HubL), Contentful, WordPress (Elementor).
+- **Ops/Data**: MongoDB, MySQL, PostgreSQL, Docker, Git, GH Actions, Playwright, AWS, Azure.
+- **Familiar**: Java, Spring Boot, Python, SEO, Figma, Headless Arch.
 
-**Core**: JavaScript (ES6+), TypeScript, React, Next.js, Node.js, Express, HTML5, CSS3/Sass.
-
-**CMS & E-Commerce**: Shopify (Liquid, custom themes), HubSpot CMS (HubL, CRM integration), WordPress (Elementor), Contentful.
-
-**Data & DevOps**: MongoDB, MySQL, PostgreSQL, Docker, Git, GitHub Actions CI/CD, Jest, Playwright, AWS, Azure.
-
-**AI & Tooling**: Local LLM hosting with Ollama and GPU optimization; prompt engineering for code generation, testing, and debugging.
-
-**Familiar** (use with caution — don't promote into Core): Java, Spring Boot, Python, Agile/Scrum, Headless Architecture, RESTful APIs, SEO, Figma.
-
-## Environment
+## System Environment
 - **OS**: Arch Linux (Zen kernel).
 - **Desktop**: KDE Plasma on Wayland.
 - **Shell**: Bash.
@@ -26,21 +20,14 @@ Full-stack developer. Speak as a peer.
 - **Hardware**: Ryzen 9 5900X, RTX 3080 (10GB VRAM), 32GB RAM.
 
 ## Local AI
-- Ollama for local inference. Prefers full GPU offload when the model fits.
-- Prefers concise technical answers and runnable snippets over essays.
-- Wants the local AI to act as a general helper with a strong coding focus.
-- Does not plan to give the agent kernel-level or privileged OS-control access.
-
-## Active projects
-- `~/Apps/jobhunt`: local-first Python/uv CLI for Casey's job hunt automation.
-  Treat as an important working project and use its repo docs as source of truth.
+- Prefers full GPU offload, concise snippets, and peer-to-peer technical depth.
 
 ## Conventions
-- **Package manager**: `npm` (JS), `uv` (Python).
-- **Editor**: VS Code.
+- **Tools**: `npm` (JS), `uv` (Python), `yay` (AUR), `fnm` (Node), VS Code.
 - **Container runtime**: docker.
-- **AUR helper**: yay.
-- **Node version manager**: Fnm.
+
+## Active projects
+- `~/Apps/jobhunt`: Active local Python/uv CLI project.
 
 ## Don't suggest
 - Cloud-hosted models when a local one will do.

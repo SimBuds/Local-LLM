@@ -47,7 +47,6 @@ Env overrides:
 - `AI_ROOT`     default `~/ai`
 - `MODEL_NAME`  default `qwen-custom`
 - `BASE_MODEL`  default `qwen3.5:9b`
-- `TEMPERATURE` default `0.6` (matches Qwen's official thinking-mode sampling recommendation)
 
 `build.sh` creates:
 
@@ -69,6 +68,14 @@ Section markers (`=== HEADING ===`) wrap each block so the model can navigate co
 ```bash
 ./build.sh
 ollama run --think false qwen-custom
+```
+
+Recommended shell helpers (add to `~/.bashrc`) so `--think false` is the default
+and thinking mode is an explicit opt-in:
+
+```bash
+qc()  { ollama run --think false qwen-custom "$@"; }
+qct() { ollama run qwen-custom "$@"; }   # thinking mode when needed
 ```
 
 ## Editing Workflow
@@ -101,7 +108,9 @@ The current defaults are tuned for a concise technical assistant:
 - `temperature 0.6`
 - `top_p 0.95`
 - `top_k 20`
-- `repeat_penalty 1.05`
+- `repeat_penalty 1.15`
+- `repeat_last_n 256`
+- `num_predict 2048`
 - `num_ctx 16384`
 
 ## Next Step: Tools
@@ -122,3 +131,11 @@ If you want reasoning enabled but hidden in the terminal, use:
 ```bash
 ollama run --hidethinking qwen-custom
 ```
+
+### When to use which
+
+Thinking mode is calibrated for problem-solving, not chitchat. Use `qc` for
+greetings, acknowledgments, and short factual questions. Use `qct` when you
+want the model to deliberate — code architecture, debugging, design tradeoffs.
+Asking `qct` to handle a greeting will produce long, looping thinking traces;
+that is the model's design, not a bug to fix in the prompt.

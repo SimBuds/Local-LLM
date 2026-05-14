@@ -5,7 +5,6 @@ set -euo pipefail
 AI_ROOT="${AI_ROOT:-$HOME/ai}"
 MODEL_NAME="${MODEL_NAME:-qwen-custom}"
 BASE_MODEL="${BASE_MODEL:-qwen3.5:9b}"
-TEMPERATURE="${TEMPERATURE:-0.6}"
 # ---------------------------------------------------------------------------
 
 OUT_DIR="$AI_ROOT/models/$MODEL_NAME"
@@ -16,6 +15,9 @@ mkdir -p "$OUT_DIR"
 
 # Build the system prompt with section markers so the model can navigate it.
 {
+  echo "=== SYSTEM METADATA ==="
+  echo "Model Version: $MODEL_NAME"
+  echo "Build Date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo "=== CORE DIRECTIVES ==="
   cat "$AI_ROOT/prompts/system.md"
   echo
@@ -35,12 +37,14 @@ mkdir -p "$OUT_DIR"
   if [ -d "$AI_ROOT/knowledge" ]; then
     echo "=== REFERENCE KNOWLEDGE ==="
     # Recursive, sorted, nul-safe. Each file is preceded by a path marker.
-    find "$AI_ROOT/knowledge" -type f -name '*.md' -print0 \
+    # Added size check to prevent accidental inclusion of huge files.
+    find "$AI_ROOT/knowledge" -type f -name '*.md' -size -100k -print0 \
       | sort -z \
       | while IFS= read -r -d '' f; do
           rel="${f#"$AI_ROOT/"}"
-          echo "--- $rel ---"
+          echo "--- START FILE: $rel ---"
           cat "$f"
+          echo "--- END FILE: $rel ---"
           echo
         done
   fi
@@ -60,11 +64,13 @@ fi
   cat "$SYSTEM_FILE"
   echo '"""'
   echo
-  echo "PARAMETER temperature $TEMPERATURE"
+  echo 'PARAMETER temperature 0.6'
   echo 'PARAMETER top_p 0.95'
   echo 'PARAMETER top_k 20'
   echo 'PARAMETER min_p 0'
-  echo 'PARAMETER repeat_penalty 1.05'
+  echo 'PARAMETER repeat_penalty 1.15'
+  echo 'PARAMETER repeat_last_n 256'
+  echo 'PARAMETER num_predict 2048'
   echo 'PARAMETER num_ctx 16384'
 } > "$MODELFILE"
 
@@ -74,4 +80,4 @@ echo
 echo "✓ Built $MODEL_NAME from $BASE_MODEL"
 echo "  System prompt: $(wc -l < "$SYSTEM_FILE") lines, $(wc -w < "$SYSTEM_FILE") words"
 echo "  Modelfile:     $MODELFILE"
-echo "  Run:           ollama run --think false $MODEL_NAME"
+echo "  Run:           qc   (or: ollama run --think false $MODEL_NAME)"
