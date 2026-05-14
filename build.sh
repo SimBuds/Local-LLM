@@ -70,7 +70,6 @@ fi
   echo 'PARAMETER repeat_last_n 256'
   echo 'PARAMETER top_p 0.95'
   echo 'PARAMETER min_p 0'
-  echo 'PARAMETER num_ctx 16384'
   echo 'PARAMETER temperature 0.6'
   echo 'PARAMETER top_k 20'
 } > "$MODELFILE"
