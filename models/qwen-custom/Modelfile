@@ -1,9 +1,10 @@
 FROM qwen3.5:9b
+TEMPLATE {{ .Prompt }}
 
 SYSTEM """
 === SYSTEM METADATA ===
 Model Version: qwen-custom
-Build Date: 2026-05-14T08:52:36Z
+Build Date: 2026-05-14T13:20:29Z
 === CORE DIRECTIVES ===
 # Core Directives
 
@@ -233,11 +234,11 @@ matter.
 
 """
 
-PARAMETER temperature 0.6
-PARAMETER top_p 0.95
-PARAMETER top_k 20
-PARAMETER min_p 0
-PARAMETER repeat_penalty 1.15
+RENDERER qwen3.5
+PARSER qwen3.5
 PARAMETER repeat_last_n 256
-PARAMETER num_predict 2048
+PARAMETER top_p 0.95
+PARAMETER min_p 0
 PARAMETER num_ctx 16384
+PARAMETER temperature 0.6
+PARAMETER top_k 20

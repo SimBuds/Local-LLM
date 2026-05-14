@@ -59,19 +59,20 @@ fi
 # Write the Modelfile. No bash expansion of the prompt body — we just cat it.
 {
   echo "FROM $BASE_MODEL"
+  echo 'TEMPLATE {{ .Prompt }}'
   echo
   echo 'SYSTEM """'
   cat "$SYSTEM_FILE"
   echo '"""'
   echo
-  echo 'PARAMETER temperature 0.6'
-  echo 'PARAMETER top_p 0.95'
-  echo 'PARAMETER top_k 20'
-  echo 'PARAMETER min_p 0'
-  echo 'PARAMETER repeat_penalty 1.15'
+  echo 'RENDERER qwen3.5'
+  echo 'PARSER qwen3.5'
   echo 'PARAMETER repeat_last_n 256'
-  echo 'PARAMETER num_predict 2048'
+  echo 'PARAMETER top_p 0.95'
+  echo 'PARAMETER min_p 0'
   echo 'PARAMETER num_ctx 16384'
+  echo 'PARAMETER temperature 0.6'
+  echo 'PARAMETER top_k 20'
 } > "$MODELFILE"
 
 ollama create "$MODEL_NAME" -f "$MODELFILE"
