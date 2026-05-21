@@ -1,60 +1,56 @@
-# Jobhunt Project Reference
+# Jobhunt project reference
 
-Casey's `~/Apps/jobhunt` repo is an active local-first CLI for job search
-automation. Use this reference when helping with that project, but prefer the
-repo's own `README.md`, `CLAUDE.md`, `PLAN.md`, and tests when specific details
-matter.
+`~/Apps/jobhunt` — local-first Python/uv CLI for personal job-search
+automation. Authoritative docs live in the repo (`README.md`, `AGENTS.md`,
+`PLAN.md`); defer to them for anything not on this page.
 
-## Purpose
+## What it does
 
-- Pull jobs from public ATS APIs and selected public sources.
-- Scope results to the GTA plus Remote-Canada postings.
-- Score jobs against Casey's parsed baseline resume using local Ollama models.
-- Draft tailored resumes and cover letters.
-- Assist with browser autofill through Playwright.
-- Keep Casey in the loop: the tool fills forms but never submits applications.
+Pulls jobs from public ATS APIs (Greenhouse, Lever, Ashby, SmartRecruiters,
+Adzuna CA, Job Bank RSS), scores them against Casey's verified profile,
+tailors resume + cover via local Ollama, and assists Playwright autofill.
+**Casey submits — never the bot.**
 
-## Non-goals
+## Stack non-negotiables
 
-- No LinkedIn, Indeed, or Glassdoor scraping.
-- No bot-submitted applications.
-- No auto-account creation on employer sites.
-- No stored employer credentials.
-- No cloud LLM calls in the runtime path.
+- Python 3.12+, `uv` only (never `pip` / `poetry`).
+- `typer` CLI, `httpx`, `pydantic` v2, stdlib `sqlite3` + plain SQL
+  migrations (no ORM), `playwright`, `pytest` + `pytest-asyncio`,
+  `ruff` + `mypy --strict`.
+- LLM runtime is **local Ollama only** (`qwen-custom:latest` /
+  `qwen3.5:9b`). No cloud LLMs at runtime, ever.
+- All LLM calls go through `jobhunt.gateway` with JSON-schema enforcement.
 
-## Stack
+## Hard rules — refuse if asked to violate
 
-- Python 3.12+
-- `uv` for dependency management
-- Typer CLI
-- httpx for async HTTP
-- Pydantic v2
-- SQLite with plain SQL migrations; no ORM
-- Playwright for browser automation
-- pytest, pytest-asyncio, ruff, and mypy strict
-- Local Ollama at `http://localhost:11434`
+- No LinkedIn, Indeed, or Glassdoor scraping. Public ATS APIs only.
+- Never auto-submit applications.
+- Never auto-create employer accounts.
+- Respect `robots.txt` for non-API HTTP fetches.
+- No ORM. No web framework. No cloud LLM in runtime.
+- No bypassing the gateway for LLM calls.
+- Do not commit anything in `data/`, `~/.config/jobhunt/`, or `*.secret.*`.
 
-## Commands
+## User-facing commands (9)
 
-- `jobhunt convert-resume`: parse the baseline resume into `kb/profile/`.
-- `jobhunt scan`: ingest and score jobs.
-- `jobhunt apply <job-id>`: tailor docs and autofill; Casey submits manually.
-- `jobhunt apply --top N`: pick top unapplied jobs, capped at 10.
-- `jobhunt apply --best`: interactive pick from top candidates.
-- `jobhunt apply --url <URL>`: one-off manual job URL flow.
-- `jobhunt list`: pipeline view and weekly tracking.
+`convert-resume`, `scan`, `apply`, `add`, `answer`, `interview-prep`,
+`list`, `analyze`, `discover slugs`. Hidden: `db`, `config` (except
+`config seed`).
 
-`db` and `config` are setup/internal commands.
+## Profile guard
 
-## Agent Rules For This Repo
+`scan`, `list`, and `apply` call `ensure_profile(cfg)` — exit if
+`kb/profile/verified.json` is missing.
 
-- Use `uv`, not `pip` or Poetry.
-- Inspect relevant files before changing behavior.
-- Keep `cli.py` focused on Typer wiring; place logic in command or domain modules.
-- Use specific project errors from `jobhunt.errors`; avoid bare `Exception`.
-- Keep secrets in `~/.config/jobhunt/secrets.toml` or environment variables.
-- Never commit API keys, resume-private data, or generated secrets.
-- Route LLM calls through `jobhunt.gateway`; do not create direct Ollama clients elsewhere.
-- Keep long prompts in `kb/prompts/`, not inline Python strings.
-- Preserve no-fabrication constraints in resume and cover-letter generation.
-- Keep browser automation human-in-the-loop and never click Submit.
+## Honesty enforcement
+
+`pipeline.tailor._enforce_no_fabrication` rejects any role/employer/date
+divergence from `verified.json`, any unverified skill, and any Familiar
+skill placed in a non-Familiar category. Audit verdicts: `ship` / `revise`
+/ `block`. Adding tailoring capabilities must keep these green.
+
+## When asked jobhunt questions
+
+If the question touches phase numbers, validator internals, scoring
+rubric, or audit logic — defer to `AGENTS.md` in the repo. This page
+covers durable rules, not implementation details.

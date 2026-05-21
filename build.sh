@@ -72,6 +72,7 @@ fi
   echo 'PARAMETER min_p 0'
   echo 'PARAMETER temperature 0.6'
   echo 'PARAMETER top_k 20'
+  echo 'PARAMETER presence_penalty 1.5'
 } > "$MODELFILE"
 
 ollama create "$MODEL_NAME" -f "$MODELFILE"

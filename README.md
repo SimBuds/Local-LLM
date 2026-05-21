@@ -120,13 +120,16 @@ model through the system prompt and reference context.
 
 The current defaults are tuned for a concise technical assistant:
 
-- `temperature 0.6`
-- `top_p 0.95`
-- `top_k 20`
-- `repeat_penalty 1.15`
+- `temperature 0.6` (stock is 1; lowered for technical-assistant determinism)
+- `top_p 0.95` (stock)
+- `top_k 20` (stock)
+- `min_p 0`
 - `repeat_last_n 256`
-- `num_predict 2048`
-- `num_ctx 16384`
+- `presence_penalty 1.5` (stock; curbs repetition)
+
+`num_ctx` is **not** set in the Modelfile — the Ollama server's
+`OLLAMA_CONTEXT_LENGTH=16384` is the sole source of truth, matching the
+jobhunt gateway convention. Override at the server, not per-model.
 
 ## Next Step: Tools
 Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` folder
