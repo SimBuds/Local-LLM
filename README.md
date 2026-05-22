@@ -14,16 +14,21 @@ Three project-agnostic siblings, all built from the same neutral prompt stack
 in `~/Apps/SEO-LLM/prompts/seo/`) are injected at request time by the consuming
 app, not baked into the model.
 
-| Model            | Base            | Builder         | Best for                                              |
-|------------------|-----------------|-----------------|-------------------------------------------------------|
-| `qwen-custom`    | `qwen3.5:9b`    | `./build-qwen`  | Default daily driver: concise technical assistant, code/debug/design. Supports runtime thinking mode (`qct`). |
-| `granite-custom` | `granite4.1:8b` | `./build-granite` | Instruction-following + structured output (JSON, schema.org, FAQ). |
-| `llama-custom`   | `llama3.1:8b`   | `./build-llama` | General long-form prose drafting.                     |
+| Model            | Base            | Best for                                              |
+|------------------|-----------------|-------------------------------------------------------|
+| `qwen-custom`    | `qwen3.5:9b`    | Default daily driver: concise technical assistant, code/debug/design. Supports runtime thinking mode (`qct`). |
+| `granite-custom` | `granite4.1:8b` | Instruction-following + structured output (JSON, schema.org, FAQ). |
+| `llama-custom`   | `llama3.1:8b`   | General long-form prose drafting.                     |
 
-Each builder writes `models/<name>/{system.txt,Modelfile}` and runs
-`ollama create`. The granite and llama builders use higher-temperature sampler
-settings tuned for prose; `qwen-custom`'s defaults are tuned for terse technical
-assistance (see [Model Notes](#model-notes)).
+Each model has its own builder script (`build-qwen`, `build-granite`,
+`build-llama`). The scripts are intentionally mirrored: only the config block
+at the top differs (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`); the
+assembly logic below is byte-identical. To add a new model, copy one of the
+existing scripts and edit the config block. Output goes to
+`models/<name>/{system.txt,Modelfile}` and `ollama create` runs at the end.
+Granite/llama use higher-temperature sampler settings tuned for prose;
+`qwen-custom`'s defaults are tuned for terse technical assistance (see
+[Model Notes](#model-notes)).
 
 ## Structure
 ```
@@ -36,43 +41,42 @@ ai/
 ├── memory/               # Source: durable user profile and preferences
 │   └── user.md
 ├── knowledge/            # Source: reusable reference context
-│   ├── professional.md
-│   ├── projects/
-│   │   └── jobhunt.md
-│   └── linux/
-│       └── arch.md
+│   └── linux/arch.md
 ├── models/<name>/        # Generated: system.txt and Modelfile
 ├── sessions/             # Future/generated: transcripts or run logs
-├── build-qwen            # Builder: qwen-custom (default daily driver)
-├── build-granite         # Builder: granite-custom (structured output)
-└── build-llama           # Builder: llama-custom (long-form prose)
+├── build-qwen            # Builder: qwen-custom
+├── build-granite         # Builder: granite-custom
+└── build-llama           # Builder: llama-custom
 ```
 
 ## Layer Responsibilities
 
 - `prompts/`: controls how the agent behaves. Keep these short and durable.
-- `memory/`: controls what the agent knows about Casey. Store stable preferences
-  and profile facts here, not one-off conversation details.
-- `knowledge/`: controls reusable domain context. Add files here when the same
-  technical reference would otherwise be repeated across conversations.
+- `memory/`: controls what the agent knows about Casey. Store stable
+  preferences and profile facts here, not one-off conversation details.
+- `knowledge/`: reusable domain context loaded into every model. Add a file
+  here only when the same technical reference would otherwise be repeated
+  across conversations.
+- `build-*`: one script per model. Per-model config (base, sampler params,
+  any `TEMPLATE`/`RENDERER`/`PARSER` extras) lives in the top block of each
+  script; the assembly logic below the divider is identical across scripts
+  and should be kept in lock-step.
 - `models/`: generated build output. Do not hand-edit unless debugging a build.
 - `sessions/`: reserved for generated transcripts or runner logs.
 
 ## Build
 ```bash
 ./build-qwen
+./build-granite
+./build-llama
 ```
 
-Env overrides:
-- `AI_ROOT`     default `~/ai`
-- `MODEL_NAME`  default `qwen-custom`
-- `BASE_MODEL`  default `qwen3.5:9b`
+Each script assembles the prompt stack, writes
+`models/<name>/{system.txt,Modelfile}`, and runs `ollama create <name>`.
 
-`build-qwen` creates (granite/llama builders are equivalent for their model):
-
-- `models/<MODEL_NAME>/system.txt`
-- `models/<MODEL_NAME>/Modelfile`
-- an Ollama model named by `MODEL_NAME`
+Adding a new model: copy one of the scripts (qwen if you need
+`TEMPLATE`/`RENDERER`/`PARSER`; granite or llama otherwise) and edit only the
+config block at the top.
 
 ## Prompt Assembly Order
 1. `prompts/system.md`
@@ -80,7 +84,7 @@ Env overrides:
 3. `prompts/formatting.md`
 4. `prompts/safety.md`
 5. `memory/user.md`
-6. `knowledge/**/*.md` (sorted; each preceded by a `--- path ---` marker)
+6. `knowledge/**/*.md` (sorted; each wrapped in `--- START/END FILE: <path> ---` markers; files >100k are skipped)
 
 Section markers (`=== HEADING ===`) wrap each block so the model can navigate context.
 
@@ -114,9 +118,9 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"
 
 ## Editing Workflow
 
-1. Edit the relevant source file in `prompts/`, `memory/`, or `knowledge/`.
-2. Run `./build-qwen`.
-3. Start a fresh model session with `ollama run --think false qwen-custom`.
+1. Edit the relevant source file in `prompts/`, `memory/`, `knowledge/`, or the config block of the relevant `build-*` script.
+2. Run the matching builder (e.g. `./build-qwen`).
+3. Start a fresh model session with `ollama run --think false <name>`.
 4. If behavior is wrong, adjust the smallest responsible layer and rebuild.
 
 Use this order when deciding where a change belongs:
@@ -133,22 +137,19 @@ Use this order when deciding where a change belongs:
 
 ## Model Notes
 
-The baseline is `qwen3.5:9b`, configured through Ollama parameters in the
-generated `Modelfile`. This repo does not fine-tune weights; it customizes the
-model through the system prompt and reference context.
+This repo does not fine-tune weights; it customizes each base model through
+the system prompt, reference context, and Ollama sampler parameters in the
+generated `Modelfile`. Sampler params live in the config block at the top of
+each `build-*` script — edit there.
 
-The current defaults are tuned for a concise technical assistant:
+`qwen-custom` defaults are tuned for a concise technical assistant
+(`temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0`, `repeat_last_n 256`,
+`presence_penalty 1.5`). `granite-custom` and `llama-custom` run hotter for
+prose; see the `PARAMS` block in each builder for exact values.
 
-- `temperature 0.6` (stock is 1; lowered for technical-assistant determinism)
-- `top_p 0.95` (stock)
-- `top_k 20` (stock)
-- `min_p 0`
-- `repeat_last_n 256`
-- `presence_penalty 1.5` (stock; curbs repetition)
-
-`num_ctx` is **not** set in the Modelfile — the Ollama server's
-`OLLAMA_CONTEXT_LENGTH=16384` is the sole source of truth, matching the
-jobhunt gateway convention. Override at the server, not per-model.
+`num_ctx` is set per-model in each builder's `PARAMS` (`16384` across all
+three today). The Ollama server's `OLLAMA_CONTEXT_LENGTH` still applies as a
+server-side ceiling — see the systemd snippet above for the current value.
 
 ## Next Step: Tools
 Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` folder

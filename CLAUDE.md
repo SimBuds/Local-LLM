@@ -15,14 +15,16 @@ There is no application code — the "product" is the generated system prompt an
 ## Build
 
 ```bash
-./build-qwen        # writes models/<MODEL_NAME>/ and runs `ollama create`
+./build-qwen        # writes models/qwen-custom/ and runs `ollama create`
 ./build-granite     # same, for granite-custom
 ./build-llama       # same, for llama-custom
 ```
 
-Env overrides (build-qwen only): `AI_ROOT` (default `~/ai`), `MODEL_NAME` (default `qwen-custom`), `BASE_MODEL` (default `qwen3.5:9b`). The granite/llama builders hardcode their model and base.
+The three scripts are intentionally mirrored: only the config block at the top differs (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`). The assembly logic below the `Shared assembly` divider is byte-identical across all three and must be kept in lock-step — when you change one, change them all (or `diff` to verify).
 
-There is no test suite, lint, or CI. Validation is interactive: rebuild, then `ollama run --think false qwen-custom`.
+To add a new model: copy one of the existing scripts and edit only the top config block.
+
+There is no test suite, lint, or CI. Validation is interactive: rebuild, then `ollama run --think false <name>`.
 
 ## Architecture: prompt assembly
 
@@ -35,7 +37,7 @@ Each builder concatenates source Markdown into a single `system.txt` in this ord
 5. `memory/user.md` → durable user profile
 6. `knowledge/**/*.md` → sorted, each wrapped in `--- START/END FILE: <rel> ---`, skipped if >100k
 
-The `Modelfile` then embeds `system.txt` inside a `SYSTEM """ ... """` block. The builders abort if any source contains `"""` (would break Modelfile parsing).
+The `Modelfile` then embeds `system.txt` literally inside a `SYSTEM """ ... """` block (the body is `cat`-ed, never `$()`-expanded, so `$VAR`/backticks/backslashes in source files are safe). The builders abort if any source contains `"""`.
 
 ## Where changes belong
 
@@ -46,7 +48,7 @@ The `Modelfile` then embeds `system.txt` inside a `SYSTEM """ ... """` block. Th
 
 ## Prompt philosophy (important)
 
-Keep the prompt stack slim. When the model misbehaves, **first look at what can be removed** — duplicated rules, overlapping directives, prior additions that didn't help. Adding rules to fix behavior tends to make things worse by giving the model more surface to recursively re-check. Parameter tuning (in each builder's `PARAMETER` lines) is fair game; rule proliferation is not.
+Keep the prompt stack slim. When the model misbehaves, **first look at what can be removed** — duplicated rules, overlapping directives, prior additions that didn't help. Adding rules to fix behavior tends to make things worse by giving the model more surface to recursively re-check. Sampler tuning (in each builder's `PARAMS` block) is fair game; rule proliferation is not. Same rule applies to knowledge: if a file under `knowledge/` isn't earning its tokens, remove it.
 
 ## Ollama runtime notes
 
