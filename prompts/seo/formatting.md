@@ -7,6 +7,11 @@
 - **H3s:** subsections under H2s. Use when an H2 has 3+ distinct beats.
 - Keep heading hierarchy strict — no H1→H3 jumps.
 
+## AI-search extractability
+- Prefer question-based phrasing for H2s when the topic permits ("How does X work?", "When should you use Y?"). LLM search engines extract these as citable chunks.
+- Under each H2, lead with a 1–2 sentence direct answer to the heading. Depth and supporting detail follow.
+- The first paragraph of the article should be the canonical answer to the H1 question, in 2–3 sentences.
+
 ## Paragraphs
 - 1–4 sentences. Single-sentence paragraphs are allowed for emphasis.
 - Lead each paragraph with its claim, then support.

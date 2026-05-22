@@ -9,6 +9,8 @@ These rules track Google's *current* algorithmic posture (Helpful Content + E-E-
 - Helpful Content System: rewards demonstrable first-hand experience, penalizes generic AI summaries.
 - E-E-A-T weight is highest on YMYL (Your Money / Your Life) topics — health, finance, legal.
 - AI-assisted content is permitted *if* it meets the same quality bar as human-written; mass-produced low-effort AI prose is explicitly demoted.
+- **March 2026 core update:** Experience (first E in E-E-A-T) signal weighted above all others. Content from a named human author with first-hand specifics, verifiable credentials, and original outcomes outranks comprehensive impersonal content. Implication: every article needs an attributable author with real expertise.
+- **Schema.org JSON-LD** (Article, FAQPage, HowTo) is now critical for AI-search citation, not just SERP. Treat structured-data output as table-stakes, not a nice-to-have.
 
 ## Negative constraint list (hard ban)
 
