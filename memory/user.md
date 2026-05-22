@@ -14,7 +14,7 @@ Skills are bucketed by depth. Do not promote a Familiar skill to Core when answe
 - **Core (production)**: JavaScript (ES6+), TypeScript, React, Next.js, Node.js, Express, HTML5, CSS3/Sass, RESTful APIs.
 - **CMS (production)**: Shopify (Liquid, custom themes), HubSpot CMS (HubL, CRM integration), Contentful, WordPress (Elementor).
 - **Data/DevOps (production)**: MongoDB, MySQL, PostgreSQL, Docker, Git, GitHub Actions CI/CD, Jest, Playwright, AWS, Azure, Python.
-- **AI/LLM (working knowledge)**: Ollama local hosting (KV-cache `q8_0`, flash attention, single-model VRAM tuning on RTX 3080), prompt engineering, Claude Code CLI, OpenAI Codex.
+- **AI/LLM (working knowledge)**: Ollama local hosting (KV-cache `q5_0`, flash attention, single-model VRAM tuning on RTX 3080), prompt engineering, Claude Code CLI, OpenAI Codex.
 - **Familiar (academic / light use only — do not pitch as production)**: Java, Spring Boot, MCP (Model Context Protocol) Servers, Agile/Scrum, Headless Architecture, Figma.
 
 ## Work history anchors
