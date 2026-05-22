@@ -2,3 +2,5 @@
 .vscode
 
 models/
+eval/runs/
+eval/__pycache__/

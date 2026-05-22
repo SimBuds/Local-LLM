@@ -11,14 +11,15 @@ BASE_MODEL="llama3.1:8b"
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Llama uses defaults.
 EXTRAS=()
 
-# Sampler params. Higher temperature + repeat_penalty for prose variety
-# without runaway drift.
+# Sampler params. Middle-ground after evals: temp 0.92 ran into word-soup;
+# temp 0.75 + repeat_penalty 1.4 suppressed required keyword repetition.
+# 0.85 / 1.2 keeps prose variety without starving the keyword.
 PARAMS=(
   'num_ctx 16384'
-  'temperature 0.92'
+  'temperature 0.85'
   'top_p 0.9'
   'top_k 40'
-  'repeat_penalty 1.25'
+  'repeat_penalty 1.2'
   'repeat_last_n 256'
   'num_predict 2048'
 )
