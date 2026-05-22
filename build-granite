@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# build-granite: Assembler for Granite-SEO-8B (granite4.1:8b)
+# Parallel target to build-llama for A/B-testing SEO prose quality.
+# IBM Granite 4.1 is tuned for instruction-following + structured JSON output —
+# strong fit for SEO meta-tag, schema.org JSON-LD, and FAQ block generation.
+# Optimized for Casey's Arch Workstation (9GB VRAM Partition).
+# granite4.1:8b weights ~5GB at Q4, comfortable headroom for 16k ctx.
+
+AI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODEL_NAME="granite-seo"
+BASE_MODEL="granite4.1:8b"
+MODEL_DIR="$AI_ROOT/models/$MODEL_NAME"
+SYSTEM_FILE="$MODEL_DIR/system.txt"
+MODELFILE="$MODEL_DIR/Modelfile"
+
+mkdir -p "$MODEL_DIR"
+
+echo "[*] Assembling system prompt components..."
+true > "$SYSTEM_FILE"
+
+# Shares the SEO overlay with build-llama for an apples-to-apples A/B.
+FILES=(
+    "prompts/seo/system.md"
+    "prompts/seo/google-rules.md"
+    "prompts/seo/personality.md"
+    "prompts/seo/formatting.md"
+    "prompts/safety.md"
+    "memory/user.md"
+)
+
+for f in "${FILES[@]}"; do
+    if [ -f "$AI_ROOT/$f" ]; then
+        SECTION_NAME=$(basename "$f" .md | tr '[:lower:]' '[:upper:]')
+        echo "=== $SECTION_NAME ===" >> "$SYSTEM_FILE"
+        cat "$AI_ROOT/$f" >> "$SYSTEM_FILE"
+        echo -e "\n" >> "$SYSTEM_FILE"
+    fi
+done
+
+# Append recursive knowledge base
+if [ -d "$AI_ROOT/knowledge" ]; then
+    echo "=== KNOWLEDGE ===" >> "$SYSTEM_FILE"
+    find "$AI_ROOT/knowledge" -type f -name "*.md" | sort | while read -r file; do
+        path=${file#$AI_ROOT/knowledge/}
+        echo "--- $path ---" >> "$SYSTEM_FILE"
+        cat "$file" >> "$SYSTEM_FILE"
+        echo -e "\n" >> "$SYSTEM_FILE"
+    done
+fi
+
+# Guard: triple-quotes in SYSTEM break Modelfile parsing.
+if grep -q '"""' "$SYSTEM_FILE"; then
+    echo "[!] ABORT: triple-quote found in assembled system prompt." >&2
+    exit 1
+fi
+
+echo "[*] Generating Modelfile with SEO parameters..."
+# Granite 4.1 is tightly instruction-tuned; needs less sampler heat than Llama
+# to avoid drift. Lower repeat_penalty since Granite has less loop tendency.
+cat <<EOF > "$MODELFILE"
+FROM $BASE_MODEL
+PARAMETER temperature 0.8
+PARAMETER top_p 0.92
+PARAMETER top_k 40
+PARAMETER repeat_penalty 1.15
+PARAMETER repeat_last_n 256
+PARAMETER num_predict 2048
+PARAMETER num_ctx 16384
+SYSTEM """$(cat "$SYSTEM_FILE")"""
+EOF
+
+echo "[*] Creating Ollama model: $MODEL_NAME"
+ollama create "$MODEL_NAME" -f "$MODELFILE"
+echo "[+] Build complete. Run with: gn"

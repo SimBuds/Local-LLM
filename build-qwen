@@ -67,6 +67,7 @@ fi
   echo
   echo 'RENDERER qwen3.5'
   echo 'PARSER qwen3.5'
+  echo 'PARAMETER num_ctx 16384'
   echo 'PARAMETER repeat_last_n 256'
   echo 'PARAMETER top_p 0.95'
   echo 'PARAMETER min_p 0'
