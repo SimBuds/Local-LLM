@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# build-llama: Assembler for Llama-SEO-8B
+# build-llama: Assembler for Llama-Custom (llama3.1:8b)
+# Neutral, project-agnostic sibling to qwen-custom / granite-custom.
+# Project-specific overlays (e.g. SEO rules) are injected at request time by
+# the consuming app, not baked into the model.
 # Optimized for Casey's Arch Workstation (9GB VRAM Partition)
 
 AI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL_NAME="llama-seo"
+MODEL_NAME="llama-custom"
 BASE_MODEL="llama3.1:8b"
 MODEL_DIR="$AI_ROOT/models/$MODEL_NAME"
 SYSTEM_FILE="$MODEL_DIR/system.txt"
@@ -16,14 +19,11 @@ mkdir -p "$MODEL_DIR"
 echo "[*] Assembling system prompt components..."
 true > "$SYSTEM_FILE"
 
-# SEO Prompt Assembly Order
-# Uses prompts/seo/ overlay for behavior/voice/format (Llama-tuned for E-E-A-T long-form).
-# Shares safety + user memory with the qwen stack.
+# Neutral base prompts — shared with qwen-custom / granite-custom.
 FILES=(
-    "prompts/seo/system.md"
-    "prompts/seo/google-rules.md"
-    "prompts/seo/personality.md"
-    "prompts/seo/formatting.md"
+    "prompts/system.md"
+    "prompts/personality.md"
+    "prompts/formatting.md"
     "prompts/safety.md"
     "memory/user.md"
 )

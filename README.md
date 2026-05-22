@@ -1,11 +1,29 @@
 # AI Context Stack
 
-Local Ollama agent structure for customizing `qwen3.5:9b` with layered prompts,
+Local Ollama agent structure for customizing base models with layered prompts,
 personal memory, and project knowledge.
 
 The goal is to keep the model customization transparent: edit plain Markdown
 source files, run one build script, and let Ollama create a local model from the
 generated `Modelfile`.
+
+## Models
+
+Three project-agnostic siblings, all built from the same neutral prompt stack
+(`prompts/` + `memory/user.md`). Project-specific overlays (e.g. the SEO rules
+in `~/Apps/SEO-LLM/prompts/seo/`) are injected at request time by the consuming
+app, not baked into the model.
+
+| Model            | Base            | Builder         | Best for                                              |
+|------------------|-----------------|-----------------|-------------------------------------------------------|
+| `qwen-custom`    | `qwen3.5:9b`    | `./build-qwen`  | Default daily driver: concise technical assistant, code/debug/design. Supports runtime thinking mode (`qct`). |
+| `granite-custom` | `granite4.1:8b` | `./build-granite` | Instruction-following + structured output (JSON, schema.org, FAQ). |
+| `llama-custom`   | `llama3.1:8b`   | `./build-llama` | General long-form prose drafting.                     |
+
+Each builder writes `models/<name>/{system.txt,Modelfile}` and runs
+`ollama create`. The granite and llama builders use higher-temperature sampler
+settings tuned for prose; `qwen-custom`'s defaults are tuned for terse technical
+assistance (see [Model Notes](#model-notes)).
 
 ## Structure
 ```
@@ -25,7 +43,9 @@ ai/
 │       └── arch.md
 ├── models/<name>/        # Generated: system.txt and Modelfile
 ├── sessions/             # Future/generated: transcripts or run logs
-└── build.sh
+├── build-qwen            # Builder: qwen-custom (default daily driver)
+├── build-granite         # Builder: granite-custom (structured output)
+└── build-llama           # Builder: llama-custom (long-form prose)
 ```
 
 ## Layer Responsibilities
@@ -40,7 +60,7 @@ ai/
 
 ## Build
 ```bash
-./build.sh
+./build-qwen
 ```
 
 Env overrides:
@@ -48,7 +68,7 @@ Env overrides:
 - `MODEL_NAME`  default `qwen-custom`
 - `BASE_MODEL`  default `qwen3.5:9b`
 
-`build.sh` creates:
+`build-qwen` creates (granite/llama builders are equivalent for their model):
 
 - `models/<MODEL_NAME>/system.txt`
 - `models/<MODEL_NAME>/Modelfile`
@@ -66,7 +86,7 @@ Section markers (`=== HEADING ===`) wrap each block so the model can navigate co
 
 ## First-Time Setup
 ```bash
-./build.sh
+./build-qwen
 ollama run --think false qwen-custom
 ```
 
@@ -95,7 +115,7 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"
 ## Editing Workflow
 
 1. Edit the relevant source file in `prompts/`, `memory/`, or `knowledge/`.
-2. Run `./build.sh`.
+2. Run `./build-qwen`.
 3. Start a fresh model session with `ollama run --think false qwen-custom`.
 4. If behavior is wrong, adjust the smallest responsible layer and rebuild.
 
