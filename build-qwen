@@ -7,6 +7,7 @@ set -euo pipefail
 # ============================================================================
 MODEL_NAME="qwen-custom"
 BASE_MODEL="qwen3.5:9b"
+ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Qwen3.5 family needs them.
 EXTRAS=(
@@ -52,6 +53,7 @@ mkdir -p "$OUT_DIR"
   emit_section "CORE DIRECTIVES"    "$AI_ROOT/prompts/system.md"
   emit_section "VOICE"              "$AI_ROOT/prompts/personality.md"
   emit_section "OUTPUT SHAPE"       "$AI_ROOT/prompts/formatting.md"
+  emit_section "ROLE GUIDANCE"      "$AI_ROOT/prompts/roles/$ROLE.md"
   emit_section "OPERATIONAL SAFETY" "$AI_ROOT/prompts/safety.md"
   emit_section "USER PROFILE"       "$AI_ROOT/memory/user.md"
 

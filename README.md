@@ -22,7 +22,7 @@ app, not baked into the model.
 
 Each model has its own builder script (`build-qwen`, `build-granite`,
 `build-llama`). The scripts are intentionally mirrored: only the config block
-at the top differs (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`); the
+at the top differs (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the
 assembly logic below is byte-identical. To add a new model, copy one of the
 existing scripts and edit the config block. Output goes to
 `models/<name>/{system.txt,Modelfile}` and `ollama create` runs at the end.
@@ -37,7 +37,10 @@ ai/
 │   ├── system.md         # Core directives and agent rules
 │   ├── personality.md    # Voice and interaction style
 │   ├── formatting.md     # Output conventions
-│   └── safety.md         # Operational safety rules
+│   ├── safety.md         # Operational safety rules
+│   └── roles/            # Per-model role overlays (selected by $ROLE)
+│       ├── coding.md     # qwen-custom, granite-custom
+│       └── prose.md      # llama-custom
 ├── memory/               # Source: durable user profile and preferences
 │   └── user.md
 ├── knowledge/            # Source: reusable reference context
@@ -52,6 +55,8 @@ ai/
 ## Layer Responsibilities
 
 - `prompts/`: controls how the agent behaves. Keep these short and durable.
+  `prompts/roles/` holds per-model overlays (`coding`, `prose`) selected by each
+  builder's `ROLE`; the other files in `prompts/` apply to every model.
 - `memory/`: controls what the agent knows about Casey. Store stable
   preferences and profile facts here, not one-off conversation details.
 - `knowledge/`: reusable domain context loaded into every model. Add a file
@@ -82,9 +87,10 @@ config block at the top.
 1. `prompts/system.md`
 2. `prompts/personality.md`
 3. `prompts/formatting.md`
-4. `prompts/safety.md`
-5. `memory/user.md`
-6. `knowledge/**/*.md` (sorted; each wrapped in `--- START/END FILE: <path> ---` markers; files >100k are skipped)
+4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite, `prose` for llama)
+5. `prompts/safety.md`
+6. `memory/user.md`
+7. `knowledge/**/*.md` (sorted; each wrapped in `--- START/END FILE: <path> ---` markers; files >100k are skipped)
 
 Section markers (`=== HEADING ===`) wrap each block so the model can navigate context.
 
@@ -125,7 +131,8 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"
 
 Use this order when deciding where a change belongs:
 
-- Behavior rule? Put it in `prompts/`.
+- Behavior rule for all models? Put it in `prompts/`.
+- Behavior rule for one role only? Put it in `prompts/roles/<role>.md`.
 - Stable fact about Casey? Put it in `memory/user.md`.
 - Reusable technical reference? Put it in `knowledge/`.
 - Temporary context? Keep it out of the build.
@@ -156,6 +163,9 @@ Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` 
 with a runner that wraps the Ollama native API. Out of scope for the baseline.
 
 ## Thinking Mode
+
+Thinking mode is Qwen-only. `granite-custom` and `llama-custom` have no thinking
+mode — run them with plain `ollama run <name>` (passing `--think false` errors).
 
 Ollama exposes Qwen thinking mode as a runtime option, not a Modelfile
 parameter. Use this for normal interactive sessions:

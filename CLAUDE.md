@@ -20,11 +20,11 @@ There is no application code — the "product" is the generated system prompt an
 ./build-llama       # same, for llama-custom
 ```
 
-The three scripts are intentionally mirrored: only the config block at the top differs (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`). The assembly logic below the `Shared assembly` divider is byte-identical across all three and must be kept in lock-step — when you change one, change them all (or `diff` to verify).
+The three scripts are intentionally mirrored: only the config block at the top differs (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`). The assembly logic below the `Shared assembly` divider is byte-identical across all three and must be kept in lock-step — when you change one, change them all (or `diff` to verify).
 
 To add a new model: copy one of the existing scripts and edit only the top config block.
 
-There is no test suite, lint, or CI. Validation is interactive: rebuild, then `ollama run --think false <name>`.
+There is no test suite, lint, or CI. Validation is interactive: rebuild, then `ollama run <name>` (add `--think false` for `qwen-custom`; the others have no thinking mode).
 
 ## Architecture: prompt assembly
 
@@ -33,15 +33,17 @@ Each builder concatenates source Markdown into a single `system.txt` in this ord
 1. `prompts/system.md` → core directives
 2. `prompts/personality.md` → voice
 3. `prompts/formatting.md` → output shape
-4. `prompts/safety.md` → operational safety
-5. `memory/user.md` → durable user profile
-6. `knowledge/**/*.md` → sorted, each wrapped in `--- START/END FILE: <rel> ---`, skipped if >100k
+4. `prompts/roles/$ROLE.md` → per-model role overlay (`coding` for qwen/granite, `prose` for llama)
+5. `prompts/safety.md` → operational safety
+6. `memory/user.md` → durable user profile
+7. `knowledge/**/*.md` → sorted, each wrapped in `--- START/END FILE: <rel> ---`, skipped if >100k
 
 The `Modelfile` then embeds `system.txt` literally inside a `SYSTEM """ ... """` block (the body is `cat`-ed, never `$()`-expanded, so `$VAR`/backticks/backslashes in source files are safe). The builders abort if any source contains `"""`.
 
 ## Where changes belong
 
-- Behavior rule → `prompts/` (keep terse — every token runs every turn)
+- Behavior rule for all models → `prompts/` (keep terse — every token runs every turn)
+- Behavior rule for one role only → `prompts/roles/<role>.md` (`coding` or `prose`)
 - Stable fact about Casey → `memory/user.md`
 - Reusable technical reference used across conversations → `knowledge/`
 - One-off context → not in the build
@@ -57,5 +59,7 @@ Thinking mode is a runtime flag, not a Modelfile parameter:
 - `qct` → `ollama run qwen-custom` (thinking on, for design/debugging)
 
 `qct` on a greeting will loop — that's the model's design, not a prompt bug to patch.
+
+`--think` is Qwen-only. `granite-custom` and `llama-custom` have no thinking mode; run them with plain `ollama run <name>` (passing `--think false` errors).
 
 Server-level tuning (flash attention, KV cache type, context length, parallel/keep-alive) lives in the systemd drop-in for `ollama.service` — see README.md for the exact values.
