@@ -95,10 +95,24 @@ Three runners, each ranks all models and declares a winner. Output lands in
 ```
 
 Common flags: `--models`, `--attempts`, `--timeout`. Code/learn add `--tasks`
-and `--exec-timeout`; learn adds `--judge` (default `granite-custom`).
+and `--exec-timeout`; learn adds `--judges` (a leave-one-out panel — default is
+all `--models`, so no model grades its own output).
 
 **Thinking mode:** append `:think` to a model spec (`qwen-custom:think`) to test
 Qwen thinking on vs off — useful on `run-code.py`/`run-learn.py`, skip for content.
+
+### Latest crowns (5 attempts, debiased, thinking-off)
+
+| Skill | King | Score | Speed |
+|---|---|---|---|
+| Content / SEO | **gemma-custom** | 5/5 clean (100%) | 180 tok/s |
+| Coding correctness | **granite-custom** | 27/30 (90%) | 1.7 s/call |
+| Teaching (panel-judged) | **granite-custom** | 9.9/10 | 97 tok/s |
+
+Notes: ministral-custom is a strong #2 on content (5/5 but ~half the speed) and
+coding (83%). qwen/gemma explain as well as granite (9.8–9.9 when correct) but
+trail on the code-pass gate. Thinking mode wasn't worth its ~18× latency on any
+skill — kept as a deliberate niche lever, not a default.
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
 > subprocess with a timeout, but it is **not** containerized. Trusted models only.

@@ -139,13 +139,21 @@ each target doc. No code touched. Role-overlay feature complete.
 **Status**: [x] done
 **Report**: Best tutor `granite-custom` (10.0). `qwen-custom` has the best explanations (10.0) but lowest code-pass (8/12) with thinking off — motivates Phase 15. Caveat logged: judge is itself a model (granite), so scores carry self-bias.
 
-### Phase 15 — Thinking-mode A/B support (`:think` spec) — IN PROGRESS
+### Phase 15 — Thinking-mode A/B support (`:think` spec) + verdict
 **Files**: `eval/_ollama.py`, `eval/run-code.py`, `eval/run-learn.py`
-**Changes**: `generate()` gains a `think` arg (default off); new `resolve_model()` maps a `:think` suffix to `(name, think=True)` so `qwen-custom` and `qwen-custom:think` rank as separate entries; runners resolve specs and thread `think` through (judge too).
+**Changes**: `generate()` gains a `think` arg (default off); new `resolve_model()` maps a `:think` suffix to `(name, think=True)` so `qwen-custom` and `qwen-custom:think` rank as separate entries; runners resolve specs and thread `think` through. Also lowered default `--timeout` 300→120s to cull runaway thinking traces.
 **Reuse audit**: single shared helper; no per-runner duplication.
-**Verification**: `resolve_model` unit checks pass; A/B run (`--models qwen-custom qwen-custom:think`) on coding + learning — **running now**.
-**Status**: [ ] code done, results pending
-**Report**: (pending — will record whether thinking closes qwen's code-pass gap on `calc` and lifts its tutor score.)
+**Verification**: `resolve_model` unit checks pass; A/B run on coding.
+**Status**: [x] done
+**Report**: Coding A/B — `qwen-custom:think` 87% vs `qwen-custom` 83%, but at **44s/call vs 2.4s (~18×)** and it regressed `lru_cache` 5→4. Verdict: **thinking not worth the latency** for these tasks — `granite-custom` beats thinking-qwen on accuracy (90–97%) *and* is ~24× faster. Thinking kept as a deliberate niche lever (e.g. `calc`), not a default. Default runs use thinking off.
+
+### Phase 16 — Debias the tutor judge with a leave-one-out panel
+**Files**: `eval/run-learn.py`
+**Changes**: replaced single `--judge` with `--judges` panel (default = all `--models`); each response graded by every judge except the model that wrote it, scores averaged. Judging loops by judge (each loaded once) to avoid thrash; per-judge breakdown persisted per response.
+**Reuse audit**: reused `judge_scores` + `resolve_model`; no new transport.
+**Verification**: 2-model smoke (each judged only by the other); full 5-model panel run.
+**Status**: [x] done
+**Report**: Debias **confirmed** granite rather than overturning it — panel-judged best tutor `granite-custom` 9.9/10 (vs 10.0 self-included). Final crowns (debiased, thinking-off): **content → `gemma-custom`** (5/5, 180 tok/s); **coding → `granite-custom`** (90%, 1.7s/call); **teaching → `granite-custom`** (9.9/10). Note: qwen/gemma explain as well as granite (9.8–9.9 when correct) but lose on the code-pass gate.
 
 ## Backlog (no phase scheduled)
 
