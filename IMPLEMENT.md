@@ -4,7 +4,7 @@ Granular, phase-by-phase tracker. Update this file as part of every commit per t
 
 ## Current state
 
-The pipeline is built and working. Three builders produce three models from the shared prompt stack plus a per-model role overlay (`coding` / `prose`). No active feature work in progress — the base-prompt audit (Phases 7–10) is complete.
+The pipeline is built and working. **Five** builders produce five models from the shared prompt stack plus a per-model role overlay (`coding` / `prose`), all tuned to sit 100% on a 10 GB GPU. An eval suite (`eval/`) ranks models for content, coding correctness, and tutoring. In progress: thinking-mode A/B (Phase 15) — `qwen-custom` think on vs off on the coding + learning runs.
 
 ## Completed (baseline)
 
@@ -104,6 +104,48 @@ and the Layer Responsibilities note. Also fixed a latent doc bug surfaced in Pha
 `--think`/`--think false` is Qwen-only (errors on granite/llama) in both CLAUDE.md and README. Verified
 via grep that the `roles/$ROLE` line, the `ROLE` config knob, and the thinking caveat are present in
 each target doc. No code touched. Role-overlay feature complete.
+
+## Completed — model expansion + evaluation suite
+
+### Phase 11 — Add `build-ministral` and `build-gemma` (two new models)
+**Files**: `build-ministral`, `build-gemma`, `eval/run.py`
+**Changes**: copied `build-qwen` as the baseline, edited only the config block (`MODEL_NAME`, `BASE_MODEL`, `ROLE=coding`, `EXTRAS=()`, `PARAMS`); added both to the eval `DEFAULT_MODELS`.
+**Reuse audit**: searched `MODEL_NAME`, `EXTRAS`, builder scripts; reused the mirrored builder structure verbatim — no new mechanism.
+**Verification**: `./build-ministral`/`./build-gemma` exit 0; both appear in `ollama list`.
+**Status**: [x] done
+**Report**: Built `ministral-custom` (`ministral-3:8b`) and `gemma-custom`. Shared-assembly region byte-identical to the other builders. Added both to `DEFAULT_MODELS`.
+
+### Phase 12 — Tune every model to fit 100% on a 10 GB GPU
+**Files**: `build-granite`, `build-ministral`, `build-gemma`
+**Changes**: trimmed `num_ctx` 16384→12288 on granite + ministral (KV cache spilled to CPU); swapped gemma base `gemma4:e4b`→`gemma4:e2b` (9.6 GB→7.2 GB weights) then set its `num_ctx` to 32768 (light weights + sliding-window KV leave headroom).
+**Reuse audit**: none; config-block edits only.
+**Verification**: `ollama ps` shows `100% GPU` for all five after loading.
+**Status**: [x] done
+**Report**: Confirmed via `ollama ps`: granite 8.5 GB, ministral 9.0 GB, gemma 8.0 GB @ 32768 — all 100% GPU. KV-cache quant (`q5_0`) + flash attention already on at the server; `num_ctx` was the only per-model lever.
+
+### Phase 13 — Build the evaluation suite (content + coding correctness)
+**Files**: `eval/_ollama.py`, `eval/run.py`, `eval/coding_tasks.py`, `eval/run-code.py`
+**Changes**: shared transport/helpers in `_ollama.py`; `run.py` scores SEO content (structure, keyword, no HTML/hedging) with a ranked leaderboard; `run-code.py` extracts the code block and executes it against hidden asserts (real pass@1) over a 6-task battery.
+**Reuse audit**: searched `run.py`, `generate`, `score`; factored existing transport into `_ollama.py` rather than duplicate.
+**Verification**: smoke runs pass; summaries rank models and name a winner.
+**Status**: [x] done
+**Report**: Content winner `gemma-custom` (5/5 clean, ~175 tok/s). Coding winner `granite-custom` (29/30 @ 5 attempts); `calc` is the field's discriminator (only granite/ministral clear it).
+
+### Phase 14 — Add the learning/tutor tier (code + explanation, LLM-judged)
+**Files**: `eval/learning_tasks.py`, `eval/run-learn.py`, `eval/_ollama.py` (shared `run_program`)
+**Changes**: tasks ask for working code **plus** a teaching explanation; two-part score = execution gate + local-judge rubric (approach, complexity, alternative, pitfall, clarity → /10); "teach score" counts explanation only when code passes; two-phase (generate-all then judge-all) to avoid model thrash under `MAX_LOADED_MODELS=1`.
+**Reuse audit**: moved `run_program` into `_ollama.py` so coding + learning share one copy.
+**Verification**: smoke run parses judge JSON and scores; full run ranks models.
+**Status**: [x] done
+**Report**: Best tutor `granite-custom` (10.0). `qwen-custom` has the best explanations (10.0) but lowest code-pass (8/12) with thinking off — motivates Phase 15. Caveat logged: judge is itself a model (granite), so scores carry self-bias.
+
+### Phase 15 — Thinking-mode A/B support (`:think` spec) — IN PROGRESS
+**Files**: `eval/_ollama.py`, `eval/run-code.py`, `eval/run-learn.py`
+**Changes**: `generate()` gains a `think` arg (default off); new `resolve_model()` maps a `:think` suffix to `(name, think=True)` so `qwen-custom` and `qwen-custom:think` rank as separate entries; runners resolve specs and thread `think` through (judge too).
+**Reuse audit**: single shared helper; no per-runner duplication.
+**Verification**: `resolve_model` unit checks pass; A/B run (`--models qwen-custom qwen-custom:think`) on coding + learning — **running now**.
+**Status**: [ ] code done, results pending
+**Report**: (pending — will record whether thinking closes qwen's code-pass gap on `calc` and lifts its tutor score.)
 
 ## Backlog (no phase scheduled)
 

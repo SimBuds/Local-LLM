@@ -131,7 +131,7 @@ def main() -> int:
     ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
     ap.add_argument("--attempts", type=int, default=5)
     ap.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT)
-    ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     ap.add_argument("--keyword", type=str, default=None)
     args = ap.parse_args()

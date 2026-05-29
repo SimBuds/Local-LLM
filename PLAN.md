@@ -2,41 +2,95 @@
 
 ## What this is
 
-A build pipeline that compiles layered Markdown into three customized Ollama models. There is no application code; the product is the generated `system.txt` + `Modelfile` per model.
+A build pipeline that compiles layered Markdown into customized Ollama models,
+plus an evaluation suite that decides which model to use for which job. There is
+no application code; the products are (1) the generated `system.txt` + `Modelfile`
+per model, and (2) the eval harness under `eval/`.
 
 ## Core idea
 
-Customize base models via **prompt + reference context only** — never weight fine-tuning. Edit Markdown, run a builder, `ollama create` produces a local model.
+Customize base models via **prompt + reference context only** — never weight
+fine-tuning. Edit Markdown, run a builder, `ollama create` produces a local
+model. Then measure each model empirically rather than guessing which is best.
 
 ## Models
 
-| Name             | Base            | Role                                              |
-|------------------|-----------------|---------------------------------------------------|
-| `qwen-custom`    | `qwen3.5:9b`    | Daily driver — terse technical assistant; runtime thinking via `qct` |
-| `granite-custom` | `granite4.1:8b` | Instruction-following / structured output         |
-| `llama-custom`   | `llama3.1:8b`   | Long-form prose                                   |
+Five siblings, all built from one neutral prompt stack plus a per-model **role
+overlay** (`coding` or `prose`) selected by each builder's `ROLE`.
 
-All three share one neutral prompt stack plus a per-model **role overlay** (`coding` for qwen/granite, `prose` for llama) selected by each builder's `ROLE`. Project-specific overlays (e.g. SEO rules) are injected at request time by the consuming app, not baked in.
+| Name               | Base             | num_ctx | Role / best-for                              |
+|--------------------|------------------|---------|----------------------------------------------|
+| `qwen-custom`      | `qwen3.5:9b`     | 16384   | Daily driver; terse technical assistant; only model with runtime thinking mode |
+| `granite-custom`   | `granite4.1:8b`  | 12288   | Instruction-following / structured output; top code-correctness + tutor scorer |
+| `llama-custom`     | `llama3.1:8b`    | 16384   | Long-form prose (`prose` overlay)            |
+| `ministral-custom` | `ministral-3:8b` | 12288   | Compact instruction-following; strong on coding |
+| `gemma-custom`     | `gemma4:e2b`     | 32768   | Fast all-rounder (~175 tok/s); best content scorer; large context |
 
-## Architecture
+Project-specific overlays (e.g. SEO rules) are injected at request time by the
+consuming app, not baked in.
 
-Builders concatenate sources into `models/<name>/system.txt` in fixed order, wrapped in `=== SECTION ===` markers:
+### Why these five, and why these settings
+
+- **Hardware constraint: one RTX 3080, 10 GB VRAM.** Every model is tuned to sit
+  **100% on GPU** (no CPU spill). The lever is `num_ctx` (KV cache scales with
+  context); `OLLAMA_KV_CACHE_TYPE=q5_0` + flash attention are already on at the
+  server, so context length is the remaining per-model knob.
+- `granite-custom`/`ministral-custom` overflowed 10 GB at 16384 → trimmed to
+  **12288** to fit. `qwen-custom`/`llama-custom` already fit at 16384.
+- `gemma-custom` originally used `gemma4:e4b` (9.6 GB weights — too big to fully
+  offload). **Swapped to `gemma4:e2b`** (7.2 GB); its light weights + Gemma 3n
+  sliding-window attention make KV cheap, so it runs at **32768** and still fits.
+
+## Evaluation — the two questions this repo answers
+
+The eval suite exists to pick the right model for two real jobs:
+
+1. **Best content/SEO model** — `eval/run.py`. Scores format + instruction
+   discipline (structure, keyword use, no HTML/hedging) on an SEO prompt.
+   **Finding: `gemma-custom`** wins repeatably (5/5 clean) *and* is ~2× fastest.
+2. **Best local coding + learning assistant** — split across two runners because
+   "writes correct code" and "teaches well" are different skills:
+   - `eval/run-code.py` — **correctness**: extracts the code block, runs it
+     against hidden asserts (real pass@1). **Finding: `granite-custom`** (97%).
+   - `eval/run-learn.py` — **tutoring**: working code *plus* an explanation,
+     graded by a local LLM judge (rubric: approach, complexity, alternative,
+     pitfall, clarity). **Finding: `granite-custom`** (10/10); `qwen-custom` has
+     the best explanations but fails the code gate with thinking off.
+
+All runners produce a ranked leaderboard and declare a winner.
+
+### Thinking-mode caveat
+
+Thinking is a Qwen-only runtime flag, not a Modelfile setting. The runners
+default `think=False`, so `qwen-custom` is normally tested with its defining
+feature off — which understates it on reasoning-heavy tasks. A model spec can
+carry a `:think` suffix (`qwen-custom:think`) to A/B thinking on vs off; used on
+the coding and learning runs, skipped for content (where it only adds latency).
+
+## Architecture (prompt assembly)
+
+Builders concatenate sources into `models/<name>/system.txt` in fixed order,
+wrapped in `=== SECTION ===` markers:
 
 1. `prompts/system.md`
 2. `prompts/personality.md`
 3. `prompts/formatting.md`
-4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite, `prose` for llama)
+4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite/ministral/gemma, `prose` for llama)
 5. `prompts/safety.md`
 6. `memory/user.md`
 7. `knowledge/**/*.md` (sorted, `--- START/END FILE ---` wrappers, skip > 100k)
 
-The `Modelfile` embeds `system.txt` literally inside `SYSTEM """ ... """` (no shell expansion). Builders abort if any source contains `"""`.
+The `Modelfile` embeds `system.txt` literally inside `SYSTEM """ ... """` (no
+shell expansion). Builders abort if any source contains `"""`.
 
 ## Build scripts
 
-Three scripts, intentionally mirrored. Only the top config block differs (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`). The assembly logic below the `Shared assembly` divider is byte-identical and must stay in lock-step.
+Five scripts, intentionally mirrored. Only the top config block differs
+(`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`). The assembly logic
+below the `Shared assembly` divider is byte-identical and must stay in lock-step.
 
-New model = copy a script, edit the config block.
+New model = copy a script, edit the config block. (Copy `build-qwen` if you need
+`TEMPLATE`/`RENDERER`/`PARSER` extras; any other otherwise.)
 
 ## Where changes belong
 
@@ -44,12 +98,16 @@ New model = copy a script, edit the config block.
 - Behavior rule (one role only) → `prompts/roles/<role>.md`
 - Stable fact about Casey → `memory/user.md`
 - Reusable cross-conversation reference → `knowledge/`
+- A new eval task → `eval/coding_tasks.py` or `eval/learning_tasks.py`
 - One-off context → not in the build
 
 ## Prompt philosophy
 
-Slim is correct. When a model misbehaves, first try to **remove** rules, not add them. Same for `knowledge/` files. Sampler tuning (`PARAMS` block) is fair game; rule proliferation is not.
+Slim is correct. When a model misbehaves, first try to **remove** rules, not add
+them. Same for `knowledge/` files. Sampler tuning (`PARAMS` block) is fair game;
+rule proliferation is not.
 
 ## Scope boundary
 
-Out of scope for the baseline: tool calling, runners, transcript capture. A future `tools/` folder is reserved but not built.
+Out of scope for the baseline: tool calling, runners, transcript capture. A
+future `tools/` folder is reserved but not built.

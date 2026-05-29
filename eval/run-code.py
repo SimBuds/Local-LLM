@@ -28,50 +28,27 @@ against models/tasks you trust.
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    DEFAULT_MODELS, REPO_ROOT, extract_code, generate, new_run_dir, tok_per_s,
+    DEFAULT_MODELS, REPO_ROOT, extract_code, generate, new_run_dir,
+    resolve_model, run_program, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
 
-def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:
-    """Execute `source` in a throwaway temp dir. Returns (passed, short_reason)."""
-    with tempfile.TemporaryDirectory() as td:
-        prog = Path(td) / "sol.py"
-        prog.write_text(source, encoding="utf-8")
-        try:
-            proc = subprocess.run(
-                [sys.executable, str(prog)],
-                cwd=td, capture_output=True, text=True, timeout=exec_timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return False, "timeout"
-    if proc.returncode == 0:
-        return True, "pass"
-    err = (proc.stderr or proc.stdout).strip().splitlines()
-    last = err[-1] if err else f"exit {proc.returncode}"
-    if "AssertionError" in last:
-        return False, "wrong-answer"
-    if "SyntaxError" in last:
-        return False, "syntax"
-    return False, last[:60]
-
-
 def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
                 exec_timeout: int, out_dir: Path) -> dict:
     print(f"    [{n}/{total}] {task.name:<18}", end="", flush=True)
+    name, think = resolve_model(model)
     t0 = time.monotonic()
     try:
-        text, meta = generate(model, task.prompt, timeout)
+        text, meta = generate(name, task.prompt, timeout, think=think)
     except Exception as e:  # noqa: BLE001 — surface any transport error as a fail
         print(f"GEN-FAIL ({time.monotonic()-t0:.1f}s): {e}")
         return {"task": task.name, "passed": False, "reason": "gen-fail",
@@ -96,10 +73,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
-    ap.add_argument("--attempts", type=int, default=3, help="attempts per task (default 3)")
+    ap.add_argument("--attempts", type=int, default=5, help="attempts per task (default 5)")
     ap.add_argument("--tasks", nargs="+", default=None,
                     help="subset of task names (default: all)")
-    ap.add_argument("--timeout", type=int, default=300, help="model call timeout (s)")
+    ap.add_argument("--timeout", type=int, default=120, help="model call timeout (s); culls runaway thinking traces")
     ap.add_argument("--exec-timeout", type=int, default=10, help="per-program timeout (s)")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     args = ap.parse_args()

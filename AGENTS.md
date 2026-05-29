@@ -151,3 +151,30 @@ Keep responses tight. State results and decisions directly. Don't narrate intern
 ## Project-Specific Rules
 
 *Everything above this line is the shared workflow contract and should not be edited per-project. Add project-specific guidance below — stack, build/test commands, conventions, paths to other docs, domain rules.*
+
+### What this repo is
+
+A prompt-assembly pipeline (no application code). Bash builders concatenate
+layered Markdown into a per-model `system.txt` + `Modelfile`, then `ollama
+create` builds a local model. Plus a stdlib-Python eval suite under `eval/`.
+Read `PLAN.md` for the blueprint and rationale before non-trivial work.
+
+### Stack & commands
+
+- **Build a model:** `./build-<name>` (writes `models/<name>/` and runs `ollama create`). Five today: qwen, granite, llama, ministral, gemma.
+- **Validate a model:** `ollama run <name>` (add `--think false` for `qwen-custom` only; the others error on `--think`).
+- **Evals:** `./eval/run.py` (content), `./eval/run-code.py` (coding correctness), `./eval/run-learn.py` (tutoring). Each ranks models and writes `eval/runs/<UTC>/`.
+- There is no lint/CI and **no unit test suite**. The "tests" are the eval runners and interactive `ollama run`. For the Definition of Done's test requirement, report eval output or a live `ollama run` observation.
+
+### Conventions (load-bearing)
+
+- **Builder lock-step:** the region below each builder's `Shared assembly` divider is byte-identical across all five. Change one → change all (or `diff` to verify). Only the top config block (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`) may differ.
+- **Slim prompts:** fix model misbehavior by **removing** rules, not adding them. Same for `knowledge/` files. Sampler tuning (`PARAMS`) is fair game; rule proliferation is not.
+- **GPU budget:** one RTX 3080, 10 GB. Every model must sit 100% on GPU — the lever is `num_ctx`. Verify a context/base change with `ollama ps` (look for `100% GPU`) before claiming it fits.
+- **Where edits belong:** see the table in `README.md` / `PLAN.md`. Don't bake project-specific overlays (e.g. SEO) into the stack — those are injected at request time by the consuming app.
+- KV-cache quantization / flash attention are **server-level** (`systemd` drop-in), not Modelfile settings — don't try to set them per-model.
+
+### Docs map
+
+`PLAN.md` = blueprint + reasons · `IMPLEMENT.md` = phase log · `README.md` =
+dev/user entry · `CLAUDE.md` = Claude Code guidance · this file = workflow contract.

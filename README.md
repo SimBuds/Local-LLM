@@ -1,189 +1,147 @@
 # AI Context Stack
 
-Local Ollama agent structure for customizing base models with layered prompts,
-personal memory, and project knowledge.
-
-The goal is to keep the model customization transparent: edit plain Markdown
-source files, run one build script, and let Ollama create a local model from the
-generated `Modelfile`.
+Layered-Markdown → customized Ollama models, plus an eval suite that picks the
+right model per job. No fine-tuning: customization is prompt + reference context
+only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 ## Models
 
-Three project-agnostic siblings, all built from the same neutral prompt stack
-(`prompts/` + `memory/user.md`). Project-specific overlays (e.g. the SEO rules
-in `~/Apps/SEO-LLM/prompts/seo/`) are injected at request time by the consuming
-app, not baked into the model.
+Five siblings from one shared prompt stack (`prompts/` + `memory/user.md`) and a
+per-model role overlay. `num_ctx` is tuned so each sits 100% on a 10 GB GPU.
 
-| Model            | Base            | Best for                                              |
-|------------------|-----------------|-------------------------------------------------------|
-| `qwen-custom`    | `qwen3.5:9b`    | Default daily driver: concise technical assistant, code/debug/design. Supports runtime thinking mode (`qct`). |
-| `granite-custom` | `granite4.1:8b` | Instruction-following + structured output (JSON, schema.org, FAQ). |
-| `llama-custom`   | `llama3.1:8b`   | General long-form prose drafting.                     |
+| Model              | Base             | ctx   | Best for                                              |
+|--------------------|------------------|-------|-------------------------------------------------------|
+| `qwen-custom`      | `qwen3.5:9b`     | 16384 | Default daily driver; code/debug/design. Only model with thinking mode. |
+| `granite-custom`   | `granite4.1:8b`  | 12288 | Structured output; top code-correctness + tutor scorer. |
+| `llama-custom`     | `llama3.1:8b`    | 16384 | Long-form prose (`prose` overlay).                    |
+| `ministral-custom` | `ministral-3:8b` | 12288 | Compact instruction-following; strong on coding.      |
+| `gemma-custom`     | `gemma4:e2b`     | 32768 | Fast all-rounder (~175 tok/s); best content scorer.   |
 
-Each model has its own builder script (`build-qwen`, `build-granite`,
-`build-llama`). The scripts are intentionally mirrored: only the config block
-at the top differs (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the
-assembly logic below is byte-identical. To add a new model, copy one of the
-existing scripts and edit the config block. Output goes to
-`models/<name>/{system.txt,Modelfile}` and `ollama create` runs at the end.
-Granite/llama use higher-temperature sampler settings tuned for prose;
-`qwen-custom`'s defaults are tuned for terse technical assistance (see
-[Model Notes](#model-notes)).
+Eval winners (see [Evaluation](#evaluation)): **content → `gemma-custom`**,
+**coding correctness + tutoring → `granite-custom`**.
 
-## Structure
-```
-ai/
-├── prompts/              # Source: durable behavior controls
-│   ├── system.md         # Core directives and agent rules
-│   ├── personality.md    # Voice and interaction style
-│   ├── formatting.md     # Output conventions
-│   ├── safety.md         # Operational safety rules
-│   └── roles/            # Per-model role overlays (selected by $ROLE)
-│       ├── coding.md     # qwen-custom, granite-custom
-│       └── prose.md      # llama-custom
-├── memory/               # Source: durable user profile and preferences
-│   └── user.md
-├── knowledge/            # Source: reusable reference context
-│   └── linux/arch.md
-├── models/<name>/        # Generated: system.txt and Modelfile
-├── sessions/             # Future/generated: transcripts or run logs
-├── build-qwen            # Builder: qwen-custom
-├── build-granite         # Builder: granite-custom
-└── build-llama           # Builder: llama-custom
-```
+## Quickstart
 
-## Layer Responsibilities
-
-- `prompts/`: controls how the agent behaves. Keep these short and durable.
-  `prompts/roles/` holds per-model overlays (`coding`, `prose`) selected by each
-  builder's `ROLE`; the other files in `prompts/` apply to every model.
-- `memory/`: controls what the agent knows about Casey. Store stable
-  preferences and profile facts here, not one-off conversation details.
-- `knowledge/`: reusable domain context loaded into every model. Add a file
-  here only when the same technical reference would otherwise be repeated
-  across conversations.
-- `build-*`: one script per model. Per-model config (base, sampler params,
-  any `TEMPLATE`/`RENDERER`/`PARSER` extras) lives in the top block of each
-  script; the assembly logic below the divider is identical across scripts
-  and should be kept in lock-step.
-- `models/`: generated build output. Do not hand-edit unless debugging a build.
-- `sessions/`: reserved for generated transcripts or runner logs.
-
-## Build
 ```bash
-./build-qwen
-./build-granite
-./build-llama
+./build-qwen                              # build one model
+ollama run --think false qwen-custom      # run it (--think is qwen-only)
 ```
 
-Each script assembles the prompt stack, writes
+Each builder assembles the prompt stack, writes
 `models/<name>/{system.txt,Modelfile}`, and runs `ollama create <name>`.
 
-Adding a new model: copy one of the scripts (qwen if you need
-`TEMPLATE`/`RENDERER`/`PARSER`; granite or llama otherwise) and edit only the
-config block at the top.
-
-## Prompt Assembly Order
-1. `prompts/system.md`
-2. `prompts/personality.md`
-3. `prompts/formatting.md`
-4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite, `prose` for llama)
-5. `prompts/safety.md`
-6. `memory/user.md`
-7. `knowledge/**/*.md` (sorted; each wrapped in `--- START/END FILE: <path> ---` markers; files >100k are skipped)
-
-Section markers (`=== HEADING ===`) wrap each block so the model can navigate context.
-
-## First-Time Setup
-```bash
-./build-qwen
-ollama run --think false qwen-custom
-```
-
-Recommended shell helpers (add to `~/.bashrc`) so `--think false` is the default
-and thinking mode is an explicit opt-in:
+## Build
 
 ```bash
-qc()  { ollama run --think false qwen-custom "$@"; }
-qct() { ollama run qwen-custom "$@"; }   # thinking mode when needed
+./build-qwen  ./build-granite  ./build-llama  ./build-ministral  ./build-gemma
 ```
 
-### Ollama systemd settings
+The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
+`BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the assembly logic below the divider
+is byte-identical and must stay in lock-step. **New model:** copy a script
+(`build-qwen` if you need `TEMPLATE`/`RENDERER`/`PARSER`; any other otherwise)
+and edit only the config block.
 
-The gateway is tuned to a specific server config. Mirror these
-(`sudo systemctl edit ollama.service`):
+## Structure
+
+```
+ai/
+├── prompts/              # behavior controls (terse, durable — runs every turn)
+│   ├── system.md         # core directives
+│   ├── personality.md    # voice
+│   ├── formatting.md     # output shape
+│   ├── safety.md         # operational safety
+│   └── roles/            # per-model overlays (selected by $ROLE)
+│       ├── coding.md     # qwen, granite, ministral, gemma
+│       └── prose.md      # llama
+├── memory/user.md        # durable user profile
+├── knowledge/**/*.md     # reusable reference context
+├── eval/                 # evaluation suite (see below)
+├── models/<name>/        # generated: system.txt + Modelfile
+└── build-*               # one builder per model
+```
+
+## Prompt assembly order
+
+`system.md` → `personality.md` → `formatting.md` → `roles/$ROLE.md` →
+`safety.md` → `memory/user.md` → `knowledge/**/*.md` (sorted; each wrapped in
+`--- START/END FILE ---`; files >100k skipped). Each block is wrapped in
+`=== HEADING ===` markers. The `Modelfile` embeds `system.txt` literally inside
+`SYSTEM """ ... """` (no shell expansion); builders abort if a source contains `"""`.
+
+## Where changes belong
+
+| Change | Goes in |
+|---|---|
+| Behavior rule, all models | `prompts/` |
+| Behavior rule, one role | `prompts/roles/<role>.md` |
+| Stable fact about Casey | `memory/user.md` |
+| Reusable technical reference | `knowledge/` |
+| New eval task | `eval/coding_tasks.py` / `eval/learning_tasks.py` |
+| One-off context | not in the build |
+
+Keep prompts terse — every token is spent every turn. When a model misbehaves,
+**remove** rules before adding; sampler tuning (`PARAMS`) is fair game.
+
+## Evaluation
+
+Three runners, each ranks all models and declares a winner. Output lands in
+`eval/runs/<UTC>/`.
+
+```bash
+./eval/run.py          # content/SEO: format + instruction discipline
+./eval/run-code.py     # coding: real pass@1 (runs code vs hidden asserts)
+./eval/run-learn.py    # tutoring: code + explanation, graded by a local judge
+```
+
+Common flags: `--models`, `--attempts`, `--timeout`. Code/learn add `--tasks`
+and `--exec-timeout`; learn adds `--judge` (default `granite-custom`).
+
+**Thinking mode:** append `:think` to a model spec (`qwen-custom:think`) to test
+Qwen thinking on vs off — useful on `run-code.py`/`run-learn.py`, skip for content.
+
+> Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
+> subprocess with a timeout, but it is **not** containerized. Trusted models only.
+
+## Tuning
+
+**Sampler params** live in each builder's `PARAMS` block. `qwen-custom` is tuned
+for terse technical work (`temperature 0.6`, `top_p 0.95`, `top_k 20`); the
+other four run hotter — see each `PARAMS` for values.
+
+**Context** (`num_ctx`) is set per-model to keep each fully on a 10 GB GPU:
+qwen/llama `16384`, granite/ministral `12288`, gemma `32768`. The server's
+`OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top.
+
+**Ollama server** (`sudo systemctl edit ollama.service`):
 
 ```ini
 [Service]
 Environment="OLLAMA_KV_CACHE_TYPE=q5_0"
 Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_NUM_PARALLEL=1"
-Environment="OLLAMA_KEEP_ALIVE=10m"
+Environment="OLLAMA_KEEP_ALIVE=30m"
 Environment="OLLAMA_MAX_LOADED_MODELS=1"
 ```
 
-## Editing Workflow
+KV-cache quantization is server-only (no Modelfile equivalent) and needs flash
+attention on to take effect.
 
-1. Edit the relevant source file in `prompts/`, `memory/`, `knowledge/`, or the config block of the relevant `build-*` script.
-2. Run the matching builder (e.g. `./build-qwen`).
-3. Start a fresh model session with `ollama run --think false <name>`.
-4. If behavior is wrong, adjust the smallest responsible layer and rebuild.
+## Thinking mode (Qwen-only)
 
-Use this order when deciding where a change belongs:
-
-- Behavior rule for all models? Put it in `prompts/`.
-- Behavior rule for one role only? Put it in `prompts/roles/<role>.md`.
-- Stable fact about Casey? Put it in `memory/user.md`.
-- Reusable technical reference? Put it in `knowledge/`.
-- Temporary context? Keep it out of the build.
-
-## Maintenance
-- **Memory**: update when a preference becomes permanent. One-off facts don't belong here.
-- **Knowledge**: add a file when you've explained the same technical context twice.
-- **Prompts**: keep terse. Every token of system prompt is a token spent every turn.
-
-## Model Notes
-
-This repo does not fine-tune weights; it customizes each base model through
-the system prompt, reference context, and Ollama sampler parameters in the
-generated `Modelfile`. Sampler params live in the config block at the top of
-each `build-*` script — edit there.
-
-`qwen-custom` defaults are tuned for a concise technical assistant
-(`temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0`, `repeat_last_n 256`,
-`presence_penalty 1.5`). `granite-custom` and `llama-custom` run hotter for
-prose; see the `PARAMS` block in each builder for exact values.
-
-`num_ctx` is set per-model in each builder's `PARAMS` (`16384` across all
-three today). The Ollama server's `OLLAMA_CONTEXT_LENGTH` still applies as a
-server-side ceiling — see the systemd snippet above for the current value.
-
-## Next Step: Tools
-Tool calling (shell, files, web, git, docker, notes) lives in a future `tools/` folder
-with a runner that wraps the Ollama native API. Out of scope for the baseline.
-
-## Thinking Mode
-
-Thinking mode is Qwen-only. `granite-custom` and `llama-custom` have no thinking
-mode — run them with plain `ollama run <name>` (passing `--think false` errors).
-
-Ollama exposes Qwen thinking mode as a runtime option, not a Modelfile
-parameter. Use this for normal interactive sessions:
+Thinking is a runtime flag, not a Modelfile parameter — and only `qwen-custom`
+has it (`granite`/`llama`/`ministral`/`gemma` error on `--think`).
 
 ```bash
-ollama run --think false qwen-custom
+ollama run --think false qwen-custom   # default: off, for chat/short Qs
+ollama run qwen-custom                 # thinking on, for design/debugging
+ollama run --hidethinking qwen-custom  # on but hidden in the terminal
 ```
 
-If you want reasoning enabled but hidden in the terminal, use:
+Thinking is calibrated for problem-solving, not chitchat — asking it to handle a
+greeting with thinking on produces long looping traces; that's by design.
 
-```bash
-ollama run --hidethinking qwen-custom
-```
+## Docs
 
-### When to use which
-
-Thinking mode is calibrated for problem-solving, not chitchat. Use `qc` for
-greetings, acknowledgments, and short factual questions. Use `qct` when you
-want the model to deliberate — code architecture, debugging, design tradeoffs.
-Asking `qct` to handle a greeting will produce long, looping thinking traces;
-that is the model's design, not a bug to fix in the prompt.
+`AGENTS.md` (agent workflow contract — `CLAUDE.md` just points here) ·
+`PLAN.md` (blueprint + rationale) · `IMPLEMENT.md` (phase log).
