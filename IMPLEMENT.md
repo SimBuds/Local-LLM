@@ -4,7 +4,7 @@ Granular, phase-by-phase tracker. Update this file as part of every commit per t
 
 ## Current state
 
-The pipeline is built and working. **Five** builders produce five models from the shared prompt stack plus a per-model role overlay (`coding` / `prose`), all tuned to sit 100% on a 10 GB GPU. An eval suite (`eval/`) ranks models for content, coding correctness, and tutoring. In progress: thinking-mode A/B (Phase 15) — `qwen-custom` think on vs off on the coding + learning runs.
+The pipeline is built and working, consolidated to **3 purpose-built models** (benchmark-driven): `gemma-custom` (content, `prose` overlay), `granite-custom` (coding assistant + tutor, `coding` overlay), `qwen-custom` (general + thinking-on experimental). All sit 100% on a 10 GB GPU. An eval suite (`eval/`) ranks models for content, coding correctness, and tutoring; results in `eval/RESULTS.md`. `llama-custom` + `ministral-custom` removed. Next: define the coding-tutor feature spec to unblock Phase 19.
 
 ## Completed (baseline)
 
@@ -154,6 +154,54 @@ each target doc. No code touched. Role-overlay feature complete.
 **Verification**: 2-model smoke (each judged only by the other); full 5-model panel run.
 **Status**: [x] done
 **Report**: Debias **confirmed** granite rather than overturning it — panel-judged best tutor `granite-custom` 9.9/10 (vs 10.0 self-included). Final crowns (debiased, thinking-off): **content → `gemma-custom`** (5/5, 180 tok/s); **coding → `granite-custom`** (90%, 1.7s/call); **teaching → `granite-custom`** (9.9/10). Note: qwen/gemma explain as well as granite (9.8–9.9 when correct) but lose on the code-pass gate.
+
+## Consolidation to 3 purpose-built models
+
+Goal: collapse the 5-model lineup into 3 task models — content, coding-assistant,
+coding-tutor — keeping the best base per role (a base may back two roles via
+overlays). Decisions taken this session: structure = best-base-per-role; tutor =
+deferred until its feature spec exists; assistant = correctness-first. Full
+benchmark data + rationale in `eval/RESULTS.md`.
+
+### Phase 17 — Record the benchmark-driven model-selection decision (docs only)
+**Files**: `eval/RESULTS.md` (new), `IMPLEMENT.md`
+**Changes**: write the canonical results doc — three target roles, the decision (content→gemma, assistant→granite, tutor→deferred/granite-frontrunner), full leaderboards, keep/remove reasoning, open items.
+**Reuse audit**: none; documentation only.
+**Verification**: `eval/RESULTS.md` lists the 3 roles, the 2 confirmed keepers, and the removal recommendation with reasoning.
+**Status**: [x] done
+**Report**: Keepers = `gemma-custom` (content), `granite-custom` (coding assistant; tutor frontrunner). Removals recommended: `llama-custom` (wins no axis), `ministral-custom` (redundant #2), with `qwen-custom` flagged to KEEP as the general daily-driver/jobhunt model rather than remove. No models or build scripts deleted yet — destructive removal pending user confirmation (Phase 18).
+
+### Phase 17b — Content overlay switch + qwen thinking-on retention
+**Files**: `build-gemma`, `eval/_ollama.py`, `eval/run.py`, `eval/RESULTS.md`, `PLAN.md`, `README.md`
+**Changes**: A/B'd gemma content on `coding` vs `prose` overlay (both 5/5 clean, same speed) → switched `gemma-custom` to `prose` (better fit for human-like writing). Kept `qwen-custom`: set `DEFAULT_MODELS` to `qwen-custom:think` so eval tests it thinking-on; added `resolve_model` to `run.py` so it honors `:think`.
+**Reuse audit**: reused `resolve_model`; temp builder `build-gemma-prose` created then deleted.
+**Verification**: `gemma-custom/system.txt` carries the Long-Form Writing section; overlay A/B summary 5/5 both; temp model `ollama rm`'d.
+**Status**: [x] done
+**Report**: gemma-custom rebuilt on prose overlay; temp `gemma-prose-test` model + `build-gemma-prose` script removed. qwen retained as the thinking-on experimental model. Docs synced (overlay assignment lists, qwen note, RESULTS open items).
+
+### Phase 18 — Execute removals: `llama-custom` + `ministral-custom` (DESTRUCTIVE — pending confirmation)
+**Files**: `build-llama`, `build-ministral` (delete), `eval/_ollama.py` (`DEFAULT_MODELS`), `PLAN.md`, `README.md`, `eval/RESULTS.md`
+**Changes**: `ollama rm llama-custom ministral-custom`; delete their build scripts; trim `DEFAULT_MODELS`; sync model tables. (qwen-custom confirmed KEEP — not removed.)
+**Reuse audit**: n/a.
+**Verification**: `ollama list` no longer shows the two; `git status` shows deleted scripts; docs list only survivors (qwen-think, granite, gemma).
+**Status**: [x] done
+**Report**: User `ollama rm`'d `llama-custom` + `ministral-custom` (and their bases). Repo cleanup executed: deleted `build-llama`/`build-ministral` and their `models/` dirs; trimmed `DEFAULT_MODELS` to `["qwen-custom:think", "granite-custom", "gemma-custom"]`; fixed the lock-step header comment in the 3 surviving builders; synced model tables/overlay lists/context notes in README, PLAN, AGENTS, RESULTS. `qwen-custom` kept as the thinking-on experimental model.
+
+### Phase 18b — Tune `build-qwen` sampler for thinking quality
+**Files**: `build-qwen`, `README.md`
+**Changes**: confirmed thinking is on by default at the model level (generate call w/o `think` returns a populated thinking field — no Modelfile knob exists for it). Retuned PARAMS for thinking: `presence_penalty 1.5 → 1.0` (Qwen warns high presence penalty degrades thinking / mixes languages; 1.0 still curbs runaway loops), added `num_predict 8192` (trace + answer headroom within num_ctx 16384). Kept temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 (Qwen's recommended thinking sampling). Documented in the builder comments + README Tuning.
+**Reuse audit**: none; PARAMS edit only.
+**Verification**: rebuilt — Modelfile carries `presence_penalty 1.0` + `num_predict 8192`; `ollama ps` shows 9.0 GB @ 100% GPU, ctx 16384; default generate still returns a populated thinking field.
+**Status**: [x] done
+**Report**: qwen-custom rebuilt as the thinking-tuned experimental model. Sets up further thinking benchmarking (eval lineup already pins `qwen-custom:think`).
+
+### Phase 19 — Build the coding-tutor role overlay + benchmark (BLOCKED on tutor spec)
+**Files**: `prompts/roles/tutor.md` (new), a tutor builder, `eval/run-learn.py` (feature-specific scoring)
+**Changes**: author the `tutor` overlay to the spec; build `granite`(+others) on it; extend the learning benchmark to score the defined teaching features; pick the winner.
+**Reuse audit**: reuse `run-learn.py` panel harness.
+**Verification**: tutor model built; benchmark ranks tutor candidates on the new features.
+**Status**: [ ] blocked — needs the tutor feature definition
+**Report**: (pending)
 
 ## Backlog (no phase scheduled)
 

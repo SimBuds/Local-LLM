@@ -18,10 +18,9 @@ from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODELS = [
-    "qwen-custom", "granite-custom", "llama-custom",
-    "ministral-custom", "gemma-custom",
-]
+# qwen is kept as the thinking-on experimental model — the `:think` suffix makes
+# every default eval run test it with thinking enabled (resolve_model handles it).
+DEFAULT_MODELS = ["qwen-custom:think", "granite-custom", "gemma-custom"]
 
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)

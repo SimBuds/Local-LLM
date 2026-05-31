@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================================
 # Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-llama. Keep the assembly logic below in lock-step.
+# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
 MODEL_NAME="granite-custom"
 BASE_MODEL="granite4.1:8b"
@@ -12,10 +12,9 @@ ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
 EXTRAS=()
 
-# Sampler params. Granite 4.1 is tightly instruction-tuned; less sampler heat
-# than Llama, lower repeat_penalty since Granite has less loop tendency.
+# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
 PARAMS=(
-  'num_ctx 12288'      # trimmed from 16384 to keep KV cache on a 10GB GPU
+  'num_ctx 16384'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
@@ -68,13 +67,11 @@ mkdir -p "$OUT_DIR"
   fi
 } > "$SYSTEM_FILE"
 
-# Triple-quotes would close the SYSTEM heredoc early.
 if grep -q '"""' "$SYSTEM_FILE"; then
   echo "ERROR: assembled prompt contains triple-quotes; would break Modelfile parsing." >&2
   exit 1
 fi
 
-# SYSTEM body is `cat`-ed literally — never $()-expanded, so $VAR/backticks/\ are safe.
 {
   echo "FROM $BASE_MODEL"
   for line in "${EXTRAS[@]}"; do echo "$line"; done

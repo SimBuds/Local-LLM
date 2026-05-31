@@ -6,16 +6,15 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 ## Models
 
-Five siblings from one shared prompt stack (`prompts/` + `memory/user.md`) and a
-per-model role overlay. `num_ctx` is tuned so each sits 100% on a 10 GB GPU.
+Three purpose-built models from one shared prompt stack (`prompts/` +
+`memory/user.md`) and a per-model role overlay, picked by benchmark
+([eval/RESULTS.md](eval/RESULTS.md)). `num_ctx` is tuned so each sits 100% on a 10 GB GPU.
 
-| Model              | Base             | ctx   | Best for                                              |
-|--------------------|------------------|-------|-------------------------------------------------------|
-| `qwen-custom`      | `qwen3.5:9b`     | 16384 | Default daily driver; code/debug/design. Only model with thinking mode. |
-| `granite-custom`   | `granite4.1:8b`  | 12288 | Structured output; top code-correctness + tutor scorer. |
-| `llama-custom`     | `llama3.1:8b`    | 16384 | Long-form prose (`prose` overlay).                    |
-| `ministral-custom` | `ministral-3:8b` | 12288 | Compact instruction-following; strong on coding.      |
-| `gemma-custom`     | `gemma4:e2b`     | 32768 | Fast all-rounder (~175 tok/s); best content scorer.   |
+| Model            | Base            | ctx   | Role / best-for                                       |
+|------------------|-----------------|-------|-------------------------------------------------------|
+| `gemma-custom`   | `gemma4:e2b`    | 32768 | **Content generation** (`prose` overlay) — best content scorer, ~175 tok/s. |
+| `granite-custom` | `granite4.1:8b` | 12288 | **Coding assistant + tutor** (`coding` overlay) — top code-correctness and tutor scorer. |
+| `qwen-custom`    | `qwen3.5:9b`    | 16384 | General daily driver + **thinking-on experimental** model; only model with thinking mode. |
 
 Eval winners (see [Evaluation](#evaluation)): **content → `gemma-custom`**,
 **coding correctness + tutoring → `granite-custom`**.
@@ -33,7 +32,7 @@ Each builder assembles the prompt stack, writes
 ## Build
 
 ```bash
-./build-qwen  ./build-granite  ./build-llama  ./build-ministral  ./build-gemma
+./build-qwen  ./build-granite  ./build-gemma
 ```
 
 The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
@@ -52,8 +51,8 @@ ai/
 │   ├── formatting.md     # output shape
 │   ├── safety.md         # operational safety
 │   └── roles/            # per-model overlays (selected by $ROLE)
-│       ├── coding.md     # qwen, granite, ministral, gemma
-│       └── prose.md      # llama
+│       ├── coding.md     # qwen, granite
+│       └── prose.md      # gemma (content)
 ├── memory/user.md        # durable user profile
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # evaluation suite (see below)
@@ -109,10 +108,13 @@ Qwen thinking on vs off — useful on `run-code.py`/`run-learn.py`, skip for con
 | Coding correctness | **granite-custom** | 27/30 (90%) | 1.7 s/call |
 | Teaching (panel-judged) | **granite-custom** | 9.9/10 | 97 tok/s |
 
-Notes: ministral-custom is a strong #2 on content (5/5 but ~half the speed) and
-coding (83%). qwen/gemma explain as well as granite (9.8–9.9 when correct) but
-trail on the code-pass gate. Thinking mode wasn't worth its ~18× latency on any
-skill — kept as a deliberate niche lever, not a default.
+Notes: qwen/gemma explain as well as granite (9.8–9.9 when correct) but trail on
+the code-pass gate. Thinking mode wasn't worth its ~18× latency on any skill, so
+qwen is kept as a deliberate thinking-on experimental model, not a default path.
+(Removed after benchmarking: `llama-custom`, `ministral-custom` — won no role.)
+
+Full leaderboards, the 3-role consolidation decision, and keep/remove reasoning:
+[`eval/RESULTS.md`](eval/RESULTS.md).
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
 > subprocess with a timeout, but it is **not** containerized. Trusted models only.
@@ -120,11 +122,13 @@ skill — kept as a deliberate niche lever, not a default.
 ## Tuning
 
 **Sampler params** live in each builder's `PARAMS` block. `qwen-custom` is tuned
-for terse technical work (`temperature 0.6`, `top_p 0.95`, `top_k 20`); the
-other four run hotter — see each `PARAMS` for values.
+for **thinking** (Qwen's recommended thinking-mode sampling: `temperature 0.6`,
+`top_p 0.95`, `top_k 20`, `min_p 0`; `presence_penalty 1.0` to curb runaway
+think-loops; `num_predict 8192` for trace headroom). Thinking is on by default at
+the model level. granite/gemma run hotter — see each `PARAMS` for values.
 
 **Context** (`num_ctx`) is set per-model to keep each fully on a 10 GB GPU:
-qwen/llama `16384`, granite/ministral `12288`, gemma `32768`. The server's
+qwen `16384`, granite `12288`, gemma `32768`. The server's
 `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top.
 
 **Ollama server** (`sudo systemctl edit ollama.service`):
@@ -144,12 +148,10 @@ attention on to take effect.
 ## Thinking mode (Qwen-only)
 
 Thinking is a runtime flag, not a Modelfile parameter — and only `qwen-custom`
-has it (`granite`/`llama`/`ministral`/`gemma` error on `--think`).
+has it (`granite`/`gemma` error on `--think`).
 
 ```bash
-ollama run --think false qwen-custom   # default: off, for chat/short Qs
-ollama run qwen-custom                 # thinking on, for design/debugging
-ollama run --hidethinking qwen-custom  # on but hidden in the terminal
+ollama run qwen-custom
 ```
 
 Thinking is calibrated for problem-solving, not chitchat — asking it to handle a

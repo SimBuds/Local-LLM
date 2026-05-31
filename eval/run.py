@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    DEFAULT_MODELS, REPO_ROOT, generate, new_run_dir, tok_per_s,
+    DEFAULT_MODELS, REPO_ROOT, generate, new_run_dir, resolve_model, tok_per_s,
 )
 
 DEFAULT_PROMPT = Path(__file__).parent / "prompts" / "seo-product.md"
@@ -101,9 +101,10 @@ def is_clean(s: dict, keyword: str | None) -> bool:
 def run_attempt(model: str, prompt: str, n: int, total: int, timeout: int,
                 keyword: str | None) -> dict:
     print(f"  [{n}/{total}] ", end="", flush=True)
+    name, think = resolve_model(model)
     t0 = time.monotonic()
     try:
-        text, meta = generate(model, prompt, timeout)
+        text, meta = generate(name, prompt, timeout, think=think)
     except (urllib.error.URLError, TimeoutError) as e:
         print(f"FAIL ({time.monotonic()-t0:.1f}s): {e}")
         return {"ok": False, "error": str(e), "elapsed_s": time.monotonic() - t0}

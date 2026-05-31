@@ -3,20 +3,31 @@ set -euo pipefail
 
 # ============================================================================
 # Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-llama. Keep the assembly logic below in lock-step.
+# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
 MODEL_NAME="qwen-custom"
 BASE_MODEL="qwen3.5:9b"
 ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). Qwen3.5 family needs them.
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). Qwen3.5 family needs them; the
+# qwen3.5 RENDERER/PARSER are what emit + parse the <think> trace. Thinking is
+# ON BY DEFAULT at the model level (a generate call with no `think` param returns
+# a populated thinking field) — there is no Modelfile knob to set it; it's a
+# runtime flag. This model is the designated thinking-on experimental model.
 EXTRAS=(
   'TEMPLATE {{ .Prompt }}'
   'RENDERER qwen3.5'
   'PARSER qwen3.5'
 )
 
-# Sampler params. Tuned for technical-assistant determinism.
+# Sampler params — tuned for THINKING quality (Qwen3's recommended thinking-mode
+# sampling: temp 0.6 / top_p 0.95 / top_k 20 / min_p 0; never greedy).
+#   - presence_penalty dropped 1.5 -> 1.0: Qwen warns high presence penalty causes
+#     language-mixing and degrades thinking; 1.0 still curbs the runaway-loop
+#     failure mode (thinking on trivial prompts can loop forever).
+#   - num_predict 8192: headroom so a long <think> trace + the answer aren't
+#     truncated (fits inside num_ctx 16384 alongside the ~2.5k-token system prompt).
+# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
 PARAMS=(
   'num_ctx 16384'
   'temperature 0.6'
@@ -24,7 +35,8 @@ PARAMS=(
   'top_k 20'
   'min_p 0'
   'repeat_last_n 256'
-  'presence_penalty 1.5'
+  'presence_penalty 1.0'
+  'num_predict 8192'
 )
 
 # ============================================================================
@@ -71,13 +83,11 @@ mkdir -p "$OUT_DIR"
   fi
 } > "$SYSTEM_FILE"
 
-# Triple-quotes would close the SYSTEM heredoc early.
 if grep -q '"""' "$SYSTEM_FILE"; then
   echo "ERROR: assembled prompt contains triple-quotes; would break Modelfile parsing." >&2
   exit 1
 fi
 
-# SYSTEM body is `cat`-ed literally — never $()-expanded, so $VAR/backticks/\ are safe.
 {
   echo "FROM $BASE_MODEL"
   for line in "${EXTRAS[@]}"; do echo "$line"; done

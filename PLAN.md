@@ -15,28 +15,28 @@ model. Then measure each model empirically rather than guessing which is best.
 
 ## Models
 
-Five siblings, all built from one neutral prompt stack plus a per-model **role
-overlay** (`coding` or `prose`) selected by each builder's `ROLE`.
+Three purpose-built models (one per task, chosen by benchmark — see
+`eval/RESULTS.md`), all built from one neutral prompt stack plus a per-model
+**role overlay** (`coding` or `prose`) selected by each builder's `ROLE`.
 
-| Name               | Base             | num_ctx | Role / best-for                              |
-|--------------------|------------------|---------|----------------------------------------------|
-| `qwen-custom`      | `qwen3.5:9b`     | 16384   | Daily driver; terse technical assistant; only model with runtime thinking mode |
-| `granite-custom`   | `granite4.1:8b`  | 12288   | Instruction-following / structured output; top code-correctness + tutor scorer |
-| `llama-custom`     | `llama3.1:8b`    | 16384   | Long-form prose (`prose` overlay)            |
-| `ministral-custom` | `ministral-3:8b` | 12288   | Compact instruction-following; strong on coding |
-| `gemma-custom`     | `gemma4:e2b`     | 32768   | Fast all-rounder (~175 tok/s); best content scorer; large context |
+| Name             | Base            | num_ctx | Role / best-for                              |
+|------------------|-----------------|---------|----------------------------------------------|
+| `gemma-custom`   | `gemma4:e2b`    | 32768   | **Content generation** (`prose` overlay); best content scorer, ~175 tok/s, large context |
+| `granite-custom` | `granite4.1:8b` | 12288   | **Coding assistant + tutor** (`coding` overlay); top code-correctness + tutor scorer |
+| `qwen-custom`    | `qwen3.5:9b`    | 16384   | General daily driver + **thinking-on experimental** model; only model with runtime thinking mode |
 
+Removed after benchmarking (won no role): `llama-custom`, `ministral-custom`.
 Project-specific overlays (e.g. SEO rules) are injected at request time by the
 consuming app, not baked in.
 
-### Why these five, and why these settings
+### Why these three, and why these settings
 
 - **Hardware constraint: one RTX 3080, 10 GB VRAM.** Every model is tuned to sit
   **100% on GPU** (no CPU spill). The lever is `num_ctx` (KV cache scales with
   context); `OLLAMA_KV_CACHE_TYPE=q5_0` + flash attention are already on at the
   server, so context length is the remaining per-model knob.
-- `granite-custom`/`ministral-custom` overflowed 10 GB at 16384 → trimmed to
-  **12288** to fit. `qwen-custom`/`llama-custom` already fit at 16384.
+- `granite-custom` overflowed 10 GB at 16384 → trimmed to **12288** to fit.
+  `qwen-custom` already fits at 16384.
 - `gemma-custom` originally used `gemma4:e4b` (9.6 GB weights — too big to fully
   offload). **Swapped to `gemma4:e2b`** (7.2 GB); its light weights + Gemma 3n
   sliding-window attention make KV cheap, so it runs at **32768** and still fits.
@@ -75,7 +75,7 @@ wrapped in `=== SECTION ===` markers:
 1. `prompts/system.md`
 2. `prompts/personality.md`
 3. `prompts/formatting.md`
-4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite/ministral/gemma, `prose` for llama)
+4. `prompts/roles/$ROLE.md` (per-model overlay: `coding` for qwen/granite, `prose` for gemma)
 5. `prompts/safety.md`
 6. `memory/user.md`
 7. `knowledge/**/*.md` (sorted, `--- START/END FILE ---` wrappers, skip > 100k)
@@ -85,7 +85,7 @@ shell expansion). Builders abort if any source contains `"""`.
 
 ## Build scripts
 
-Five scripts, intentionally mirrored. Only the top config block differs
+Three scripts, intentionally mirrored. Only the top config block differs
 (`MODEL_NAME`, `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`). The assembly logic
 below the `Shared assembly` divider is byte-identical and must stay in lock-step.
 

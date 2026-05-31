@@ -3,18 +3,18 @@ set -euo pipefail
 
 # ============================================================================
 # Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-llama. Keep the assembly logic below in lock-step.
+# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
 MODEL_NAME="gemma-custom"
-BASE_MODEL="gemma4:e2b"
-ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
+BASE_MODEL="gemma4:e4b"
+ROLE="prose"            # role overlay file: prompts/roles/$ROLE.md
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Gemma uses defaults.
 EXTRAS=()
 
-# Sampler params. Gemma 4 general-purpose baseline.
+# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
 PARAMS=(
-  'num_ctx 32768'      # e2b is light (7.2GB) + sliding-window KV; room for 2x ctx on 10GB
+  'num_ctx 32768'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
@@ -67,13 +67,11 @@ mkdir -p "$OUT_DIR"
   fi
 } > "$SYSTEM_FILE"
 
-# Triple-quotes would close the SYSTEM heredoc early.
 if grep -q '"""' "$SYSTEM_FILE"; then
   echo "ERROR: assembled prompt contains triple-quotes; would break Modelfile parsing." >&2
   exit 1
 fi
 
-# SYSTEM body is `cat`-ed literally — never $()-expanded, so $VAR/backticks/\ are safe.
 {
   echo "FROM $BASE_MODEL"
   for line in "${EXTRAS[@]}"; do echo "$line"; done
