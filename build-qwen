@@ -20,14 +20,16 @@ EXTRAS=(
   'PARSER qwen3.5'
 )
 
-# Sampler params — tuned for THINKING quality (Qwen3's recommended thinking-mode
-# sampling: temp 0.6 / top_p 0.95 / top_k 20 / min_p 0; never greedy).
-#   - presence_penalty dropped 1.5 -> 1.0: Qwen warns high presence penalty causes
-#     language-mixing and degrades thinking; 1.0 still curbs the runaway-loop
-#     failure mode (thinking on trivial prompts can loop forever).
-#   - num_predict 8192: headroom so a long <think> trace + the answer aren't
-#     truncated (fits inside num_ctx 16384 alongside the ~2.5k-token system prompt).
-# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
+# Sampler params — tuned for THINKING (Qwen3's recommended thinking-mode sampling:
+# temp 0.6 / top_p 0.95 / top_k 20 / min_p 0; never greedy).
+# EMPIRICAL (2026-05-31): two attempted "thinking" tweaks both regressed coding
+# pass@1 from 87%, so this is back to the proven config:
+#   - presence_penalty 1.5 (kept): 1.0 dropped pass@1 to 67%.
+#   - NO num_predict: Ollama's default -1 already generates until EOS / context
+#     fills (~13.8k tokens), i.e. max headroom. Capping at 8192 truncated long
+#     <think> traces and dropped pass@1 to 73%. Don't add it back.
+# Note: thinking-qwen is high-variance (67-87% across single 5-attempt runs);
+# treat small param deltas as noise unless confirmed over multiple runs.
 PARAMS=(
   'num_ctx 16384'
   'temperature 0.6'
@@ -35,8 +37,7 @@ PARAMS=(
   'top_k 20'
   'min_p 0'
   'repeat_last_n 256'
-  'presence_penalty 1.0'
-  'num_predict 8192'
+  'presence_penalty 1.5'
 )
 
 # ============================================================================

@@ -121,11 +121,13 @@ Full leaderboards, the 3-role consolidation decision, and keep/remove reasoning:
 
 ## Tuning
 
-**Sampler params** live in each builder's `PARAMS` block. `qwen-custom` is tuned
-for **thinking** (Qwen's recommended thinking-mode sampling: `temperature 0.6`,
-`top_p 0.95`, `top_k 20`, `min_p 0`; `presence_penalty 1.0` to curb runaway
-think-loops; `num_predict 8192` for trace headroom). Thinking is on by default at
-the model level. granite/gemma run hotter — see each `PARAMS` for values.
+**Sampler params** live in each builder's `PARAMS` block. `qwen-custom` uses
+Qwen3's recommended thinking-mode sampling (`temperature 0.6`, `top_p 0.95`,
+`top_k 20`, `min_p 0`, `presence_penalty 1.5`); thinking is on by default at the
+model level. Two attempted thinking tweaks (pp→1.0, adding `num_predict 8192`)
+both *regressed* coding pass@1 from 87%, so the config stayed put — see the
+`build-qwen` PARAMS comment. Thinking-qwen is high-variance (67–87% run-to-run).
+granite/gemma run hotter — see each `PARAMS` for values.
 
 **Context** (`num_ctx`) is set per-model to keep each fully on a 10 GB GPU:
 qwen `16384`, granite `12288`, gemma `32768`. The server's
