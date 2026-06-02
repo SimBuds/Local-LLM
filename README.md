@@ -8,16 +8,16 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 Three purpose-built models from one shared prompt stack (`prompts/` +
 `memory/user.md`) and a per-model role overlay, picked by benchmark
-([eval/RESULTS.md](eval/RESULTS.md)). `num_ctx` is tuned so each sits 100% on a 10 GB GPU.
+([testing.md](testing.md)). `num_ctx` is tuned per-model for a 10 GB GPU (only
+`qwen-custom` fits fully on-GPU; measured splits in [testing.md](testing.md)).
 
 | Model            | Base            | ctx   | Role / best-for                                       |
 |------------------|-----------------|-------|-------------------------------------------------------|
-| `gemma-custom`   | `gemma4:e2b`    | 32768 | **Content generation** (`prose` overlay) — best content scorer, ~175 tok/s. |
+| `gemma-custom`   | `gemma4:e4b`    | 16384 | **Content generation** (`prose` overlay) — best content scorer, ~175 tok/s. |
 | `granite-custom` | `granite4.1:8b` | 12288 | **Coding assistant + tutor** (`coding` overlay) — top code-correctness and tutor scorer. |
 | `qwen-custom`    | `qwen3.5:9b`    | 16384 | General daily driver + **thinking-on experimental** model; only model with thinking mode. |
 
-Eval winners (see [Evaluation](#evaluation)): **content → `gemma-custom`**,
-**coding correctness + tutoring → `granite-custom`**.
+Eval winners and full leaderboards: **[testing.md](testing.md)**.
 
 ## Quickstart
 
@@ -84,37 +84,11 @@ Keep prompts terse — every token is spent every turn. When a model misbehaves,
 
 ## Evaluation
 
-Three runners, each ranks all models and declares a winner. Output lands in
-`eval/runs/<UTC>/`.
-
-```bash
-./eval/run.py          # content/SEO: format + instruction discipline
-./eval/run-code.py     # coding: real pass@1 (runs code vs hidden asserts)
-./eval/run-learn.py    # tutoring: code + explanation, graded by a local judge
-```
-
-Common flags: `--models`, `--attempts`, `--timeout`. Code/learn add `--tasks`
-and `--exec-timeout`; learn adds `--judges` (a leave-one-out panel — default is
-all `--models`, so no model grades its own output).
-
-**Thinking mode:** append `:think` to a model spec (`qwen-custom:think`) to test
-Qwen thinking on vs off — useful on `run-code.py`/`run-learn.py`, skip for content.
-
-### Latest crowns (5 attempts, debiased, thinking-off)
-
-| Skill | King | Score | Speed |
-|---|---|---|---|
-| Content / SEO | **gemma-custom** | 5/5 clean (100%) | 180 tok/s |
-| Coding correctness | **granite-custom** | 27/30 (90%) | 1.7 s/call |
-| Teaching (panel-judged) | **granite-custom** | 9.9/10 | 97 tok/s |
-
-Notes: qwen/gemma explain as well as granite (9.8–9.9 when correct) but trail on
-the code-pass gate. Thinking mode wasn't worth its ~18× latency on any skill, so
-qwen is kept as a deliberate thinking-on experimental model, not a default path.
-(Removed after benchmarking: `llama-custom`, `ministral-custom` — won no role.)
-
-Full leaderboards, the 3-role consolidation decision, and keep/remove reasoning:
-[`eval/RESULTS.md`](eval/RESULTS.md).
+The eval suite, current leaderboards, the 3-model decision, and testing plans
+live in **[testing.md](testing.md)** — the testing source of truth. Four runners
+under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1),
+`run-learn.py` (tutoring), `run-speed.py` (tok/s + GPU/CPU split). Output lands
+in `eval/runs/<UTC>/`.
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
 > subprocess with a timeout, but it is **not** containerized. Trusted models only.
@@ -129,9 +103,10 @@ both *regressed* coding pass@1 from 87%, so the config stayed put — see the
 `build-qwen` PARAMS comment. Thinking-qwen is high-variance (67–87% run-to-run).
 granite/gemma run hotter — see each `PARAMS` for values.
 
-**Context** (`num_ctx`) is set per-model to keep each fully on a 10 GB GPU:
-qwen `16384`, granite `12288`, gemma `32768`. The server's
-`OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top.
+**Context** (`num_ctx`) is set per-model targeting a 10 GB GPU: qwen `16384`,
+granite `12288`, gemma `16384`. The server's `OLLAMA_CONTEXT_LENGTH` is a hard
+ceiling on top. Measured GPU/CPU splits (some models partially spill) are in
+[testing.md](testing.md).
 
 **Ollama server** (`sudo systemctl edit ollama.service`):
 
@@ -162,4 +137,4 @@ greeting with thinking on produces long looping traces; that's by design.
 ## Docs
 
 `AGENTS.md` (agent workflow contract — `CLAUDE.md` just points here) ·
-`PLAN.md` (blueprint + rationale) · `IMPLEMENT.md` (phase log).
+[`testing.md`](testing.md) (testing source of truth: suite, results, plans).

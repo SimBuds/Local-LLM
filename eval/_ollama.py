@@ -40,18 +40,25 @@ def resolve_model(spec: str) -> tuple[str, bool]:
     return spec, False
 
 
-def generate(model: str, prompt: str, timeout: int, think: bool = False) -> tuple[str, dict]:
+def generate(model: str, prompt: str, timeout: int, think: bool = False,
+             options: dict | None = None) -> tuple[str, dict]:
     """Single non-streaming call. Returns (response_text, raw_meta).
 
     `model` is the real Ollama name (resolve a `:think` spec first). `think`
-    toggles Qwen thinking mode; it is ignored by non-Qwen models.
+    toggles Qwen thinking mode; it is ignored by non-Qwen models. `options`, if
+    given, is merged into the request as Ollama generate options (e.g.
+    `{"num_predict": 256}` to cap output length) — used by run-speed.py to bound
+    generation so CPU-spillover models finish quickly.
     """
-    payload = json.dumps({
+    body_obj = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "think": think,
-    }).encode("utf-8")
+    }
+    if options:
+        body_obj["options"] = options
+    payload = json.dumps(body_obj).encode("utf-8")
     req = urllib.request.Request(
         OLLAMA_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST",
@@ -64,6 +71,12 @@ def generate(model: str, prompt: str, timeout: int, think: bool = False) -> tupl
 def tok_per_s(meta: dict) -> float:
     n = meta.get("eval_count", 0)
     return n / (meta.get("eval_duration", 1) / 1e9) if n else 0.0
+
+
+def prompt_tok_per_s(meta: dict) -> float:
+    n = meta.get("prompt_eval_count", 0)
+    d = meta.get("prompt_eval_duration", 0)
+    return n / (d / 1e9) if n and d else 0.0
 
 
 def new_run_dir(out_root: Path) -> Path:

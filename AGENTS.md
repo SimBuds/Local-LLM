@@ -151,3 +151,9 @@ Keep responses tight. State results and decisions directly. Don't narrate intern
 ## Project-Specific Rules
 
 *Everything above this line is the shared workflow contract and should not be edited per-project. Add project-specific guidance below — stack, build/test commands, conventions, paths to other docs, domain rules.*
+
+- **Testing** is owned by [`testing.md`](testing.md) (root) — the single source
+  of truth for the eval suite, leaderboards, the model-selection decision, and
+  testing plans. Read it before any eval/benchmark work; record results there.
+  Models are built by the `build-*` scripts; see `README.md` for the prompt-stack
+  architecture.
