@@ -6,18 +6,20 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 ## Models
 
-Three purpose-built models from one shared prompt stack (`prompts/` +
-`memory/user.md`) and a per-model role overlay, picked by benchmark
-([testing.md](testing.md)). `num_ctx` is tuned per-model for a 10 GB GPU (only
-`qwen-custom` fits fully on-GPU; measured splits in [testing.md](testing.md)).
+Purpose-built models from one shared prompt stack (`prompts/` + `memory/user.md`)
+and a per-model role overlay, picked by benchmark ([TESTING.md](TESTING.md)).
+`num_ctx` is tuned per-model for a 10 GB GPU (the gemma Q6 builds fit 100% on-GPU
+at the full 131k window; `granite-custom` spills a little — splits in
+[TESTING.md](TESTING.md)).
 
 | Model            | Base            | ctx   | Role / best-for                                       |
 |------------------|-----------------|-------|-------------------------------------------------------|
-| `gemma-custom`   | `gemma4:e4b`    | 16384 | **Content generation** (`prose` overlay) — best content scorer, ~175 tok/s. |
+| `gemma-content`  | `batiai/gemma4-e4b:q6` | 131072 | **Content generation** (`prose` overlay) — best content scorer; Q6 imatrix, 100% on-GPU, ~105 tok/s. |
+| `gemma-coder`    | `batiai/gemma4-e4b:q6` | 131072 | **Coding** (`coding` overlay) — same Q6 base; challenging `granite-custom` on pass@1. |
 | `granite-custom` | `granite4.1:8b` | 12288 | **Coding assistant + tutor** (`coding` overlay) — top code-correctness and tutor scorer. |
 | `qwen-custom`    | `qwen3.5:9b`    | 16384 | General daily driver + **thinking-on experimental** model; only model with thinking mode. |
 
-Eval winners and full leaderboards: **[testing.md](testing.md)**.
+Eval winners and full leaderboards: **[TESTING.md](TESTING.md)**.
 
 ## Quickstart
 
@@ -32,7 +34,7 @@ Each builder assembles the prompt stack, writes
 ## Build
 
 ```bash
-./build-qwen  ./build-granite  ./build-gemma
+./build-qwen  ./build-granite  ./build-gemma-content  ./build-gemma-coder
 ```
 
 The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
@@ -51,8 +53,8 @@ ai/
 │   ├── formatting.md     # output shape
 │   ├── safety.md         # operational safety
 │   └── roles/            # per-model overlays (selected by $ROLE)
-│       ├── coding.md     # qwen, granite
-│       └── prose.md      # gemma (content)
+│       ├── coding.md     # qwen, granite, gemma-coder
+│       └── prose.md      # gemma-content
 ├── memory/user.md        # durable user profile
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # evaluation suite (see below)
@@ -85,7 +87,7 @@ Keep prompts terse — every token is spent every turn. When a model misbehaves,
 ## Evaluation
 
 The eval suite, current leaderboards, the 3-model decision, and testing plans
-live in **[testing.md](testing.md)** — the testing source of truth. Four runners
+live in **[TESTING.md](TESTING.md)** — the testing source of truth. Four runners
 under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1),
 `run-learn.py` (tutoring), `run-speed.py` (tok/s + GPU/CPU split). Output lands
 in `eval/runs/<UTC>/`.
@@ -104,9 +106,10 @@ both *regressed* coding pass@1 from 87%, so the config stayed put — see the
 granite/gemma run hotter — see each `PARAMS` for values.
 
 **Context** (`num_ctx`) is set per-model targeting a 10 GB GPU: qwen `16384`,
-granite `12288`, gemma `16384`. The server's `OLLAMA_CONTEXT_LENGTH` is a hard
-ceiling on top. Measured GPU/CPU splits (some models partially spill) are in
-[testing.md](testing.md).
+granite `12288`, both gemma builds `131072` (the Q6 base fits its full window
+on-GPU — sliding-window attention keeps the KV tiny). The server's
+`OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. Measured GPU/CPU splits are in
+[TESTING.md](TESTING.md).
 
 **Ollama server** (`sudo systemctl edit ollama.service`):
 
@@ -137,4 +140,4 @@ greeting with thinking on produces long looping traces; that's by design.
 ## Docs
 
 `AGENTS.md` (agent workflow contract — `CLAUDE.md` just points here) ·
-[`testing.md`](testing.md) (testing source of truth: suite, results, plans).
+[`TESTING.md`](TESTING.md) (testing source of truth: suite, results, plans).

@@ -20,7 +20,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # qwen is kept as the thinking-on experimental model — the `:think` suffix makes
 # every default eval run test it with thinking enabled (resolve_model handles it).
-DEFAULT_MODELS = ["qwen-custom:think", "granite-custom", "gemma-custom"]
+DEFAULT_MODELS = ["qwen-custom:think", "granite-custom", "gemma-content"]
 
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
@@ -82,7 +82,11 @@ def prompt_tok_per_s(meta: dict) -> float:
 def new_run_dir(out_root: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = out_root / stamp
-    run_dir.mkdir(parents=True, exist_ok=False)
+    n = 1
+    while run_dir.exists():  # back-to-back runs can share a second (e.g. ctx sweeps)
+        run_dir = out_root / f"{stamp}-{n}"
+        n += 1
+    run_dir.mkdir(parents=True)
     return run_dir
 
 

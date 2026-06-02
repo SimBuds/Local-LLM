@@ -22,8 +22,8 @@ over the panel (each judge loaded once).
 
 Usage:
   ./eval/run-learn.py                              # all models; panel = all models
-  ./eval/run-learn.py --judges granite-custom gemma-custom   # fixed panel
-  ./eval/run-learn.py --models qwen-custom gemma-custom
+  ./eval/run-learn.py --judges granite-custom gemma-content   # fixed panel
+  ./eval/run-learn.py --models qwen-custom gemma-content
   ./eval/run-learn.py --tasks lru_cache edit_distance --attempts 5
 
 Output:

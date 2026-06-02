@@ -3,39 +3,29 @@ set -euo pipefail
 
 # ============================================================================
 # Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, build-gemma, and build-qwen-big. Keep the assembly logic below
-# in lock-step.
+# build-granite, build-gemma-content, and build-gemma-coder. Keep the assembly
+# logic below in lock-step.
 # ============================================================================
-MODEL_NAME="qwen-big"
-BASE_MODEL="batiai/qwen3.6-27b:iq4"   # imatrix IQ4, ~15 GB (was qwen3.6:27b Q4_K_M ~17 GB)
+MODEL_NAME="gemma-coder"
+BASE_MODEL="batiai/gemma4-e4b:q6"   # same Q6 base as gemma-content; coding overlay
 ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). EMPTY here on purpose: unlike the
-# official ollama-native qwen3.6:27b (which uses RENDERER/PARSER qwen3.5), this
-# BatiAI GGUF ships its OWN embedded `TEMPLATE """..."""` and has no native
-# RENDERER/PARSER (verified via `ollama show --modelfile`). We inherit that
-# template rather than override it with qwen3.5 directives, which would clash
-# with the GGUF. Thinking is still ON BY DEFAULT (base lists `thinking`); disable
-# at runtime with `ollama run --think false qwen-big`.
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). EMPTY: the BatiAI build ships
+# RENDERER/PARSER gemma4 (verified via `ollama show --modelfile`), inherited on FROM.
 EXTRAS=()
 
-# Sampler params — mirrors build-qwen's proven Qwen3 thinking-mode sampling
-# (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 / presence_penalty 1.5; never
-# greedy). The 9b's empirical pass@1 tuning notes live in build-qwen; they were
-# measured on qwen3.5:9b, not this 27b, so they are NOT restated as fact here —
-# re-run the evals before trusting any param delta on this model.
-# num_ctx is 16384 to match qwen-custom (apples-to-apples speed comparison vs
-# the 9b). The IQ4 base is ~15 GB — still larger than the 10 GB GPU, so it
-# partially offloads to CPU, but less than the 17 GB Q4_K_M did; raising ctx only
-# grows the KV cache on top of that footprint.
+# num_ctx 131072 = full native window (matches gemma-content; free on-GPU thanks
+# to sliding-window attention — see TESTING.md ctx sweep). repeat_penalty 1.15
+# mirrors granite's coding config (the coding king) as the starting point; tune
+# empirically via run-code.py before trusting any delta.
 PARAMS=(
-  'num_ctx 16384'
-  'temperature 0.6'
-  'top_p 0.95'
-  'top_k 20'
-  'min_p 0'
+  'num_ctx 131072'
+  'temperature 0.8'
+  'top_p 0.92'
+  'top_k 40'
+  'repeat_penalty 1.15'
   'repeat_last_n 256'
-  'presence_penalty 1.5'
+  'num_predict 2048'
 )
 
 # ============================================================================

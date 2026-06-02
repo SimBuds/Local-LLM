@@ -14,7 +14,7 @@ EXTRAS=()
 
 # Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
 PARAMS=(
-  'num_ctx 16384'
+  'num_ctx 12288'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'

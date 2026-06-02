@@ -64,11 +64,11 @@ role (a base may back two roles via different prompt overlays).
 
 | Role | Model | Basis |
 |---|---|---|
-| Content generation | **`gemma-custom`** (gemma4:e4b) | Won content 5/5 clean (100%) @ 180 tok/s — 2× the fastest in the field. |
+| Content generation | **`gemma-content`** (gemma4:e4b) | Won content 5/5 clean (100%) @ 180 tok/s — 2× the fastest in the field. |
 | Coding assistant | **`granite-custom`** (granite4.1:8b) | Highest pass@1 (90%, 27/30) @ 1.7 s/call. Correctness-first. |
 | Coding tutor | **`granite-custom`** + `tutor` overlay _(deferred)_ | Frontrunner on the teaching test (9.9/10, panel-judged). Final pick waits for the tutor feature spec. |
 
-**Keepers:** `gemma-custom` (on the `prose` overlay), `granite-custom` (backs both
+**Keepers:** `gemma-content` (on the `prose` overlay), `granite-custom` (backs both
 coding roles via overlays), and `qwen-custom` — retained as the **thinking-on
 experimental model** (the lineup tests it as `qwen-custom:think`).
 **Removed (2026-05-31):** `llama-custom`, `ministral-custom`.
@@ -78,7 +78,7 @@ experimental model** (the lineup tests it as `qwen-custom:think`).
 ### Content / SEO (`run.py`) — clean-rate
 | Rank | Model | Clean | Tok/s |
 |---|---|---|---|
-| 1 | **gemma-custom** | 5/5 (100%) | 180 |
+| 1 | **gemma-content** | 5/5 (100%) | 180 |
 | 2 | ministral-custom | 5/5 (100%) | 102 |
 | 3 | qwen-custom | 4/5 (80%) | 85 |
 | 4 | llama-custom | 1/5 (20%) | 112 |
@@ -90,7 +90,7 @@ experimental model** (the lineup tests it as `qwen-custom:think`).
 | 1 | **granite-custom** | 27/30 (90%) | 1.7 s |
 | 2 | ministral-custom | 25/30 (83%) | 2.1 s |
 | 3 | qwen-custom | 25/30 (83%) | 2.3 s |
-| 4 | gemma-custom | 22/30 (73%) | 2.3 s |
+| 4 | gemma-content | 22/30 (73%) | 2.3 s |
 | 5 | llama-custom | 22/30 (73%) | 2.9 s |
 
 `calc` (operator-precedence eval) is the field ceiling — best models hit only 1–2/5.
@@ -101,7 +101,7 @@ experimental model** (the lineup tests it as `qwen-custom:think`).
 | 1 | **granite-custom** | 9.9 | 12/12 |
 | 2 | ministral-custom | 9.0 | 11/12 |
 | 3 | qwen-custom | 7.4 | 9/12 |
-| 4 | gemma-custom | 7.4 | 9/12 |
+| 4 | gemma-content | 7.4 | 9/12 |
 | 5 | llama-custom | 6.8 | 11/12 |
 
 Debias confirmed granite (9.9 panel vs 10.0 self-judged). qwen/gemma explain as
@@ -113,7 +113,7 @@ _Clean VRAM, 2 prompts × 1, output capped at num_predict=200, thinking off._
 | Rank | Model | Gen tok/s | Slowdown | GPU/CPU split |
 |---|---|---|---|---|
 | 1 | **qwen-custom** (9b) | 87.8 | 1.0× | 100% GPU |
-| 2 | gemma-custom (e4b) | 42.1 | 2× | 64%/36% CPU/GPU |
+| 2 | gemma-content (e4b) | 42.1 | 2× | 64%/36% CPU/GPU |
 | 3 | granite-custom (8b) | 31.4 | 2.8× | 12%/88% CPU/GPU |
 | 4 | qwen-big (27b) | 2.9 | 30× | 67%/33% CPU/GPU |
 
@@ -131,12 +131,54 @@ _Clean VRAM, 2 prompts × 1, output capped at num_predict=200, thinking off._
   Lowering `num_ctx` barely shifts the split and gives no speed; `num_thread 12`
   is slightly worse. **The only real lever is a smaller weight quant.**
 - Spillover is wider than the old docs claimed: `granite-custom` (12% CPU) and
-  `gemma-custom` (64% CPU) also partially spill at their current `num_ctx`. The
-  "100% on a 10 GB GPU" line holds only for `qwen-custom`. (`gemma-custom` is
-  still on 32k in the live model — `build-gemma` is now 16k but hasn't been
-  rebuilt; rebuilding should reduce its spill.)
+  `gemma-content` (64% CPU) also partially spill at their current `num_ctx`. The
+  "100% on a 10 GB GPU" line holds only for `qwen-custom`. (Measured before the
+  Q6 swap; `gemma-content` now runs `batiai/gemma4-e4b:q6` at 16k and fits 100%
+  on-GPU — see the quant-variants subsection below.)
 - `% on CPU` doesn't linearly predict speed: gemma at 64% CPU still does 42 tok/s
   because `gemma4:e4b` activates ~4B effective params; the dense 27B does not.
+
+### Quant variants — uploader defaults vs hardware-tuned (2026-06-02)
+
+Swapped both spilling models to BatiAI imatrix quants and A/B'd the uploader's
+baked defaults (num_ctx 131072, temp 0.7) against our builders (num_ctx 16384 +
+our sampling).
+
+| Model | Uploader default (ctx 131072) | Tuned (ctx 16384) | Old Q4_K_M |
+|---|---|---|---|
+| `qwen-big` (iq4, 15 GB) | 2.8 t/s · 26% GPU · prompt ~40 t/s | 3.3 t/s · 39% GPU · prompt ~1000 t/s | 2.9 t/s · 33% GPU (17 GB) |
+| `gemma-content` (q6, 6.2 GB) | 111 t/s · 100% GPU | 101.6 t/s · 100% GPU | 42 t/s · 64% CPU (9.6 GB) |
+
+**Findings:**
+- **Gemma quant swap is the big win.** `batiai/gemma4-e4b:q6` (6.2 GB) sits 100%
+  on GPU at *any* ctx (sliding-window attention keeps KV tiny) at ~100–111 tok/s
+  — **~2.4× the old Q4_K_M** gemma-content (42 tok/s, 64% CPU) *and* higher quality
+  (Q6 vs Q4). Clear keeper.
+- **num_ctx is the decisive hardware param for a spilling model.** On `qwen-big`
+  the uploader's baked `131072` default kneecaps it: KV cache steals VRAM (only
+  26% GPU) and prompt-eval collapses to ~40 tok/s. Our `16384` lifts gen 2.8→3.3
+  tok/s (+18%), GPU share 26→39%, prompt-eval ~25×. The base bakes 131072, so the
+  builder **must** set num_ctx (it does).
+- **iq4 vs Q4_K_M on the 27B is marginal.** 15 GB vs 17 GB → 3.3 vs 2.9 tok/s,
+  39% vs 33% GPU. Still ~26× slower than `qwen-custom`; the dense 27B stays
+  CPU-bound. A smaller quant (`:iq3`, 11 GB) is the only path to more on-GPU.
+- Tuned gemma is ~9% slower than the raw base (101.6 vs 111) — the system-prompt
+  stack + sampler params; both 100% GPU. Expected, negligible.
+
+### gemma-content context ceiling (2026-06-02)
+
+How high can `num_ctx` go before `gemma-content` spills? It doesn't — the Q6 base
+holds its **full native 131k window 100% on-GPU**:
+
+| num_ctx | gen tok/s | GPU split |
+|---|---|---|
+| 16384 | 103.9 | 100% GPU |
+| 32768 | 104.7 | 100% GPU |
+| 65536 | 105.4 | 100% GPU |
+| 131072 (native max) | 105.6 | 100% GPU |
+
+Context is effectively free (sliding-window attention → tiny KV; no speed
+penalty). **Both gemma builds now ship `num_ctx 131072`.**
 
 ## Removal reasoning
 
@@ -150,25 +192,37 @@ _Clean VRAM, 2 prompts × 1, output capped at num_predict=200, thinking off._
 
 ---
 
-## Next phase — quant variants
+## Decision (2026-06-02)
 
-Both pulled 2026-06-02. Goal: trade quality vs fit/speed against the current lineup.
+**`gemma-content` (`batiai/gemma4-e4b:q6`) is the clear winner of the spillover
+round** — 100% on-GPU, ~100 tok/s, higher quality than the old Q4_K_M, and small
+enough (6.2 GB) to leave GPU headroom. **The dense-27B path is abandoned:** even
+at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
+`qwen-big` (build script + model) is being retired.
 
-- [ ] **27B quant comparison.** `batiai/qwen3.6-27b:iq4` (15 GB, loads — `qwen35`
-  arch) and `:iq3` (11 GB) vs the Q4_K_M `qwen-big`. Expect 2–3× if more fits on
-  GPU. Wrap in a builder (`BASE_MODEL="batiai/qwen3.6-27b:iq4"`) for the prompt stack.
-- [ ] **Gemma quant upgrade.** Use the ollama.com build `batiai/gemma4-e4b:q6`,
-  **not** the raw `hf.co/unsloth/...` GGUF — Ollama 0.23.2's llama.cpp engine
-  errors with `unknown model architecture: 'gemma4'` on third-party GGUFs (the
-  native engine that runs the official `gemma4:e4b` is fine). A ~7 GB Q6 should
-  beat the current Q4_K_M on quality *and* sit 100% on GPU. Rebuild `gemma-custom`
-  at 16k first.
+## Plans
+
+- [x] **Gemma quant upgrade (2026-06-02).** Rebuilt `gemma-content` from
+  `batiai/gemma4-e4b:q6` — 100% GPU, ~102 tok/s, ~2.4× the old Q4_K_M. Use the
+  ollama.com build, **not** the raw `hf.co/unsloth/...` GGUF (Ollama 0.23.2's
+  llama.cpp engine errors `unknown model architecture: 'gemma4'`; the native
+  engine that runs ollama-registry builds is fine).
+- [x] **27B quant path evaluated + rejected (2026-06-02).** `:iq4` (15 GB) =
+  3.3 tok/s @ 39% GPU; still CPU-bound. `qwen-big` retired (no `:iq3` follow-up —
+  anything ≥11 GB on a dense 27B stays heavily on CPU).
+- [x] **Gemma split into two builds (2026-06-02).** `gemma-content` (`prose`,
+  num_ctx 131072) + `gemma-coder` (`coding` overlay, `repeat_penalty 1.15`). Both
+  off `batiai/gemma4-e4b:q6` at 131072 (free on-GPU — see ctx ceiling above).
+- [ ] **Head-to-head vs base, per area (next).** `run.py` content: `gemma-content`
+  vs the lineup. `run-code.py` coding: `gemma-coder` vs `granite-custom` (the king
+  to beat) + `qwen-custom`. Goal: a clear per-area winner + confirm Q6 didn't cost
+  correctness.
 - [ ] **Tutor role.** Define the tutor feature spec, add a `tutor` overlay, extend
   `run-learn.py` to score it. Granite is the base to beat.
 
 ## Done
 
-- [x] **Content overlay check (2026-05-31)** — A/B'd `gemma-custom` coding vs
+- [x] **Content overlay check (2026-05-31)** — A/B'd `gemma-content` coding vs
   `prose` overlay on content: both 5/5 clean, same speed; switched to `prose`
   (reads marginally more natural, purpose-built for human-like writing).
 - [x] **Removals executed (2026-05-31)** — `llama-custom` + `ministral-custom`
