@@ -91,10 +91,11 @@ Keep prompts terse — every token is spent every turn. When a model misbehaves,
 ## Evaluation
 
 The eval suite, current leaderboards, the 3-model decision, and testing plans
-live in **[TESTING.md](TESTING.md)** — the testing source of truth. Four runners
+live in **[TESTING.md](TESTING.md)** — the testing source of truth. Five runners
 under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1),
-`run-learn.py` (tutoring), `run-speed.py` (tok/s + GPU/CPU split). Output lands
-in `eval/runs/<UTC>/`.
+`run-learn.py` (tutoring + code/explanation), `run-tutor.py` (tutor leak-gated
+guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands in
+`eval/runs/<UTC>/`.
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
 > subprocess with a timeout, but it is **not** containerized. Trusted models only.

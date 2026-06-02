@@ -257,11 +257,13 @@ at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
 - [x] **Tutor Phase 1 (2026-06-02).** `tutor` overlay + learning-profile +
   `gemma-tutor` & `granite-tutor` built. Smoke test: asked for a full solution,
   gemma-tutor refused and gave 3 approaches + a Socratic question. ✔
-- [ ] **Tutor Phase 2 — eval rubric (next).** The tutor *inverts* pass@1, so it
-  needs its own judge rubric: **gate = no full solution** (emitting one fails),
-  then ≥2 distinct approaches, Socratic guidance, conceptual correctness,
-  level-calibration. Build it (extend `run-learn.py` or a `run-tutor.py`), then
-  eval `gemma-tutor` vs `granite-tutor` (granite = the 9.9/10 teaching king to beat).
+- [x] **Tutor Phase 2 (2026-06-02).** Added `run-tutor.py` and `eval/tutor_tasks.py`.
+  Built a leak-gated tutor rubric where full solutions that pass hidden tests
+  score 0, and responses are judged by a leave-one-out panel on teaching quality.
+  Smoke test: `./eval/run-tutor.py --models gemma-tutor --judges granite-tutor --tasks two_sum --attempts 1`. ✔
+- [x] **Tutor Phase 3 (2026-06-02).** Ran `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-custom --attempts 3`.
+  Winner: `gemma-tutor` 9.7/10 vs `granite-tutor` 9.6/10, leak rate 0/15.
+  Summary: `eval/runs/20260602T201423Z/tutor/summary.md`.
 
 ## Done
 

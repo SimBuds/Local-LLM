@@ -19,7 +19,7 @@ EXTRAS=()
 # mirrors granite's coding config (the coding king) as the starting point; tune
 # empirically via run-code.py before trusting any delta.
 PARAMS=(
-  'num_ctx 131072'
+  'num_ctx 65536'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
