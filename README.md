@@ -34,7 +34,7 @@ Each builder assembles the prompt stack, writes
 ## Build
 
 ```bash
-./build-qwen  ./build-granite  ./build-gemma-content  ./build-gemma-coder
+./build-qwen  ./build-granite-coder  ./build-gemma-content  ./build-gemma-coder
 ./build-gemma-tutor  ./build-granite-tutor          # tutor candidates (eval pending)
 ```
 

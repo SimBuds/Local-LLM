@@ -82,12 +82,12 @@ experimental model** (the lineup tests it as `qwen-custom:think`).
 | 2 | ministral-custom | 5/5 (100%) | 102 |
 | 3 | qwen-custom | 4/5 (80%) | 85 |
 | 4 | llama-custom | 1/5 (20%) | 112 |
-| 5 | granite-custom | 0/5 (0%) | 96 |
+| 5 | granite-coder | 0/5 (0%) | 96 |
 
 ### Coding correctness (`run-code.py`) — real pass@1
 | Rank | Model | Pass | Speed |
 |---|---|---|---|
-| 1 | **granite-custom** | 27/30 (90%) | 1.7 s |
+| 1 | **granite-coder** | 27/30 (90%) | 1.7 s |
 | 2 | ministral-custom | 25/30 (83%) | 2.1 s |
 | 3 | qwen-custom | 25/30 (83%) | 2.3 s |
 | 4 | gemma-content | 22/30 (73%) | 2.3 s |
@@ -98,7 +98,7 @@ experimental model** (the lineup tests it as `qwen-custom:think`).
 ### Teaching (`run-learn.py`) — leave-one-out judge panel
 | Rank | Model | Teach /10 | Code pass |
 |---|---|---|---|
-| 1 | **granite-custom** | 9.9 | 12/12 |
+| 1 | **granite-coder** | 9.9 | 12/12 |
 | 2 | ministral-custom | 9.0 | 11/12 |
 | 3 | qwen-custom | 7.4 | 9/12 |
 | 4 | gemma-content | 7.4 | 9/12 |
@@ -114,7 +114,7 @@ _Clean VRAM, 2 prompts × 1, output capped at num_predict=200, thinking off._
 |---|---|---|---|---|
 | 1 | **qwen-custom** (9b) | 87.8 | 1.0× | 100% GPU |
 | 2 | gemma-content (e4b) | 42.1 | 2× | 64%/36% CPU/GPU |
-| 3 | granite-custom (8b) | 31.4 | 2.8× | 12%/88% CPU/GPU |
+| 3 | granite-coder (8b) | 31.4 | 2.8× | 12%/88% CPU/GPU |
 | 4 | qwen-big (27b) | 2.9 | 30× | 67%/33% CPU/GPU |
 
 `qwen-big` lever sweep (all configs land at 2.8–2.9 tok/s — **no runtime lever helps**):
@@ -130,7 +130,7 @@ _Clean VRAM, 2 prompts × 1, output capped at num_predict=200, thinking off._
 - `qwen-big` (qwen3.6:27b, Q4_K_M ~17 GB) is ~30× slower than `qwen-custom`.
   Lowering `num_ctx` barely shifts the split and gives no speed; `num_thread 12`
   is slightly worse. **The only real lever is a smaller weight quant.**
-- Spillover is wider than the old docs claimed: `granite-custom` (12% CPU) and
+- Spillover is wider than the old docs claimed: `granite-coder` (12% CPU) and
   `gemma-content` (64% CPU) also partially spill at their current `num_ctx`. The
   "100% on a 10 GB GPU" line holds only for `qwen-custom`. (Measured before the
   Q6 swap; `gemma-content` now runs `batiai/gemma4-e4b:q6` at 16k and fits 100%
@@ -190,7 +190,7 @@ it fully on-GPU → 31→98 tok/s).
 | Model | Clean | Tok/s |
 |---|---|---|
 | **gemma-content** | 3/3 (100%) | 106 |
-| granite-custom | 1/3 (33%) | 99 |
+| granite-coder | 1/3 (33%) | 99 |
 | qwen-custom | 1/3 (33%) | 87 |
 
 **Coding (`run-code.py`):**
@@ -264,6 +264,32 @@ at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
 - [x] **Tutor Phase 3 (2026-06-02).** Ran `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-coder --attempts 3`.
   Winner: `gemma-tutor` 9.7/10 vs `granite-tutor` 9.6/10, leak rate 0/15.
   Summary: `eval/runs/20260602T201423Z/tutor/summary.md`.
+
+## Big-model exploration (2026-06-02)
+
+Two bigger BatiAI quants pulled to test whether more capacity is worth the spill,
+targeting **content, tutor, and a general thinking driver** (not coding —
+`granite-coder`/`gemma-coder` already cover that).
+
+**Phase A — viability triage (ctx capped 8192, num_predict 150):**
+
+| Model | Arch | Size | Gen tok/s | GPU/CPU | Verdict |
+|---|---|---|---|---|---|
+| `batiai/gemma4-26b:iq4` | gemma4 dense | 13 GB | 27.8 | 43%/57% | viable |
+| `batiai/qwen3.6-35b:q4` | qwen35**moe** | 18 GB | 13.2 | 58%/42% | viable |
+
+**Finding — MoE beats the dense-spillover curse.** The 35B MoE spills *more* than
+the dead dense `qwen-big` (18 vs 17 GB) yet runs **13.2 tok/s vs 2.9** (~4.5×):
+MoE activates only a few experts per token, so per-token bandwidth ≪ 18 GB. So
+`qwen-big`'s lesson ("dense ≥15 GB = dead on this GPU") does **not** generalize to
+MoE — both new models are usable.
+
+- [ ] **Phase B — build custom variants** for the target roles: `gemma4-26b` →
+  content (`prose`) + tutor; `qwen3.6-35b` (MoE, thinking-capable) → thinking
+  driver + tutor.
+- [ ] **Phase C — quality eval vs incumbents:** `run.py` (content), `run-tutor.py`
+  (tutor, leak-gated), thinking-driver check. The bigger model must beat the
+  on-GPU incumbent by enough to justify the speed drop (28/13 vs ~100 tok/s).
 
 ## Done
 

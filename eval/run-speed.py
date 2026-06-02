@@ -42,7 +42,7 @@ DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
 # Spillover candidates first, then the three on-GPU models we use daily. All run
 # thinking-OFF (no :think) — this is a throughput test, not a reasoning test.
-DEFAULT_MODELS = ["qwen-big", "qwen-custom", "granite-coder", "gemma-content"]
+DEFAULT_MODELS = ["qwen-custom", "granite-coder", "gemma-content"]
 
 # Mixed-length prompts: a short one and a longer one, so we also exercise
 # prompt-eval. Content is irrelevant — we measure throughput, and num_predict
