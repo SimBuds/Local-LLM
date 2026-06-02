@@ -180,6 +180,37 @@ holds its **full native 131k window 100% on-GPU**:
 Context is effectively free (sliding-window attention → tiny KV; no speed
 penalty). **Both gemma builds now ship `num_ctx 131072`.**
 
+### Head-to-head vs base, per area (2026-06-02, 3 attempts — preliminary)
+
+Granite rebuilt at `num_ctx 12288` first (was drifted to 16384; the drop pulled
+it fully on-GPU → 31→98 tok/s).
+
+**Content (`run.py`):**
+
+| Model | Clean | Tok/s |
+|---|---|---|
+| **gemma-content** | 3/3 (100%) | 106 |
+| granite-custom | 1/3 (33%) | 99 |
+| qwen-custom | 1/3 (33%) | 87 |
+
+**Coding (`run-code.py`):**
+
+| Model | Pass | Tok/s |
+|---|---|---|
+| **granite-custom** | 18/18 (100%) | 98 |
+| gemma-coder | 17/18 (94%) | 106 |
+| gemma-content | 16/18 (89%) | 102 |
+| qwen-custom | 16/18 (89%) | 86 |
+
+**Findings (n=18 — directional, confirm at 5 attempts):**
+- **Content: `gemma-content` clear winner** — 100% clean + fastest. Q6 held quality.
+- **Coding: `granite-custom` still on top (100%)**, but `gemma-coder` is right behind
+  at **94% and faster** — a big jump from old gemma's 73% (Q6 + coding overlay). The
+  whole gap is one `calc` attempt (field-ceiling task: granite 3/3, gemma-coder 2/3).
+- **Coding overlay helps gemma**: gemma-coder 17/18 vs gemma-content 16/18 (+1 on calc).
+- **Granite ctx fix is a real win**: 12288 → ~98 tok/s (3× the spilling 16384).
+- Margins are within noise at 3 attempts — confirm with 5 before any coding-consolidation call.
+
 ## Removal reasoning
 
 - **`llama-custom` — REMOVED (2026-05-31).** Last or near-last on every axis
@@ -213,12 +244,24 @@ at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
 - [x] **Gemma split into two builds (2026-06-02).** `gemma-content` (`prose`,
   num_ctx 131072) + `gemma-coder` (`coding` overlay, `repeat_penalty 1.15`). Both
   off `batiai/gemma4-e4b:q6` at 131072 (free on-GPU — see ctx ceiling above).
-- [ ] **Head-to-head vs base, per area (next).** `run.py` content: `gemma-content`
-  vs the lineup. `run-code.py` coding: `gemma-coder` vs `granite-custom` (the king
-  to beat) + `qwen-custom`. Goal: a clear per-area winner + confirm Q6 didn't cost
-  correctness.
-- [ ] **Tutor role.** Define the tutor feature spec, add a `tutor` overlay, extend
-  `run-learn.py` to score it. Granite is the base to beat.
+- [x] **Head-to-head vs base, per area (2026-06-02, 3 attempts).** Content:
+  `gemma-content` 100% clean (clear winner). Coding: `granite-custom` 100% vs
+  `gemma-coder` 94% — granite holds, gemma-coder close + faster. See subsection above.
+- [ ] **Confirm coding at 5 attempts.** The granite-vs-gemma-coder gap (one `calc`)
+  is within noise at n=18; rerun `run-code.py --attempts 5` before any consolidation.
+- **Coding side = two purpose-built models:**
+  - `gemma-coder` — autocomplete / small coding tasks (produces code; 94% pass@1).
+  - **tutor** — teaching assistant that *refuses to solve*: shows 2–3 approaches +
+    the "why", Socratic, builds learning plans, adapts to a curated
+    `memory/learning-profile.md` (role-gated, tutor-only injection).
+- [x] **Tutor Phase 1 (2026-06-02).** `tutor` overlay + learning-profile +
+  `gemma-tutor` & `granite-tutor` built. Smoke test: asked for a full solution,
+  gemma-tutor refused and gave 3 approaches + a Socratic question. ✔
+- [ ] **Tutor Phase 2 — eval rubric (next).** The tutor *inverts* pass@1, so it
+  needs its own judge rubric: **gate = no full solution** (emitting one fails),
+  then ≥2 distinct approaches, Socratic guidance, conceptual correctness,
+  level-calibration. Build it (extend `run-learn.py` or a `run-tutor.py`), then
+  eval `gemma-tutor` vs `granite-tutor` (granite = the 9.9/10 teaching king to beat).
 
 ## Done
 

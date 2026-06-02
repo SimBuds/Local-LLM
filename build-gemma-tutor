@@ -3,22 +3,28 @@ set -euo pipefail
 
 # ============================================================================
 # Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
+# build-granite, build-gemma-content, and build-gemma-coder. Keep the assembly
+# logic below in lock-step.
 # ============================================================================
-MODEL_NAME="granite-custom"
-BASE_MODEL="granite4.1:8b"
-ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
+MODEL_NAME="gemma-tutor"
+BASE_MODEL="batiai/gemma4-e4b:q6"   # imatrix Q6_K, ~6.2 GB (was gemma4:e4b Q4_K_M ~9.6 GB)
+ROLE="tutor"            # role overlay file: prompts/roles/$ROLE.md
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). EMPTY: the BatiAI build ships
+# RENDERER/PARSER gemma4 (verified via `ollama show --modelfile`), inherited on
+# FROM. Smaller + higher-quality than the old Q4_K_M and should now sit on-GPU.
 EXTRAS=()
 
-# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
+# num_ctx 131072 = the model's full native window. The Q6 base fits it 100% on
+# the 10 GB GPU at ~105 tok/s (sliding-window attention keeps the KV cache tiny) —
+# context is effectively free here, so hand it the whole window. See TESTING.md
+# (gemma-content ctx sweep, 2026-06-02).
 PARAMS=(
-  'num_ctx 12288'
+  'num_ctx 131072'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
-  'repeat_penalty 1.15'
+  'repeat_penalty 1.2'
   'repeat_last_n 256'
   'num_predict 2048'
 )

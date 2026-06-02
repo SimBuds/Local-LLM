@@ -35,11 +35,13 @@ Each builder assembles the prompt stack, writes
 
 ```bash
 ./build-qwen  ./build-granite  ./build-gemma-content  ./build-gemma-coder
+./build-gemma-tutor  ./build-granite-tutor          # tutor candidates (eval pending)
 ```
 
 The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
 `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the assembly logic below the divider
-is byte-identical and must stay in lock-step. **New model:** copy a script
+is byte-identical and must stay in lock-step (incl. the role-gated `LEARNING
+PROFILE` injection — emitted only when `ROLE=tutor`). **New model:** copy a script
 (`build-qwen` if you need `TEMPLATE`/`RENDERER`/`PARSER`; any other otherwise)
 and edit only the config block.
 
@@ -54,8 +56,10 @@ ai/
 │   ├── safety.md         # operational safety
 │   └── roles/            # per-model overlays (selected by $ROLE)
 │       ├── coding.md     # qwen, granite, gemma-coder
-│       └── prose.md      # gemma-content
+│       ├── prose.md      # gemma-content
+│       └── tutor.md      # gemma-tutor, granite-tutor (teaches; never full solutions)
 ├── memory/user.md        # durable user profile
+├── memory/learning-profile.md  # tutor-only: level/gaps/goals (role-gated inject)
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # evaluation suite (see below)
 ├── models/<name>/        # generated: system.txt + Modelfile

@@ -57,6 +57,7 @@ mkdir -p "$OUT_DIR"
   emit_section "ROLE GUIDANCE"      "$AI_ROOT/prompts/roles/$ROLE.md"
   emit_section "OPERATIONAL SAFETY" "$AI_ROOT/prompts/safety.md"
   emit_section "USER PROFILE"       "$AI_ROOT/memory/user.md"
+  [ "$ROLE" = "tutor" ] && emit_section "LEARNING PROFILE" "$AI_ROOT/memory/learning-profile.md"
 
   if [ -d "$AI_ROOT/knowledge" ]; then
     echo "=== REFERENCE KNOWLEDGE ==="
