@@ -65,10 +65,10 @@ role (a base may back two roles via different prompt overlays).
 | Role | Model | Basis |
 |---|---|---|
 | Content generation | **`gemma-content`** (gemma4:e4b) | Won content 5/5 clean (100%) @ 180 tok/s — 2× the fastest in the field. |
-| Coding assistant | **`granite-custom`** (granite4.1:8b) | Highest pass@1 (90%, 27/30) @ 1.7 s/call. Correctness-first. |
-| Coding tutor | **`granite-custom`** + `tutor` overlay _(deferred)_ | Frontrunner on the teaching test (9.9/10, panel-judged). Final pick waits for the tutor feature spec. |
+| Coding assistant | **`granite-coder`** (granite4.1:8b) | Highest pass@1 (90%, 27/30) @ 1.7 s/call. Correctness-first. |
+| Coding tutor | **`granite-tutor`** + `tutor` overlay _(deferred)_ | Frontrunner on the teaching test (9.9/10, panel-judged). Final pick waits for the tutor feature spec. |
 
-**Keepers:** `gemma-content` (on the `prose` overlay), `granite-custom` (backs both
+**Keepers:** `gemma-content` (on the `prose` overlay), `granite-coder` (backs both
 coding roles via overlays), and `qwen-custom` — retained as the **thinking-on
 experimental model** (the lineup tests it as `qwen-custom:think`).
 **Removed (2026-05-31):** `llama-custom`, `ministral-custom`.
@@ -197,14 +197,14 @@ it fully on-GPU → 31→98 tok/s).
 
 | Model | Pass | Tok/s |
 |---|---|---|
-| **granite-custom** | 18/18 (100%) | 98 |
+| **granite-coder** | 18/18 (100%) | 98 |
 | gemma-coder | 17/18 (94%) | 106 |
 | gemma-content | 16/18 (89%) | 102 |
 | qwen-custom | 16/18 (89%) | 86 |
 
 **Findings (n=18 — directional, confirm at 5 attempts):**
 - **Content: `gemma-content` clear winner** — 100% clean + fastest. Q6 held quality.
-- **Coding: `granite-custom` still on top (100%)**, but `gemma-coder` is right behind
+- **Coding: `granite-coder` still on top (100%)**, but `gemma-coder` is right behind
   at **94% and faster** — a big jump from old gemma's 73% (Q6 + coding overlay). The
   whole gap is one `calc` attempt (field-ceiling task: granite 3/3, gemma-coder 2/3).
 - **Coding overlay helps gemma**: gemma-coder 17/18 vs gemma-content 16/18 (+1 on calc).
@@ -245,7 +245,7 @@ at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
   num_ctx 131072) + `gemma-coder` (`coding` overlay, `repeat_penalty 1.15`). Both
   off `batiai/gemma4-e4b:q6` at 131072 (free on-GPU — see ctx ceiling above).
 - [x] **Head-to-head vs base, per area (2026-06-02, 3 attempts).** Content:
-  `gemma-content` 100% clean (clear winner). Coding: `granite-custom` 100% vs
+  `gemma-content` 100% clean (clear winner). Coding: `granite-coder` 100% vs
   `gemma-coder` 94% — granite holds, gemma-coder close + faster. See subsection above.
 - [ ] **Confirm coding at 5 attempts.** The granite-vs-gemma-coder gap (one `calc`)
   is within noise at n=18; rerun `run-code.py --attempts 5` before any consolidation.
@@ -261,7 +261,7 @@ at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
   Built a leak-gated tutor rubric where full solutions that pass hidden tests
   score 0, and responses are judged by a leave-one-out panel on teaching quality.
   Smoke test: `./eval/run-tutor.py --models gemma-tutor --judges granite-tutor --tasks two_sum --attempts 1`. ✔
-- [x] **Tutor Phase 3 (2026-06-02).** Ran `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-custom --attempts 3`.
+- [x] **Tutor Phase 3 (2026-06-02).** Ran `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-coder --attempts 3`.
   Winner: `gemma-tutor` 9.7/10 vs `granite-tutor` 9.6/10, leak rate 0/15.
   Summary: `eval/runs/20260602T201423Z/tutor/summary.md`.
 

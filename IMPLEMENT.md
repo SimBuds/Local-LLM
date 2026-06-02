@@ -122,7 +122,7 @@ Functions/classes to add or change:
 
 Commands:
 
-- `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-custom --attempts 3`
+- `./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-coder --attempts 3`
 
 Verification:
 

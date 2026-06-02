@@ -5,7 +5,7 @@ set -euo pipefail
 # Per-model config — the ONLY block that should differ between build-qwen,
 # build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
-MODEL_NAME="granite-custom"
+MODEL_NAME="granite-coder"
 BASE_MODEL="granite4.1:8b"
 ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 

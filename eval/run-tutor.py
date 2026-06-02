@@ -7,7 +7,7 @@ on scaffolding, concept, calibration, pitfalls, and clarity.
 
 Usage:
   ./eval/run-tutor.py
-  ./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-custom
+  ./eval/run-tutor.py --models gemma-tutor granite-tutor --judges gemma-coder granite-coder
   ./eval/run-tutor.py --tasks two_sum --attempts 1
 
 Output:

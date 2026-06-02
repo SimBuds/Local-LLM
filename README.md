@@ -9,14 +9,14 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 Purpose-built models from one shared prompt stack (`prompts/` + `memory/user.md`)
 and a per-model role overlay, picked by benchmark ([TESTING.md](TESTING.md)).
 `num_ctx` is tuned per-model for a 10 GB GPU (the gemma Q6 builds fit 100% on-GPU
-at the full 131k window; `granite-custom` spills a little — splits in
+at the full 131k window; `granite-coder` spills a little — splits in
 [TESTING.md](TESTING.md)).
 
 | Model            | Base            | ctx   | Role / best-for                                       |
 |------------------|-----------------|-------|-------------------------------------------------------|
 | `gemma-content`  | `batiai/gemma4-e4b:q6` | 131072 | **Content generation** (`prose` overlay) — best content scorer; Q6 imatrix, 100% on-GPU, ~105 tok/s. |
-| `gemma-coder`    | `batiai/gemma4-e4b:q6` | 131072 | **Coding** (`coding` overlay) — same Q6 base; challenging `granite-custom` on pass@1. |
-| `granite-custom` | `granite4.1:8b` | 12288 | **Coding assistant + tutor** (`coding` overlay) — top code-correctness and tutor scorer. |
+| `gemma-coder`    | `batiai/gemma4-e4b:q6` | 131072 | **Coding** (`coding` overlay) — same Q6 base; challenging `granite-coder` on pass@1. |
+| `granite-coder` | `granite4.1:8b` | 12288 | **Coding assistant + tutor** (`coding` overlay) — top code-correctness and tutor scorer. |
 | `qwen-custom`    | `qwen3.5:9b`    | 16384 | General daily driver + **thinking-on experimental** model; only model with thinking mode. |
 
 Eval winners and full leaderboards: **[TESTING.md](TESTING.md)**.
