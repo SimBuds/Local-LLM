@@ -2,27 +2,47 @@
 set -euo pipefail
 
 # ============================================================================
-# Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
+# Per-model config — the ONLY block that should differ between the build-* scripts.
+# Keep the assembly logic below in lock-step.
 # ============================================================================
-MODEL_NAME="granite-tutor"
-BASE_MODEL="granite4.1:8b"
-ROLE="tutor"           # role overlay file: prompts/roles/$ROLE.md
+MODEL_NAME="qwen-coder"
+BASE_MODEL="batiai/qwen3.5-9b:q6"   # Q6 imatrix quant of qwen3.5:9b (was qwen3.5:9b
+                                    # Q4). Coding variant of the qwen 3-model set
+                                    # (qwen-content/qwen-coder/qwen-tutor); thinking-on.
+ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
-EXTRAS=()
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). Qwen3.5 family needs them; the
+# qwen3.5 RENDERER/PARSER are what emit + parse the <think> trace. Thinking is
+# ON BY DEFAULT at the model level (a generate call with no `think` param returns
+# a populated thinking field) — there is no Modelfile knob to set it; it's a
+# runtime flag. This model is the designated thinking-on experimental model.
+EXTRAS=(
+  'TEMPLATE {{ .Prompt }}'
+  'RENDERER qwen3.5'
+  'PARSER qwen3.5'
+)
 
-# Tutor = explanation-heavy, leak-gated prose; repeat_penalty 1.2 matches the prose
-# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 12288 is the
-# tested granite window (ctx sweep 32768→4096; see TESTING.md).
+# Sampler params — tuned for THINKING (Qwen3's recommended thinking-mode sampling:
+# temp 0.6 / top_p 0.95 / top_k 20 / min_p 0; never greedy).
+# EMPIRICAL (2026-05-31): two attempted "thinking" tweaks both regressed coding
+# pass@1 from 87%, so this is back to the proven config:
+#   - presence_penalty 1.5 (kept): 1.0 dropped pass@1 to 67%.
+#   - NO num_predict: Ollama's default -1 already generates until EOS / context
+#     fills (~13.8k tokens), i.e. max headroom. Capping at 8192 truncated long
+#     <think> traces and dropped pass@1 to 73%. Don't add it back.
+# Note: thinking-qwen is high-variance (67-87% across single 5-attempt runs);
+# treat small param deltas as noise unless confirmed over multiple runs.
+# num_ctx 49152: base declares 131072 native (too large to load). 65536 spilled
+# ~17% to CPU even with KV-cache q4_0; 49152 sits 100% on-GPU at ~71 tok/s
+# (measured 2026-06-03). Don't raise without re-checking run-speed.
 PARAMS=(
-  'num_ctx 12288'
-  'temperature 0.8'
-  'top_p 0.92'
-  'top_k 40'
-  'repeat_penalty 1.2'
+  'num_ctx 49152'
+  'temperature 0.6'
+  'top_p 0.95'
+  'top_k 20'
+  'min_p 0'
   'repeat_last_n 256'
-  'num_predict 2048'
+  'presence_penalty 1.5'
 )
 
 # ============================================================================

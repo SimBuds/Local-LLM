@@ -14,13 +14,14 @@ One purpose-built model per job, picked by benchmark.
 
 ## The suite
 
-Four runners under `eval/`. Each ranks the models and writes to `eval/runs/<UTC>/`.
+Five runners under `eval/`. Each ranks the models and writes to `eval/runs/<UTC>/`.
 
 | Runner | Measures | Runs model code? |
 |---|---|---|
 | `run.py` | Content / SEO: format + instruction discipline | no |
 | `run-code.py` | Coding: real pass@1 (runs code vs hidden asserts) | **yes** |
 | `run-learn.py` | Tutoring: code + explanation, leave-one-out judge panel | **yes** |
+| `run-tutor.py` | Tutoring: leak-gated guidance (full solutions score 0) | **yes** |
 | `run-speed.py` | Raw tok/s + GPU/CPU split (spillover tradeoff) | no |
 
 ```bash
@@ -178,7 +179,8 @@ holds its **full native 131k window 100% on-GPU**:
 | 131072 (native max) | 105.6 | 100% GPU |
 
 Context is effectively free (sliding-window attention → tiny KV; no speed
-penalty). **Both gemma builds now ship `num_ctx 131072`.**
+penalty). All gemma builds now ship `num_ctx 65536` (matched to the qwen builds
+for a uniform window across the matrix; still 100% on-GPU).
 
 ### Head-to-head vs base, per area (2026-06-02, 3 attempts — preliminary)
 
@@ -230,6 +232,46 @@ round** — 100% on-GPU, ~100 tok/s, higher quality than the old Q4_K_M, and sma
 enough (6.2 GB) to leave GPU headroom. **The dense-27B path is abandoned:** even
 at iq4/iq3 it stays CPU-bound (~3 tok/s, ~26× slower than `qwen-custom`).
 `qwen-big` (build script + model) is being retired.
+
+## 3×3 matrix (2026-06-02)
+
+Expanded the lineup from per-role single models to a full **3 families × 3 roles**
+grid so every base competes in every benchmark (content, coding, tutor) rather
+than being pre-assigned a role. Nine models, one per (family, role) cell:
+
+| | content (`prose`) | coder (`coding`) | tutor (`tutor`) |
+|---|---|---|---|
+| **gemma** (`batiai/gemma4-e4b:q6`, ctx 65536) | `gemma-content` | `gemma-coder` | `gemma-tutor` |
+| **granite** (`granite4.1:8b`, ctx 12288) | `granite-content` *(new)* | `granite-coder` | `granite-tutor` |
+| **qwen** (`batiai/qwen3.5-9b:q6`, ctx 49152) | `qwen-content` *(new)* | `qwen-coder` *(new)* | `qwen-tutor` *(new)* |
+
+**qwen base swap:** the qwen cells moved off `qwen3.5:9b` (Q4) to
+`batiai/qwen3.5-9b:q6` (Q6 imatrix, ~7.4 GB). The base declares 131072 native ctx
+(too large to load). 65536 spilled ~17% to CPU (9.9 GB) even with KV-cache quant
+(`OLLAMA_KV_CACHE_TYPE=q4_0`), so ctx was dropped to **49152** — 100% on-GPU at
+~71 tok/s across all three qwen builds (`run-speed.py`, run `20260603T000936Z`).
+Legacy `build-qwen`/`qwen-custom` (Q4 base) is retained outside the matrix for a
+separate project.
+
+**Role → sampler scheme (tailored, audited 2026-06-02):**
+
+| Role | temperature | top_p | top_k | penalty | thinking |
+|---|---|---|---|---|---|
+| content (`prose`) | 0.8 | 0.92 | 40 | `repeat_penalty 1.2` | off |
+| coder (`coding`) | 0.8 / **qwen 0.6** | 0.92 / **0.95** | 40 / **20** | `repeat_penalty 1.15` / **qwen `presence_penalty 1.5`** | qwen **on** |
+| tutor (`tutor`) | 0.8 / **qwen 0.6** | 0.92 / **0.95** | 40 / **20** | `repeat_penalty 1.2` / **qwen `presence_penalty 1.5`** | qwen **on** |
+
+Audit fix: `granite-tutor` was on `repeat_penalty 1.15` (coder value) → moved to
+`1.2` to match the prose-aligned tutor role (gemma-tutor already used 1.2). The
+qwen coder/tutor cells keep the proven thinking-mode sampling; qwen-content runs
+the prose config thinking-off.
+
+- [ ] **Run the 3 benchmarks across all 9 models (5 attempts).**
+  - [x] Speed/fit: qwen Q6 builds 100% on-GPU at ctx 49152, ~71 tok/s
+    (`20260603T000936Z`). 64k spilled; 48k is the fit ceiling.
+  - Content: `./eval/run.py` (drive qwen with `--think false`).
+  - Coding: `./eval/run-code.py --attempts 5`.
+  - Tutor: `./eval/run-tutor.py --attempts 5` (leave-one-out judges).
 
 ## Plans
 
@@ -284,12 +326,29 @@ MoE activates only a few experts per token, so per-token bandwidth ≪ 18 GB. So
 `qwen-big`'s lesson ("dense ≥15 GB = dead on this GPU") does **not** generalize to
 MoE — both new models are usable.
 
-- [ ] **Phase B — build custom variants** for the target roles: `gemma4-26b` →
-  content (`prose`) + tutor; `qwen3.6-35b` (MoE, thinking-capable) → thinking
-  driver + tutor.
-- [ ] **Phase C — quality eval vs incumbents:** `run.py` (content), `run-tutor.py`
-  (tutor, leak-gated), thinking-driver check. The bigger model must beat the
-  on-GPU incumbent by enough to justify the speed drop (28/13 vs ~100 tok/s).
+- [x] **Phase B — build custom variants (2026-06-02).** Builders `build-gemma-big`
+  (`batiai/gemma4-26b:iq4`) and `build-qwen-big` (`batiai/qwen3.6-35b:q4`), both
+  `EXTRAS=()`. Harness check: gemma-26b inherits `RENDERER/PARSER gemma4`; the qwen
+  MoE ships an embedded thinking `TEMPLATE` (no renderer/parser) — `EXTRAS=()` inherits
+  it and `think:true` populates a parsed `thinking` field. Do **not** set
+  `RENDERER/PARSER qwen3.6` (errors `"does not support thinking"`).
+- [x] **Phase C — quality eval vs incumbents (2026-06-02).** Both big models lose
+  every category; all three incumbents hold.
+
+  | Category | Incumbent | Big model | Result |
+  |---|---|---|---|
+  | Content (`run.py`) | `gemma-content` 100% clean, 103 t/s | `gemma-big` 67% (2/3), 23 t/s | **FAIL** — lower clean-rate, ~4.5× slower |
+  | Thinking driver (`run-code.py`) | `qwen-custom:think` 78% (14/18), 87 t/s | `qwen-big:think` 56% (10/18), 13 t/s | **FAIL on speed** — 7/8 fails were 120s gen-timeouts; of 11 *completed* attempts it passed 10 (91%, > incumbent), but 13 t/s / 84–118s per answer isn't usable |
+  | Tutor (`run-tutor.py`) | `gemma-tutor` 9.7 / `granite-tutor` 9.6, 0 leaks | `gemma-big` 6.8 (0 leaks); `qwen-big` 4.3 (**2 leaks**) | **FAIL** — gemma-big teaches well below incumbents; qwen-big fails the leak gate + `HTTP 500`s (18 GB OOMs the server beside the judges) |
+
+  Runs: `20260602T223053Z` (content), `20260602T223552Z/code` (driver),
+  `20260602T232019Z/tutor`. **Verdict:** the MoE's *reasoning* genuinely beats
+  `qwen-custom` (Phase A already showed MoE escapes the dense-spill curse at 13 t/s),
+  but on this 10 GB GPU 13 t/s is too slow for an interactive driver and too big to
+  co-run with judges; the dense 26B is both slower and a worse content/tutor model.
+  **`gemma-big` and `qwen-big` retired (models + build scripts).** Re-evaluate the MoE
+  if the GPU/VRAM envelope changes — on unified-memory Apple Silicon (M4 Pro+) it
+  would land in the usable 25–60 t/s range and could flip the driver verdict.
 
 ## Done
 

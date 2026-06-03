@@ -2,21 +2,32 @@
 set -euo pipefail
 
 # ============================================================================
-# Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
+# Per-model config — the ONLY block that should differ between the build-* scripts.
+# Keep the assembly logic below in lock-step.
 # ============================================================================
-MODEL_NAME="granite-tutor"
-BASE_MODEL="granite4.1:8b"
-ROLE="tutor"           # role overlay file: prompts/roles/$ROLE.md
+MODEL_NAME="qwen-content"
+BASE_MODEL="batiai/qwen3.5-9b:q6"   # Q6 imatrix quant of qwen3.5:9b. Content variant
+                                    # of the qwen 3-model set; intended thinking-OFF
+                                    # (prose/SEO is not problem-solving — the <think>
+                                    # trace loops and tanks tok/s). Eval with --think false.
+ROLE="prose"            # role overlay file: prompts/roles/$ROLE.md
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
-EXTRAS=()
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). Qwen3.5 family needs them; the
+# qwen3.5 RENDERER/PARSER are what emit + parse the <think> trace. Thinking is a
+# runtime flag (no Modelfile knob) — for content, drive it off at call time.
+EXTRAS=(
+  'TEMPLATE {{ .Prompt }}'
+  'RENDERER qwen3.5'
+  'PARSER qwen3.5'
+)
 
-# Tutor = explanation-heavy, leak-gated prose; repeat_penalty 1.2 matches the prose
-# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 12288 is the
-# tested granite window (ctx sweep 32768→4096; see TESTING.md).
+# Sampler params — prose config (thinking-off), mirroring build-gemma-content so the
+# content benchmark is a fair family-vs-family comparison. NOT the thinking-mode
+# sampling (temp 0.6) used by qwen-coder/qwen-tutor.
+# num_ctx 49152: 65536 spilled ~17% to CPU (9.9 GB) even with KV-cache q4_0; 49152
+# sits 100% on-GPU at ~71 tok/s (measured 2026-06-03). Slightly below the gemma 64k.
 PARAMS=(
-  'num_ctx 12288'
+  'num_ctx 49152'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'

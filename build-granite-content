@@ -5,16 +5,16 @@ set -euo pipefail
 # Per-model config — the ONLY block that should differ between build-qwen,
 # build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
-MODEL_NAME="granite-tutor"
+MODEL_NAME="granite-content"
 BASE_MODEL="granite4.1:8b"
-ROLE="tutor"           # role overlay file: prompts/roles/$ROLE.md
+ROLE="prose"            # role overlay file: prompts/roles/$ROLE.md
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
 EXTRAS=()
 
-# Tutor = explanation-heavy, leak-gated prose; repeat_penalty 1.2 matches the prose
-# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 12288 is the
-# tested granite window (ctx sweep 32768→4096; see TESTING.md).
+# Content variant — prose sampling mirrors build-gemma-content (repeat_penalty 1.2)
+# for a fair content-benchmark comparison. num_ctx 12288 matches the other granite
+# builds (granite spills a little past this on the 10 GB GPU — see TESTING.md).
 PARAMS=(
   'num_ctx 12288'
   'temperature 0.8'
