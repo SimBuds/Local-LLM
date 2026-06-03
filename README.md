@@ -118,17 +118,21 @@ gemma/granite builds run hotter prose/coding sampling (`temperature 0.8`,
 **Context** (`num_ctx`) is set per-family targeting a 10 GB GPU: gemma `131072`
 (full native window — sliding-window attention keeps its KV tiny, so it fits 100%
 on-GPU at ~4.6 GB), granite `16384` (Q5 sits 100% on-GPU; 32k+ spills). The
-server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. Measured GPU/CPU splits
-are in [TESTING.md](TESTING.md).
+server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. **Note:** The AUR 
+package layers in `/etc/ollama.conf` (defaulting to `16384`), but we override 
+this in the service definition to `131072` to allow Gemma its full window. 
+Measured GPU/CPU splits are in TESTING.md.
 
-**Ollama server** (`sudo systemctl edit ollama.service`):
+**Ollama server** (Resolved via `EnvironmentFile` and `systemctl edit`):
 
+### /etc/systemd/system/ollama.service.d/override.conf
 ```ini
 [Service]
 Environment="OLLAMA_KV_CACHE_TYPE=q4_0"
 Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_NUM_PARALLEL=1"
 Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Environment="OLLAMA_KEEP_ALIVE=-1"
 ```
 
 KV-cache quantization is server-only (no Modelfile equivalent) and needs flash
