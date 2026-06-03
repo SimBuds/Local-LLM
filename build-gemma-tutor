@@ -15,12 +15,12 @@ ROLE="tutor"            # role overlay file: prompts/roles/$ROLE.md
 # FROM. Smaller + higher-quality than the old Q4_K_M and should now sit on-GPU.
 EXTRAS=()
 
-# num_ctx 131072 = the model's full native window. The Q6 base fits it 100% on
-# the 10 GB GPU at ~105 tok/s (sliding-window attention keeps the KV cache tiny) —
-# context is effectively free here, so hand it the whole window. See TESTING.md
-# (gemma-content ctx sweep, 2026-06-02).
+# num_ctx 131072 = the model's full native window. Verified 2026-06-03: fits 100%
+# on the 10 GB GPU at 8.5 GB / ~102 tok/s (sliding-window attention keeps the KV
+# cache tiny) — context is effectively free here, so hand it the whole window. See
+# TESTING.md (gemma ctx sweep).
 PARAMS=(
-  'num_ctx 65536'
+  'num_ctx 131072'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'

@@ -202,3 +202,33 @@ still isn't interactive. Full splits + run history in [TESTING.md](TESTING.md).
 ## Docs
 
 `AGENTS.md` (agent workflow contract) · [`TESTING.md`](TESTING.md) (testing source of truth: suite, results, plans).
+
+GPU's fully restored. Here's where you actually stand, with current numbers on the new engine:
+
+Model (100% GPU)	tok/s now (0.30 + CUDA13)
+gemma-coder	94.8
+granite-coder (Q5)	54.7
+(granite dropped from ~90 → 55 on the 0.30 engine — worth a look later, but gemma is your driver.)
+
+The honest answer about "Claude Code speeds"
+"Claude Code speed" is really two different things, and they have opposite answers on a 9 GB card:
+
+1. Streaming responsiveness (raw tok/s) — you already match or beat it. ✅
+Claude/ChatGPT/Gemini stream output at roughly 50–90 tok/s. Your gemma-coder does ~95 tok/s, 100% on-GPU. So the feel of text flying onto the screen faster than you can read — you have that right now, locally. That box is checked.
+
+2. Time-to-a-correct-answer (what actually makes Claude Code feel fast) — not replicable here. ❌
+What makes Claude Code productive isn't the token rate — it's that a frontier model gets real, multi-file tasks right in one shot, holds 200k of context, reasons across your repo, and drives tools. A 4–8B local model at 95 tok/s still:
+
+hallucinates APIs and loses the thread past a couple of files,
+needs several re-prompts to converge (or never does),
+so it's slower to a working result despite higher tok/s. Your own benchmark says this: the 93% pass@1 is six toy algorithm puzzles — it explicitly does not predict real-repo performance.
+
+What that means practically
+Tasks local already nails at Claude-snappy speed: small/self-contained coding, regex, boilerplate, "explain this error," content/SEO, tutoring. For these, gemma at 95 tok/s genuinely feels like Claude Code. Use it as your fast, private first-pass.
+Real project coding (multi-file, debugging, architecture, unfamiliar frameworks): no 9 GB local setup replaces Claude Code. The gap is model intelligence, not speed — and you've already maxed the tuning levers (quant, ctx, KV cache, flash attn all dialed in).
+The only real lever left is VRAM, not config:
+24 GB GPU (3090/4090) → 14B–32B dense models on-GPU at usable speed → meaningfully closer to real-coding-usable.
+Apple unified memory (M-series, 36 GB+) → runs the big MoEs (like the qwen3.6 you're pulling) at 25–60 tok/s instead of ~13.
+Bottom line: you've already got Claude-Code-responsiveness for the tasks this hardware can do well — that's the win from today's fixes. Matching Claude Code on real coding is a VRAM purchase, not a speed-tuning problem. The qwen3.6 MoE you're pulling is the right instinct (MoE survives spill), but at 23 GB on 10 GB it'll land ~13 tok/s — a patient thinker, not a snappy chat.
+
+I also saved the ollama setup as a memory so we never re-run this saga:

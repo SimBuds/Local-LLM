@@ -6,13 +6,16 @@ set -euo pipefail
 # build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
 MODEL_NAME="granite-coder"
-BASE_MODEL="granite4.1:8b"
+BASE_MODEL="granite4.1:8b-q5_K_M"   # Q5_K_M (was Q4_K_M): verified 2026-06-03 free
+                                    # quality bump — 6.8 GB, 100% GPU, ~90 tok/s
+                                    # (same speed as Q4) @ 12k ctx. See TESTING.md.
 ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
 EXTRAS=()
 
-# Testing Params: (32768 - 16384 - 12288 - 8192 - 4096)
+# num_ctx 12288: Q5 stays 100% on-GPU here. Granite Q4 hits a wall past 32k (64k
+# spilled 12% to CPU → 30 tok/s); Q6/Q5 + big ctx spills sooner, so keep ctx modest.
 PARAMS=(
   'num_ctx 12288'
   'temperature 0.8'

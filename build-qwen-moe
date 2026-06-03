@@ -2,29 +2,42 @@
 set -euo pipefail
 
 # ============================================================================
-# Per-model config — the ONLY block that should differ between build-qwen,
-# build-granite, and build-gemma. Keep the assembly logic below in lock-step.
+# Per-model config — the ONLY block that should differ between build-* scripts.
+# Keep the assembly logic below in lock-step with the gemma/granite builders.
 # ============================================================================
-MODEL_NAME="granite-tutor"
-BASE_MODEL="granite4.1:8b-q5_K_M"   # Q5_K_M (was Q4_K_M): verified 2026-06-03 free
-                                    # quality bump — 6.8 GB, 100% GPU, ~90 tok/s
-                                    # (same speed as Q4) @ 12k ctx. See TESTING.md.
-ROLE="tutor"           # role overlay file: prompts/roles/$ROLE.md
+MODEL_NAME="qwen-moe"
+BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"   # 35B MoE, 3B active, MTP, ~23 GB
 
-# Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
+# EXPERIMENTAL — does NOT fit on the 10 GB GPU. This 23 GB MoE spills heavily to
+# CPU; it is kept off the production lineup and exists only to test whether MoE +
+# multi-token-prediction lands in a usable speed band on this box (the dense
+# qwen3.6:27b = the retired `qwen-big` managed only ~3 tok/s; the plain 35B MoE
+# ~13 tok/s — see TESTING.md). Run-speed it before trusting anything.
+
+ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
+                        # qwen3.6 emphasizes agentic coding + thinking, so the
+                        # coding overlay makes it A/B-comparable to gemma/granite-coder.
+
+# Modelfile extras (TEMPLATE/RENDERER/PARSER). EMPTY on purpose: qwen3.6 ships its
+# own thinking template/renderer/parser — inherit it via FROM. Do NOT add
+# RENDERER/PARSER directives; overriding them errors `does not support thinking`
+# (see the retired build-qwen-big notes in TESTING.md). Thinking is ON by default;
+# disable per-run with `ollama run --think false qwen-moe`.
 EXTRAS=()
 
-# Tutor = explanation-heavy, leak-gated prose; repeat_penalty 1.2 matches the prose
-# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 12288 is the
-# tested granite window (ctx sweep 32768→4096; see TESTING.md).
+# Qwen3 thinking-mode sampling (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 /
+# presence_penalty 1.5; never greedy). No num_predict cap — thinking traces need
+# room to complete. num_ctx 16384 keeps the KV cache small so a few more experts
+# stay on-GPU; on a heavy spiller, LOWERING num_ctx (e.g. 8192) raises GPU share
+# and gen tok/s — sweep with run-speed.py --opt num_ctx=... before committing.
 PARAMS=(
-  'num_ctx 12288'
-  'temperature 0.8'
-  'top_p 0.92'
-  'top_k 40'
-  'repeat_penalty 1.2'
+  'num_ctx 16384'
+  'temperature 0.6'
+  'top_p 0.95'
+  'top_k 20'
+  'min_p 0'
   'repeat_last_n 256'
-  'num_predict 2048'
+  'presence_penalty 1.5'
 )
 
 # ============================================================================

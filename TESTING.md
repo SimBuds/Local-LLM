@@ -326,6 +326,65 @@ updated to the gemma trio. granite/qwen variants stay built for re-eval (qwen-tu
 the fallback if leak-free teaching quality becomes the priority); legacy `qwen-custom`
 remains for the separate project.
 
+### Hardware re-tune (2026-06-03) — qwen dropped, gemma 128k, granite → Q5
+
+Lineup narrowed to **gemma (3 roles) + granite (coder/tutor)**; qwen dropped (slow
+thinking, separate weights → reload per switch). With qwen gone there's GPU headroom,
+so we swept how far gemma/granite can expand and still sit 100% on-GPU. `run-speed.py`
+with `--opt num_ctx=…` (runtime override, forces reload), splits from `ollama ps`:
+
+| Model | quant | num_ctx | VRAM | Split | Gen tok/s |
+|---|---|---|---|---|---|
+| gemma-coder | Q6 | 65536 (was) | 7.7 GB | 100% GPU | 99 |
+| **gemma-coder** | Q6 | **131072** | 8.5 GB | **100% GPU** | 102 |
+| granite-coder | Q4_K_M | 12288 (was) | 6.0 GB | 100% GPU | 90 |
+| granite-coder | Q4_K_M | 32768 | 7.4 GB | 100% GPU | 91 |
+| granite-coder | Q4_K_M | 65536 | 9.6 GB | ⚠️ 12% CPU | 30 |
+| **granite** | **Q5_K_M** | 12288 | 6.8 GB | **100% GPU** | 90 |
+| granite | Q6_K | 12288 | 7.7 GB | 100% GPU | 79 |
+| granite | Q6_K | 32768 | 9.1 GB | ⚠️ 6% CPU | 44 |
+
+**Findings:**
+- **gemma's full 128k window is free.** 131072 = 8.5 GB, 100% on-GPU, *no* speed
+  penalty (102 vs 99 tok/s) — sliding-window attention keeps KV tiny. All three gemma
+  builds now ship `num_ctx 131072`.
+- **granite Q4 hits a wall just past 32k.** 32768 fits (7.4 GB, 100% GPU); 65536 spills
+  (9.6 GB, 12% CPU → 30 tok/s, ~3× slowdown). 32k is granite's safe Q4 ctx ceiling.
+- **Q5_K_M is granite's free quality bump.** 6.8 GB, 100% GPU, *same 90 tok/s as Q4* @
+  12k. Q6_K also fits at 12k (7.7 GB) but costs ~12% speed (79 tok/s) and leaves no ctx
+  room (Q6 @ 32k already spills). Can't have Q6 + big ctx. **Applied: granite-coder/tutor
+  repointed `granite4.1:8b` → `granite4.1:8b-q5_K_M`, ctx held at 12288.**
+
+**Quant-bump confirmed in quality (coding, 5 attempts):**
+
+| Model | Q4_K_M | Q5_K_M | Per-task gain |
+|---|---|---|---|
+| **granite-coder** | 25/30 (83%) | **27/30 (90%)** | `calc` 1→2, `edit_distance` 4→5 |
+| gemma-coder | 24/30 (80%) | 24/30 (80%) | flat (ctx-only change) |
+
+Q5 lifts granite coding +7 pts (back to its old 90% peak) at no usable-speed cost.
+**granite-tutor on Q5 not yet re-run** — leak count / teach score on Q5 still pending.
+
+### qwen3.6 on 9 GB — not reachable at chat speed (2026-06-03)
+
+Casey asked about running qwen3.6 (target: cloud-chat-like speed, ~50+ tok/s — the band
+Claude/ChatGPT/Gemini stream at; ~15–20 tok/s already reads faster than a human). The
+qwen3.6 family **has no small dense model — it starts at 27B**, so nothing fits on 9 GB:
+
+| Tag | Size | Type | On 9 GB |
+|---|---|---|---|
+| `qwen3.6:27b` q4_K_M | 17 GB | dense | ~half spills → **~3 tok/s** (= the retired `qwen-big`) |
+| `qwen3.6:35b-a3b` q4_K_M | ~24 GB | MoE (3B active) | spills hard, MoE survives → **~13 tok/s** (measured, big-model round) |
+| `qwen3.6:35b-a3b-mtp-q4_K_M` | ~23 GB | MoE + MTP | untested; MTP *may* lift toward ~18–20 tok/s |
+
+**Verdict:** no qwen3.6 variant reaches the ~50 tok/s chat band on this card — dense 27B
+is dead (~3 tok/s), the MoE lands in the sluggish-but-readable band (~13 tok/s) and OOMs
+the server if judges run alongside it. The real unlock is VRAM, not tuning (holds from the
+gemma-big/qwen-big round). The MTP MoE is the only one with upside, so an **experimental
+`build-qwen-moe`** (`qwen3.6:35b-a3b-mtp-q4_K_M`, role `coding`, `EXTRAS=()` to inherit the
+thinking template, Qwen3 thinking sampling, `num_ctx 16384`) was added for a future
+run-speed test. Off the production lineup; requires **Ollama ≥ v0.30** for this base.
+
 ## Plans
 
 - [x] **Gemma quant upgrade (2026-06-02).** Rebuilt `gemma-content` from

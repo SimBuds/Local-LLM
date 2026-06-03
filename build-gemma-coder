@@ -14,12 +14,12 @@ ROLE="coding"           # role overlay file: prompts/roles/$ROLE.md
 # RENDERER/PARSER gemma4 (verified via `ollama show --modelfile`), inherited on FROM.
 EXTRAS=()
 
-# num_ctx 131072 = full native window (matches gemma-content; free on-GPU thanks
-# to sliding-window attention — see TESTING.md ctx sweep). repeat_penalty 1.15
-# mirrors granite's coding config (the coding king) as the starting point; tune
-# empirically via run-code.py before trusting any delta.
+# num_ctx 131072 = full native window (matches gemma-content; verified 2026-06-03
+# free on-GPU at 8.5 GB / ~102 tok/s thanks to sliding-window attention — see
+# TESTING.md ctx sweep). repeat_penalty 1.15 mirrors granite's coding config (the
+# coding king) as the starting point; tune empirically via run-code.py.
 PARAMS=(
-  'num_ctx 65536'
+  'num_ctx 131072'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
