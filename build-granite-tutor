@@ -6,19 +6,20 @@ set -euo pipefail
 # build-granite, and build-gemma. Keep the assembly logic below in lock-step.
 # ============================================================================
 MODEL_NAME="granite-tutor"
-BASE_MODEL="granite4.1:8b-q5_K_M"   # Q5_K_M (was Q4_K_M): verified 2026-06-03 free
-                                    # quality bump — 6.8 GB, 100% GPU, ~90 tok/s
-                                    # (same speed as Q4) @ 12k ctx. See TESTING.md.
+BASE_MODEL="granite4.1:8b-Q5_K_M"   # Q5_K_M (was Q4_K_M): sweet spot — Q6 gave no
+                                  # coding gain over Q5 (both 90%) but cost VRAM +
+                                  # speed, so back to Q5. 100% on-GPU on the 0.30
+                                  # engine. See TESTING.md (0.30 headroom sweep).
 ROLE="tutor"           # role overlay file: prompts/roles/$ROLE.md
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER). Granite uses defaults.
 EXTRAS=()
 
 # Tutor = explanation-heavy, leak-gated prose; repeat_penalty 1.2 matches the prose
-# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 12288 is the
-# tested granite window (ctx sweep 32768→4096; see TESTING.md).
+# role (build-gemma-tutor / *-content), not the coder 1.15. num_ctx 16384 (bumped
+# from 12288 on the 0.30 engine; Q5 + 16k still 100% on-GPU — see TESTING.md).
 PARAMS=(
-  'num_ctx 12288'
+  'num_ctx 16384'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
