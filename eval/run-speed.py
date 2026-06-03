@@ -4,7 +4,7 @@ Speed benchmark: measure raw token throughput per model — NOT correctness.
 
 Purpose: quantify the speed tradeoff of CPU-spillover models (e.g. qwen-big =
 qwen3.6:27b, ~17 GB, runs ~⅔ on CPU on a 10 GB GPU) against the models that fit
-on-GPU and we actually use daily (qwen-custom, granite-coder, gemma-content).
+on-GPU and we actually use daily (gemma-content, granite-coder).
 
 Deliberately small so a heavily-spilling model finishes in minutes, not all day:
 a few short prompts, output capped via num_predict, 1 attempt each, thinking OFF
@@ -16,7 +16,7 @@ load time, and a slowdown multiple vs the fastest model.
 
 Usage:
   ./eval/run-speed.py                                  # default models + prompts
-  ./eval/run-speed.py --models qwen-big qwen-custom
+  ./eval/run-speed.py --models qwen-big gemma-content
   ./eval/run-speed.py --num-predict 128 --attempts 1   # even faster
   ./eval/run-speed.py --timeout 900                    # for very slow spillover
 
@@ -40,9 +40,9 @@ from _ollama import (  # noqa: E402
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
-# Spillover candidates first, then the three on-GPU models we use daily. All run
-# thinking-OFF (no :think) — this is a throughput test, not a reasoning test.
-DEFAULT_MODELS = ["qwen-custom", "granite-coder", "gemma-content"]
+# The on-GPU models we use daily. All run thinking-OFF (no :think) — this is a
+# throughput test, not a reasoning test.
+DEFAULT_MODELS = ["gemma-content", "granite-coder"]
 
 # Mixed-length prompts: a short one and a longer one, so we also exercise
 # prompt-eval. Content is irrelevant — we measure throughput, and num_predict

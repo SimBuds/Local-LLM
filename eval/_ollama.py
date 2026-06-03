@@ -19,9 +19,9 @@ from pathlib import Path
 OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # Locked lineup (2026-06-03): gemma for all three roles. It won content (80%) and
-# coding (93% pass@1) outright; for tutor, qwen-tutor edged teach score (9.0 vs 8.4)
-# but gemma-tutor is clean (0 leaks), fast, and keeps the lineup one family — chosen
-# on those grounds. See TESTING.md. granite/qwen variants stay built for re-eval.
+# coding (93% pass@1) outright; gemma-tutor is clean (0 leaks), fast, and keeps the
+# eval default one family. See TESTING.md. granite-coder/granite-tutor stay built as
+# the coding/tutor fallback (run via --models). qwen was dropped from the lineup.
 DEFAULT_MODELS = ["gemma-content", "gemma-coder", "gemma-tutor"]
 
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
@@ -31,11 +31,11 @@ FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
 def resolve_model(spec: str) -> tuple[str, bool]:
     """Map a leaderboard spec to (ollama_name, think).
 
-    A trailing `:think` selects Qwen-style thinking mode while keeping the real
-    Ollama model name intact, so `qwen-custom` and `qwen-custom:think` can be
-    ranked as separate entries. Thinking is a runtime flag, not a Modelfile
-    setting — only qwen-custom honors it; the others error on `--think`, so
-    don't tag them.
+    A trailing `:think` selects thinking mode while keeping the real Ollama
+    model name intact, so a model and its `:think` variant can be ranked as
+    separate entries. Thinking is a runtime flag, not a Modelfile setting. The
+    current lineup (gemma/granite) doesn't support it and errors on `--think`,
+    so don't tag them — the hook stays for re-evaluating thinking-capable bases.
     """
     if spec.endswith(":think"):
         return spec[: -len(":think")], True

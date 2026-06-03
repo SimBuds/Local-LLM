@@ -11,31 +11,27 @@ and a per-model role overlay, picked by benchmark ([TESTING.md](TESTING.md)).
 **Locked lineup (2026-06-03): gemma for all three roles** — `gemma-content`,
 `gemma-coder`, `gemma-tutor` (the eval default). gemma won content + coding
 outright; gemma-tutor takes the tutor role on leak-cleanliness + speed + one-family
-simplicity (qwen-tutor edged teach score but is slow and leaked once — see
-[TESTING.md](TESTING.md)). The remaining rows are the full **3×3 matrix** (3
-families × 3 roles) kept built for re-eval. `num_ctx` is tuned per-family for a
-10 GB GPU (splits in [TESTING.md](TESTING.md)).
+simplicity. Two **granite** builds (`granite-coder`, `granite-tutor`) stay built as
+the coding/tutor fallback (granite was the prior coding/tutor king; it cratered at
+content, so no granite-content). qwen was dropped from the lineup (slow thinking,
+separate weights — see history below and [TESTING.md](TESTING.md)). `num_ctx` is
+tuned per-family for a 10 GB GPU (splits in [TESTING.md](TESTING.md)).
 
 | Model             | Base                   | ctx   | Role overlay | Notes                                              |
 |-------------------|------------------------|-------|--------------|----------------------------------------------------|
 | `gemma-content`   | `batiai/gemma4-e4b:q6` | 65536 | `prose`      | 🏆 content (80% clean, ~99 tok/s).                 |
 | `gemma-coder`     | `batiai/gemma4-e4b:q6` | 65536 | `coding`     | 🏆 coding (93% pass@1 @ 3 s); `repeat_penalty 1.15`. |
-| `gemma-tutor`     | `batiai/gemma4-e4b:q6` | 65536 | `tutor`      | Teach 8.4, **0 leaks** (clean runner-up).          |
-| `granite-content` | `granite4.1:8b`        | 12288 | `prose`      | Weak at prose (0% clean) — coder/tutor base.        |
-| `granite-coder`   | `granite4.1:8b`        | 12288 | `coding`     | Solid pass@1 (77%), fast (2.1 s).                   |
-| `granite-tutor`   | `granite4.1:8b`        | 12288 | `tutor`      | Teach 8.3; `repeat_penalty 1.2` (prose-aligned).    |
-| `qwen-content`    | `batiai/qwen3.5-9b:q6` | 49152 | `prose`      | 60% clean; **thinking-off** (eval `--think false`). |
-| `qwen-coder`      | `batiai/qwen3.5-9b:q6` | 49152 | `coding`     | **Thinking-on**; 80% but slow (~31 s/answer).      |
-| `qwen-tutor`      | `batiai/qwen3.5-9b:q6` | 49152 | `tutor`      | 🏆 tutor (teach 9.0); **thinking-on**, 1 leak.     |
+| `gemma-tutor`     | `batiai/gemma4-e4b:q6` | 65536 | `tutor`      | 🏆 tutor — teach 8.4, **0 leaks**.                 |
+| `granite-coder`   | `granite4.1:8b`        | 12288 | `coding`     | Coding fallback: solid pass@1 (77%), fast (2.1 s).  |
+| `granite-tutor`   | `granite4.1:8b`        | 12288 | `tutor`      | Tutor fallback: teach 8.3; `repeat_penalty 1.2`.    |
 
-`build-qwen` (legacy `qwen-custom`, base `qwen3.5:9b`) is kept outside the matrix
-for a separate project. Eval winners and full leaderboards: **[TESTING.md](TESTING.md)**.
+Eval winners and full leaderboards: **[TESTING.md](TESTING.md)**.
 
 ## Quickstart
 
 ```bash
-./build-qwen-coder                        # build one model
-ollama run --think false qwen-coder       # run it (--think is qwen-only)
+./build-gemma-coder                       # build one model
+ollama run gemma-coder                    # run it
 ```
 
 Each builder assembles the prompt stack, writes
@@ -46,17 +42,15 @@ Each builder assembles the prompt stack, writes
 ```bash
 # content                coder                  tutor
 ./build-gemma-content    ./build-gemma-coder    ./build-gemma-tutor
-./build-granite-content  ./build-granite-coder  ./build-granite-tutor
-./build-qwen-content     ./build-qwen-coder     ./build-qwen-tutor
-./build-qwen             # legacy qwen-custom — separate project, not in the matrix
+                         ./build-granite-coder  ./build-granite-tutor
 ```
 
 The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
 `BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the assembly logic below the divider
 is byte-identical and must stay in lock-step (incl. the role-gated `LEARNING
 PROFILE` injection — emitted only when `ROLE=tutor`). **New model:** copy a script
-(a `build-qwen-*` if you need `TEMPLATE`/`RENDERER`/`PARSER`; any other otherwise)
-and edit only the config block.
+and edit only the config block (set `EXTRAS` if the base needs
+`TEMPLATE`/`RENDERER`/`PARSER`).
 
 ## Structure
 
@@ -68,9 +62,9 @@ ai/
 │   ├── formatting.md     # output shape
 │   ├── safety.md         # operational safety
 │   └── roles/            # per-model overlays (selected by $ROLE)
-│       ├── coding.md     # *-coder (gemma/granite/qwen)
-│       ├── prose.md      # *-content (gemma/granite/qwen)
-│       └── tutor.md      # *-tutor (gemma/granite/qwen) — teaches; never full solutions
+│       ├── coding.md     # *-coder (gemma/granite)
+│       ├── prose.md      # *-content (gemma)
+│       └── tutor.md      # *-tutor (gemma/granite) — teaches; never full solutions
 ├── memory/user.md        # durable user profile
 ├── memory/learning-profile.md  # tutor-only: level/gaps/goals (role-gated inject)
 ├── knowledge/**/*.md     # reusable reference context
@@ -115,21 +109,14 @@ guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands in
 
 ## Tuning
 
-**Sampler params** live in each builder's `PARAMS` block, tuned per role. The
-**coder/tutor qwen** builds use Qwen3's recommended thinking-mode sampling
-(`temperature 0.6`, `top_p 0.95`, `top_k 20`, `min_p 0`, `presence_penalty 1.5`);
-**qwen-content** and all gemma/granite builds run hotter prose/coding sampling
-(`temperature 0.8`, `top_p 0.92`, `top_k 40`, `repeat_penalty 1.2` prose / `1.15`
-coder). Two attempted thinking tweaks (pp→1.0, adding `num_predict 8192`) both
-*regressed* qwen coding pass@1 from 87%, so that config stayed put — see the
-`build-qwen-coder` PARAMS comment. Thinking-qwen is high-variance (67–87% run-to-run).
+**Sampler params** live in each builder's `PARAMS` block, tuned per role. All
+gemma/granite builds run hotter prose/coding sampling (`temperature 0.8`,
+`top_p 0.92`, `top_k 40`, `repeat_penalty 1.2` prose / `1.15` coder).
 
-**Context** (`num_ctx`) is set per-family targeting a 10 GB GPU: qwen `49152`,
-gemma `65536`, granite `12288`. The qwen Q6 builds run KV-cache quantization
-(`OLLAMA_KV_CACHE_TYPE=q4_0`, below) and were dropped from 64k to 48k after 64k
-spilled ~17% to CPU — 48k sits 100% on-GPU at ~71 tok/s. gemma's sliding-window
-attention keeps its KV tiny. The server's `OLLAMA_CONTEXT_LENGTH`
-is a hard ceiling on top. Measured GPU/CPU splits are in [TESTING.md](TESTING.md).
+**Context** (`num_ctx`) is set per-family targeting a 10 GB GPU: gemma `65536`,
+granite `12288`. gemma's sliding-window attention keeps its KV tiny, so it fits the
+larger window 100% on-GPU. The server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling
+on top. Measured GPU/CPU splits are in [TESTING.md](TESTING.md).
 
 **Ollama server** (`sudo systemctl edit ollama.service`):
 
@@ -145,20 +132,6 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"
 KV-cache quantization is server-only (no Modelfile equivalent) and needs flash
 attention on to take effect.
 
-## Thinking mode (Qwen-only)
-
-Thinking is a runtime flag, not a Modelfile parameter — and only the qwen builds
-(`qwen-content`/`qwen-coder`/`qwen-tutor`, plus legacy `qwen-custom`) have it
-(`granite`/`gemma` error on `--think`). `qwen-coder`/`qwen-tutor` run thinking-on;
-drive `qwen-content` with `--think false`.
-
-```bash
-ollama run qwen-coder
-```
-
-Thinking is calibrated for problem-solving, not chitchat — asking it to handle a
-greeting with thinking on produces long looping traces; that's by design.
-
 ## Honest assessment (9 GB usable VRAM)
 
 The 9 GB ceiling caps this box at ~4–9B models. Within that, here's the realistic
@@ -170,11 +143,11 @@ read — separating what the benchmarks measured from how the models behave in r
 |---|---|---|
 | Content / SEO / copy | **gemma-content** | 80% clean @ ~99 tok/s; production-useful |
 | Coding (small/boilerplate) | **gemma-coder** | 93% pass@1 *and* fastest (3 s); granite ties on speed |
-| Tutor / learning | **gemma-tutor** daily; **qwen-tutor** for depth | gemma clean (0 leaks) + fast; qwen best explanations but ~31 s/answer + 1 leak |
+| Tutor / learning | **gemma-tutor** daily; **granite-tutor** fallback | gemma clean (0 leaks) + fast; granite teach 8.3 on a separate base |
 
 Operational reason gemma takes the whole lineup: all three gemma builds share one
 6.2 GB base, so with `OLLAMA_MAX_LOADED_MODELS=1` a single warm model covers all
-three roles via overlay swaps. granite/qwen are separate weights → a reload per switch.
+three roles via overlay swaps. granite is separate weights → a reload per switch.
 
 **Where local (gemma) genuinely helps**
 
@@ -191,14 +164,13 @@ three roles via overlay swaps. granite/qwen are separate weights → a reload pe
   frameworks. A 4B-effective model hallucinates APIs and loses the thread past a couple
   files. The 93% benchmark is six self-contained algorithm puzzles — it does **not**
   predict real-repo performance.
-- **Long-context / whole-repo reasoning** — even at 49k ctx, reasoning *over* that
+- **Long-context / whole-repo reasoning** — even at 65k ctx, reasoning *over* that
   context is weak at this size.
 - **High-stakes answers** where a subtle mistake is expensive.
 
 **Caveats on the numbers:** coding pass@1 is the most misleading (toy tasks, not real
 work). Tutor scores are soft (judged by other small models — trust the leak gate, not
-the decimals). Content is the most trustworthy result (objective pass/fail). The qwen
-thinking experiment failed for interactive use: 31 s/answer for *worse* coding accuracy.
+the decimals). Content is the most trustworthy result (objective pass/fail).
 
 **Bottom line:** use gemma as a fast, private first-pass for content + small coding +
 learning; offload heavy project work to a frontier model. Raising the local ceiling is
@@ -206,16 +178,16 @@ a VRAM decision, not a tuning one — dense models ≥15 GB drop to ~3 tok/s on 
 
 ## Models tested — history
 
-Every base that's been through the suite, with where it landed. Current matrix =
-gemma / granite / qwen (above). Retired models are gone from `ollama`/build scripts
-but kept here for the record.
+Every base that's been through the suite, with where it landed. Current lineup =
+gemma (3 roles) + granite (coder/tutor) (above). Retired models are gone from
+`ollama`/build scripts but kept here for the record.
 
 | Model (base) | Status | Pros | Cons | Good for |
 |---|---|---|---|---|
 | **gemma** (`batiai/gemma4-e4b:q6`, ~6.2 GB) | **current — locked lineup** | Won content + coding; 100% on-GPU at full ctx (~100 tok/s); e4b sliding-window keeps KV tiny; one base covers 3 roles | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, tutoring — the all-rounder |
-| **granite** (`granite4.1:8b`, ~5.3 GB) | current — re-eval | Solid pass@1 (77%), fast (2.1 s), small; was the prior coding/tutor king | Cratered at content (0% clean); no longer leads any role | Coding/tutor fallback |
-| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | current — re-eval | Only thinking model; best tutor explanations (9.0); strongest raw reasoning | Thinking is slow (~31 s/answer, 72 tok/s); ctx capped at 49k to fit; 1 tutor leak | Tutoring when depth > speed |
-| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | kept aside | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by the Q6 qwen builds in the matrix | A separate project (not the matrix) |
+| **granite** (`granite4.1:8b`, ~5.3 GB) | current — coder/tutor fallback | Solid pass@1 (77%), fast (2.1 s), small; was the prior coding/tutor king | Cratered at content (0% clean) → no granite-content; no longer leads any role | Coding/tutor fallback on a separate base |
+| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **dropped 2026-06-03** | Only thinking model; best tutor explanations (9.0); strongest raw reasoning | Thinking too slow (~31 s/answer); separate weights → reload per switch; 1 tutor leak | Tutoring when depth > speed (if re-added) |
+| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by the Q6 qwen builds, then qwen dropped entirely | — (was a separate project) |
 | `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all three roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every role | — (was a strong generalist) |
 | `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8); won no role | — |
 | `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run; failed content/tutor | Would be viable on bigger/unified-memory VRAM |
@@ -229,5 +201,4 @@ still isn't interactive. Full splits + run history in [TESTING.md](TESTING.md).
 
 ## Docs
 
-`AGENTS.md` (agent workflow contract — `CLAUDE.md` just points here) ·
-[`TESTING.md`](TESTING.md) (testing source of truth: suite, results, plans).
+`AGENTS.md` (agent workflow contract) · [`TESTING.md`](TESTING.md) (testing source of truth: suite, results, plans).

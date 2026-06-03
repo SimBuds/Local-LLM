@@ -23,7 +23,7 @@ over the panel (each judge loaded once).
 Usage:
   ./eval/run-learn.py                              # all models; panel = all models
   ./eval/run-learn.py --judges granite-coder gemma-content   # fixed panel
-  ./eval/run-learn.py --models qwen-custom gemma-content
+  ./eval/run-learn.py --models granite-tutor gemma-tutor
   ./eval/run-learn.py --tasks lru_cache edit_distance --attempts 5
 
 Output:
