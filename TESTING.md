@@ -266,12 +266,65 @@ Audit fix: `granite-tutor` was on `repeat_penalty 1.15` (coder value) → moved 
 qwen coder/tutor cells keep the proven thinking-mode sampling; qwen-content runs
 the prose config thinking-off.
 
-- [ ] **Run the 3 benchmarks across all 9 models (5 attempts).**
+- [x] **Run the 3 benchmarks across the matrix (2026-06-03).** Each role's
+  benchmark ran that role's three family variants. Results below.
   - [x] Speed/fit: qwen Q6 builds 100% on-GPU at ctx 49152, ~71 tok/s
     (`20260603T000936Z`). 64k spilled; 48k is the fit ceiling.
-  - Content: `./eval/run.py` (drive qwen with `--think false`).
-  - Coding: `./eval/run-code.py --attempts 5`.
-  - Tutor: `./eval/run-tutor.py --attempts 5` (leave-one-out judges).
+  - [x] Content `run.py` (5 attempts, thinking-off) — `20260603T001301Z`.
+  - [x] Coding `run-code.py` (5 attempts, qwen `:think`) — `20260603T001422Z`.
+  - [x] Tutor `run-tutor.py` (3 attempts, judges gemma/granite-coder) — `20260603T003240Z`.
+
+### Matrix results (2026-06-03)
+
+**Content** (clean-rate, thinking-off):
+
+| Model | Clean | Tok/s |
+|---|---|---|
+| **gemma-content** | 4/5 (80%) | 99 |
+| qwen-content | 3/5 (60%) | 71 |
+| granite-content | 0/5 (0%) | 92 |
+
+**Coding** (real pass@1):
+
+| Model | Pass | Avg s | Tok/s |
+|---|---|---|---|
+| **gemma-coder** | 28/30 (93%) | 3.0 | 104 |
+| qwen-coder:think | 24/30 (80%) | 31.5 | 72 |
+| granite-coder | 23/30 (77%) | 2.1 | 94 |
+
+**Tutor** (leave-one-out panel, leak-gated):
+
+| Model | Teach /10 | Leaks | Explanation /10 |
+|---|---|---|---|
+| **qwen-tutor:think** | 9.0 | 1/15 | 9.6 |
+| gemma-tutor | 8.4 | 0/15 | 8.4 |
+| granite-tutor | 8.3 | 2/15 | 9.6 |
+
+**Findings:**
+- **gemma sweeps content + coding** — fastest *and* most accurate in both. Q6 +
+  coding overlay → 93% pass@1 (only gap is one `calc`, the field-ceiling task).
+- **qwen-coder:think isn't worth it for coding** — 31.5 s/answer @ 72 tok/s for
+  *lower* pass@1 (80%) than gemma's 3 s (93%). Thinking earns its slowness only at
+  tutoring, where `qwen-tutor:think` tops the teach score (9.0) — but carries 1
+  leak vs gemma-tutor's clean 0/15.
+- **granite-content cratered (0% clean)** — granite is a coder/tutor base, not a
+  writer. granite-coder/tutor stay solid but no longer lead any category.
+- **granite-tutor `repeat_penalty 1.2` fix held** — strong explanation (9.6), but
+  2 leaks keep it third on the gated teach score.
+- **Verdict:** `gemma-content` (content), `gemma-coder` (coding), and a tutor pick
+  between `qwen-tutor` (best teacher, slow, 1 leak) and `gemma-tutor` (clean,
+  fast, 8.4).
+
+### Decision (2026-06-03) — gemma for all three roles
+
+**Locked: `gemma-content`, `gemma-coder`, `gemma-tutor`** as the production lineup.
+gemma won content and coding outright. For tutor, `qwen-tutor:think` edged the
+teach score (9.0 vs 8.4) but `gemma-tutor` is leak-clean (0/15 vs 1/15), ~10× faster
+per answer (no thinking trace), and keeping one family means a single base loaded on
+the GPU and one prompt-stack to maintain — so gemma-tutor takes the role. `DEFAULT_MODELS`
+updated to the gemma trio. granite/qwen variants stay built for re-eval (qwen-tutor is
+the fallback if leak-free teaching quality becomes the priority); legacy `qwen-custom`
+remains for the separate project.
 
 ## Plans
 

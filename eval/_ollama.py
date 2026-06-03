@@ -18,9 +18,11 @@ from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# qwen is kept as the thinking-on experimental model — the `:think` suffix makes
-# every default eval run test it with thinking enabled (resolve_model handles it).
-DEFAULT_MODELS = ["qwen-custom:think", "granite-coder", "gemma-content"]
+# Locked lineup (2026-06-03): gemma for all three roles. It won content (80%) and
+# coding (93% pass@1) outright; for tutor, qwen-tutor edged teach score (9.0 vs 8.4)
+# but gemma-tutor is clean (0 leaks), fast, and keeps the lineup one family — chosen
+# on those grounds. See TESTING.md. granite/qwen variants stay built for re-eval.
+DEFAULT_MODELS = ["gemma-content", "gemma-coder", "gemma-tutor"]
 
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)

@@ -8,22 +8,25 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 Purpose-built models from one shared prompt stack (`prompts/` + `memory/user.md`)
 and a per-model role overlay, picked by benchmark ([TESTING.md](TESTING.md)).
-The lineup is a **3×3 matrix** — three base families (gemma, granite, qwen) × three
-roles (content/`prose`, coder/`coding`, tutor) — evaluated across all three
-benchmarks. `num_ctx` is tuned per-family for a 10 GB GPU (splits in
-[TESTING.md](TESTING.md)).
+**Locked lineup (2026-06-03): gemma for all three roles** — `gemma-content`,
+`gemma-coder`, `gemma-tutor` (the eval default). gemma won content + coding
+outright; gemma-tutor takes the tutor role on leak-cleanliness + speed + one-family
+simplicity (qwen-tutor edged teach score but is slow and leaked once — see
+[TESTING.md](TESTING.md)). The remaining rows are the full **3×3 matrix** (3
+families × 3 roles) kept built for re-eval. `num_ctx` is tuned per-family for a
+10 GB GPU (splits in [TESTING.md](TESTING.md)).
 
 | Model             | Base                   | ctx   | Role overlay | Notes                                              |
 |-------------------|------------------------|-------|--------------|----------------------------------------------------|
-| `gemma-content`   | `batiai/gemma4-e4b:q6` | 65536 | `prose`      | Q6 imatrix, 100% on-GPU, ~105 tok/s.               |
-| `gemma-coder`     | `batiai/gemma4-e4b:q6` | 65536 | `coding`     | Same Q6 base; `repeat_penalty 1.15`.               |
-| `gemma-tutor`     | `batiai/gemma4-e4b:q6` | 65536 | `tutor`      | Leak-gated teaching; tops tutor eval.              |
-| `granite-content` | `granite4.1:8b`        | 12288 | `prose`      | New content candidate for granite.                 |
-| `granite-coder`   | `granite4.1:8b`        | 12288 | `coding`     | Top code-correctness (pass@1).                     |
-| `granite-tutor`   | `granite4.1:8b`        | 12288 | `tutor`      | `repeat_penalty 1.2` (prose-aligned).              |
-| `qwen-content`    | `batiai/qwen3.5-9b:q6` | 49152 | `prose`      | Q6 quant; **thinking-off** (eval `--think false`). |
-| `qwen-coder`      | `batiai/qwen3.5-9b:q6` | 49152 | `coding`     | **Thinking-on**; proven thinking-mode sampling.    |
-| `qwen-tutor`      | `batiai/qwen3.5-9b:q6` | 49152 | `tutor`      | **Thinking-on** (tutoring is problem-solving).     |
+| `gemma-content`   | `batiai/gemma4-e4b:q6` | 65536 | `prose`      | 🏆 content (80% clean, ~99 tok/s).                 |
+| `gemma-coder`     | `batiai/gemma4-e4b:q6` | 65536 | `coding`     | 🏆 coding (93% pass@1 @ 3 s); `repeat_penalty 1.15`. |
+| `gemma-tutor`     | `batiai/gemma4-e4b:q6` | 65536 | `tutor`      | Teach 8.4, **0 leaks** (clean runner-up).          |
+| `granite-content` | `granite4.1:8b`        | 12288 | `prose`      | Weak at prose (0% clean) — coder/tutor base.        |
+| `granite-coder`   | `granite4.1:8b`        | 12288 | `coding`     | Solid pass@1 (77%), fast (2.1 s).                   |
+| `granite-tutor`   | `granite4.1:8b`        | 12288 | `tutor`      | Teach 8.3; `repeat_penalty 1.2` (prose-aligned).    |
+| `qwen-content`    | `batiai/qwen3.5-9b:q6` | 49152 | `prose`      | 60% clean; **thinking-off** (eval `--think false`). |
+| `qwen-coder`      | `batiai/qwen3.5-9b:q6` | 49152 | `coding`     | **Thinking-on**; 80% but slow (~31 s/answer).      |
+| `qwen-tutor`      | `batiai/qwen3.5-9b:q6` | 49152 | `tutor`      | 🏆 tutor (teach 9.0); **thinking-on**, 1 leak.     |
 
 `build-qwen` (legacy `qwen-custom`, base `qwen3.5:9b`) is kept outside the matrix
 for a separate project. Eval winners and full leaderboards: **[TESTING.md](TESTING.md)**.
@@ -155,6 +158,74 @@ ollama run qwen-coder
 
 Thinking is calibrated for problem-solving, not chitchat — asking it to handle a
 greeting with thinking on produces long looping traces; that's by design.
+
+## Honest assessment (9 GB usable VRAM)
+
+The 9 GB ceiling caps this box at ~4–9B models. Within that, here's the realistic
+read — separating what the benchmarks measured from how the models behave in real work.
+
+**Best pick per task**
+
+| Task | Pick | Why |
+|---|---|---|
+| Content / SEO / copy | **gemma-content** | 80% clean @ ~99 tok/s; production-useful |
+| Coding (small/boilerplate) | **gemma-coder** | 93% pass@1 *and* fastest (3 s); granite ties on speed |
+| Tutor / learning | **gemma-tutor** daily; **qwen-tutor** for depth | gemma clean (0 leaks) + fast; qwen best explanations but ~31 s/answer + 1 leak |
+
+Operational reason gemma takes the whole lineup: all three gemma builds share one
+6.2 GB base, so with `OLLAMA_MAX_LOADED_MODELS=1` a single warm model covers all
+three roles via overlay swaps. granite/qwen are separate weights → a reload per switch.
+
+**Where local (gemma) genuinely helps**
+
+- **Content / SEO / marketing copy** — objective format rules, gemma-content passes
+  reliably. The one *production-grade* local use.
+- **Small/self-contained coding** — boilerplate, single functions, regex, scripts,
+  "explain this error." Fast rubber-duck.
+- **Learning / upskilling** — the tutor overlay's refuse-to-solve behavior is good pedagogy.
+- **Privacy / offline** — nothing leaves the machine.
+
+**Where to reach for a frontier model instead (be realistic)**
+
+- **Real project coding** — multi-file changes, debugging, architecture, unfamiliar
+  frameworks. A 4B-effective model hallucinates APIs and loses the thread past a couple
+  files. The 93% benchmark is six self-contained algorithm puzzles — it does **not**
+  predict real-repo performance.
+- **Long-context / whole-repo reasoning** — even at 49k ctx, reasoning *over* that
+  context is weak at this size.
+- **High-stakes answers** where a subtle mistake is expensive.
+
+**Caveats on the numbers:** coding pass@1 is the most misleading (toy tasks, not real
+work). Tutor scores are soft (judged by other small models — trust the leak gate, not
+the decimals). Content is the most trustworthy result (objective pass/fail). The qwen
+thinking experiment failed for interactive use: 31 s/answer for *worse* coding accuracy.
+
+**Bottom line:** use gemma as a fast, private first-pass for content + small coding +
+learning; offload heavy project work to a frontier model. Raising the local ceiling is
+a VRAM decision, not a tuning one — dense models ≥15 GB drop to ~3 tok/s on this card.
+
+## Models tested — history
+
+Every base that's been through the suite, with where it landed. Current matrix =
+gemma / granite / qwen (above). Retired models are gone from `ollama`/build scripts
+but kept here for the record.
+
+| Model (base) | Status | Pros | Cons | Good for |
+|---|---|---|---|---|
+| **gemma** (`batiai/gemma4-e4b:q6`, ~6.2 GB) | **current — locked lineup** | Won content + coding; 100% on-GPU at full ctx (~100 tok/s); e4b sliding-window keeps KV tiny; one base covers 3 roles | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, tutoring — the all-rounder |
+| **granite** (`granite4.1:8b`, ~5.3 GB) | current — re-eval | Solid pass@1 (77%), fast (2.1 s), small; was the prior coding/tutor king | Cratered at content (0% clean); no longer leads any role | Coding/tutor fallback |
+| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | current — re-eval | Only thinking model; best tutor explanations (9.0); strongest raw reasoning | Thinking is slow (~31 s/answer, 72 tok/s); ctx capped at 49k to fit; 1 tutor leak | Tutoring when depth > speed |
+| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | kept aside | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by the Q6 qwen builds in the matrix | A separate project (not the matrix) |
+| `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all three roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every role | — (was a strong generalist) |
+| `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8); won no role | — |
+| `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run; failed content/tutor | Would be viable on bigger/unified-memory VRAM |
+| `gemma-big` (`batiai/gemma4-26b:iq4`, 13 GB) | **retired 2026-06-02** | More capacity than e4b | Lost every category; ~4.5× slower (23 t/s); 43% CPU spill | — |
+
+**Hardware limit driving all of this:** RTX 3080 (10 GB, ~9 usable), Ryzen 5900x,
+32 GB DDR4-3600. Models that fit 100% on-GPU run fast; anything that spills is
+bottlenecked by ~57 GB/s DDR4 (not compute) and gen tok/s falls off a cliff. Dense
+models ≥15 GB are effectively dead here (~3 tok/s); MoE survives spill better but
+still isn't interactive. Full splits + run history in [TESTING.md](TESTING.md).
 
 ## Docs
 
