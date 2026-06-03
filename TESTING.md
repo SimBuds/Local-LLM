@@ -409,9 +409,9 @@ buffer shrank too. Used the headroom to bump **ctx 12288 → 16384** and trial Q
 - **Q6 reverted → shipped Q5_K_M @ 16384.** Q6 coding re-eval = **90% (27/30)** —
   *identical to Q5's 90%* — so Q6 bought no quality but cost VRAM + speed (Q6 ~52 vs Q5
   ~55 tok/s). Q5 @ 16k is the final granite config (6.3 GB, 100% GPU).
-- ⚠️ **Speed numbers this round are depressed and need a clean re-baseline** — the box
-  was loaded (qwen3.6 MoE pull) during the sweeps; treat splits as valid, raw tok/s as
-  approximate. Possible **0.30 granite slowdown** (~55 tok/s vs ~90 on 0.23.2) to confirm idle.
+- ✅ **Speed re-baselined idle (see below)** — the depressed numbers this round were box
+  contention + cold-load, not real. **No 0.30 granite slowdown**: granite Q5 is ~78 tok/s
+  warm; gemma ~93–97. Splits were always valid.
 - **Pending:** granite-tutor not re-eval'd on Q5/0.30 (leak/teach unknown).
 
 ### qwen-moe (qwen3.6 35B-a3b MTP) speed — passes the 15 tok/s floor (2026-06-03)
@@ -443,22 +443,47 @@ off, `run-speed.py --opt num_ctx=…`):
 
 ## Plans
 
-- [ ] **qwen-moe thinking-ON speed gate (tailored test) — DO THIS FIRST.** The standard
-  `run-speed.py` runs thinking-off and caps `num_predict=200`, which truncates a thinking
-  trace and misreports thinking-mode speed. Before any capability eval, build a
-  thinking-aware speed check for `qwen-moe:think`: measure (a) raw gen tok/s with thinking
-  on (no num_predict truncation — let the trace + answer complete), and (b) **wall-clock
-  time-to-final-answer** on a realistic prompt (trace length × rate dominates the felt
-  latency). Gate on the **15 tok/s floor** ([[project-speed-cutoff]]) — if thinking-on gen
-  drops below 15, stop. Record the result here.
-- [ ] **Then: standard eval qwen-moe:think vs gemma + granite.** Only if the thinking
-  speed gate passes. Run content / coding / tutoring with `qwen-moe:think` against the
-  incumbents. Single-model runners only — at 29 GB it OOMs the server if judges co-load
-  (`qwen-big` HTTP 500'd this way), so use external small judges loaded separately, never
-  co-resident. Note the **coding-overlay confound**: qwen-moe is one build (coding overlay),
-  so its content/tutoring scores aren't apples-to-apples with purpose-built role models.
-- [ ] **Clean idle re-baseline of granite/gemma speed (0.30).** This round's tok/s were
-  taken with the box loaded by the MoE pull; confirm granite Q5 isn't actually slow on 0.30.
+- [x] **qwen-moe thinking-ON speed gate (2026-06-03).** Built `eval/run-think-speed.py`
+  (thinking-on, no num_predict truncation; reports gen tok/s + wall-time + thinking/answer
+  token split). Result @ 16k: **gen 40.9 tok/s — PASSES the 15 floor** — BUT the felt
+  picture fails: **~83 s wall per answer**, 3161 output tokens of which **2627 (83%) are
+  thinking**, ~64 s thinking before the answer appears. And **1 of 2 prompts HTTP 500'd**
+  (OOM — the GPU is maxed at 8.86/10 GB, ~1 GB margin is too thin under peak compute, same
+  signature as retired `qwen-big`). **Verdict: passes the rate rule, fails the usability
+  smell test** — 83 s/answer + instability = curiosity, not a tool. No GPU lever left (it's
+  maxed + OOMing); only a smaller quant (q3_K ~18 GB) would add on-GPU layers + margin,
+  trading quality. num_ctx doesn't change the weight split but may reduce the 500s.
+- [x] **Stabilization via num_ctx FAILED (2026-06-03).** Rebuilt qwen-moe @ 8192 to shrink
+  the GPU compute buffer — **no change**: footprint still 29 GB, margin still ~1 GB, and p1
+  still HTTP 500'd (p2 OK). Pattern is consistent both runs: the **first/cold generation
+  OOMs, the second/warm succeeds** — a cold-start graph-allocation spike that ctx can't fix
+  (the 22 GB *weights* own the footprint). Conclusion: **qwen-moe can't reliably share the
+  10 GB card's inference margin.** Remaining levers: `OLLAMA_GPU_OVERHEAD` (reserve ~1 GB →
+  one fewer layer → more margin; server-wide, reversible, harmless to gemma/granite) or a
+  q3_K quant (~18 GB, shrinks footprint, costs quality).
+- **q3 quant does NOT exist for qwen3.6 a3b (2026-06-03).** Checked tags: smallest is
+  `q4_K_M` (22–24 GB) — what we already run. q8/bf16 are bigger; `nvfp4` is same size,
+  different format. So **no smaller weight is available** to shrink the footprint. The only
+  remaining stabilization lever is **`OLLAMA_GPU_OVERHEAD`** (reserve VRAM → ollama offloads
+  one fewer layer → more margin for the cold-start spike); server-wide, reversible, harmless
+  to gemma/granite. If that doesn't hold, qwen-moe is shelved (10 GB can't host it reliably).
+- [x] **qwen-moe SHELVED (2026-06-03).** Capability evals **not run** — every stabilization
+  lever is exhausted: ctx tuning doesn't change the spill/margin (failed above), no q3 quant
+  exists to shrink the footprint, and the only remaining lever (`OLLAMA_GPU_OVERHEAD`) wasn't
+  worth pursuing for a model that, even if stabilized, delivers **~83 s/answer** (83% of
+  output is thinking trace) and intermittent cold-start 500s. **Verdict: qwen3.6 35B MoE is
+  not viable on a 10 GB card** — 22 GB of weights spill 73% to CPU no matter what; MTP keeps
+  the *rate* above the 15 tok/s floor but the felt latency + instability make it a curiosity.
+  Revisit only with more VRAM. `build-qwen-moe` kept as the documented experiment; off the
+  lineup. (Earlier intent: eval qwen-moe:think vs gemma+granite with single-model runners +
+  external small judges to dodge the OOM — not executed.)
+- [x] **Clean idle re-baseline (2026-06-03).** On an idle box: gemma all three ~93–97 tok/s,
+  **granite Q5 ~78 tok/s warm** (granite-tutor) — all 100% GPU. **Resolves the "0.30 granite
+  slowdown" flag: it was a cold-load artifact** (granite-coder read ~56 only because it loaded
+  *last* with a 20 s cold load dragging its first-gen sample; same base warm = ~78). granite
+  is *not* slow on 0.30. (Note: run-speed folds cold-load into the first sample — warm the
+  model or read the 2nd+ row for a true rate.) Retry also confirms the earlier mid-run server
+  crash was a one-off transient right after the qwen-moe rm, not reproducible.
 - [x] **Gemma quant upgrade (2026-06-02).** Rebuilt `gemma-content` from
   `batiai/gemma4-e4b:q6` — 100% GPU, ~102 tok/s, ~2.4× the old Q4_K_M. Use the
   ollama.com build, **not** the raw `hf.co/unsloth/...` GGUF (Ollama 0.23.2's
