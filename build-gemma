@@ -8,7 +8,7 @@ BASE_MODEL="gemma4:e4b-it-q8_0"
 EXTRAS=()
 
 PARAMS=(
-  'num_ctx 32768'
+  'num_ctx 131072'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'
