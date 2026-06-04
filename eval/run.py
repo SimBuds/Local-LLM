@@ -7,7 +7,7 @@ cheap regex signals (no LLM judge). The summary ranks models by a composite
 
 Usage:
   ./eval/run.py                                  # all models, 5 attempts
-  ./eval/run.py --models gemma-content           # single model
+  ./eval/run.py --models gemma                   # single model
   ./eval/run.py --attempts 3
   ./eval/run.py --prompt-file eval/prompts/x.md  # different prompt
 

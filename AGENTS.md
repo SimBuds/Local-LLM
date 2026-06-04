@@ -5,10 +5,9 @@ Workflow contract for any AI coding agent (Claude Code, Codex, Cursor, Aider, Cl
 ## Documentation architecture
 
 - **`AGENTS.md`** (this file): source of truth for agent behavior and project rules.
-- **`README.md`**: what the project is, the model lineup, how to build and run.
-- **`TESTING.md`**: the eval suite, leaderboards, the model-selection decision, and testing plans.
+- **`README.md`**: what the project is, the model lineup, how to build and run, the eval suite, and the full results/run history.
 
-Those three are the only durable docs. Don't create `PLAN.md`, `IMPLEMENT.md`, `CLAUDE.md`, or similar — keep the doc set slim.
+Those two are the only durable docs. Don't create `PLAN.md`, `IMPLEMENT.md`, `CLAUDE.md`, `TESTING.md`, or similar — keep the doc set slim.
 
 ## How to work
 
@@ -33,4 +32,4 @@ Keep responses tight. State results and decisions directly; don't narrate intern
 
 ## Project-specific rules
 
-- **Testing** is owned by [`TESTING.md`](TESTING.md) — read it before any eval/benchmark work and record results there. Models are built by the `build-*` scripts; see [`README.md`](README.md) for the prompt-stack architecture and the current model lineup.
+- **Testing**: the eval suite lives under `eval/`; record results and run history in [`README.md`](README.md). Models are built by the `build-*` scripts; see [`README.md`](README.md) for the prompt-stack architecture and the current model lineup.

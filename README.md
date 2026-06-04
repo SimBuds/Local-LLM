@@ -6,34 +6,29 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 ## Models
 
-Purpose-built models from one shared prompt stack (`prompts/` + `memory/user.md`)
-and a per-model role overlay, picked by benchmark ([TESTING.md](TESTING.md)).
-**Locked lineup (2026-06-03): gemma for all three roles** — `gemma-content`,
-`gemma-coder`, `gemma-tutor` (the eval default). gemma won content + coding
-outright; gemma-tutor takes the tutor role on leak-cleanliness + speed + one-family
-simplicity. Two **granite** builds (`granite-coder`, `granite-tutor`) stay built as
-the coding/tutor fallback (granite was the prior coding/tutor king; it cratered at
-content, so no granite-content). qwen was dropped from the lineup (slow thinking,
-separate weights); the qwen3.6 35B MoE was trialed and **shelved** (spills 73% to
-CPU on 10 GB, ~83 s/answer, unstable — see [TESTING.md](TESTING.md)). `num_ctx` is
-tuned per-family for a 10 GB GPU (splits in [TESTING.md](TESTING.md)).
+Two **versatile generalists** built from one shared prompt stack (`prompts/` +
+`memory/user.md` + `knowledge/`) — no role overlays. Each is a single all-rounder
+expected to handle content, coding, and learning from the same system prompt.
 
-| Model             | Base                     | ctx    | Role overlay | Notes                                              |
-|-------------------|--------------------------|--------|--------------|----------------------------------------------------|
-| `gemma-content`   | `batiai/gemma4-e4b:q6`   | 131072 | `prose`      | 🏆 content (80% clean, ~95 tok/s).                 |
-| `gemma-coder`     | `batiai/gemma4-e4b:q6`   | 131072 | `coding`     | 🏆 coding (93% pass@1); `repeat_penalty 1.15`.     |
-| `gemma-tutor`     | `batiai/gemma4-e4b:q6`   | 131072 | `tutor`      | 🏆 tutor — teach 9.1, **0 leaks**.                 |
-| `granite-coder`   | `granite4.1:8b-Q5_K_M`   | 16384  | `coding`     | Coding fallback: pass@1 90%, ~78 tok/s.            |
-| `granite-tutor`   | `granite4.1:8b-Q5_K_M`   | 16384  | `tutor`      | Tutor fallback: teach 8.5; `repeat_penalty 1.2`.   |
+**Current head-to-head (2026-06-04): `gemma` wins all three evals.**
 
-Bases/ctx tuned on ollama 0.30 (leaner VRAM than 0.23.2). Eval winners and full
-leaderboards: **[TESTING.md](TESTING.md)**.
+| Model     | Base                     | ctx    | Notes                                                        |
+|-----------|--------------------------|--------|-------------------------------------------------------------|
+| `gemma`   | `batiai/gemma4-e4b:q6`   | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
+| `granite` | `granite4.1:8b-Q5_K_M`   | 16384  | Fallback — ties coding (26/30); content 3/5, runs shorter.  |
+
+Both fit 100% on-GPU and clear the 15 tok/s floor. They tie on coding pass@1
+(26/30 each); gemma separates on content formatting (100% vs 60% clean) and
+holds full output length. `num_ctx` is tuned per-family for a 10 GB GPU.
+
+Bases/ctx tuned on ollama 0.30 (leaner VRAM than 0.23.2). Full run history is in
+the **Models tested** table below.
 
 ## Quickstart
 
 ```bash
-./build-gemma-coder                       # build one model
-ollama run gemma-coder                    # run it
+./build-gemma                             # build the model
+ollama run gemma                          # run it
 ```
 
 Each builder assembles the prompt stack, writes
@@ -42,17 +37,13 @@ Each builder assembles the prompt stack, writes
 ## Build
 
 ```bash
-# content                coder                  tutor
-./build-gemma-content    ./build-gemma-coder    ./build-gemma-tutor
-                         ./build-granite-coder  ./build-granite-tutor
+./build-gemma        ./build-granite
 ```
 
 The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
-`BASE_MODEL`, `ROLE`, `EXTRAS`, `PARAMS`); the assembly logic below the divider
-is byte-identical and must stay in lock-step (incl. the role-gated `LEARNING
-PROFILE` injection — emitted only when `ROLE=tutor`). **New model:** copy a script
-and edit only the config block (set `EXTRAS` if the base needs
-`TEMPLATE`/`RENDERER`/`PARSER`).
+`BASE_MODEL`, `EXTRAS`, `PARAMS`); the assembly logic below the divider is
+byte-identical and must stay in lock-step. **New model:** copy a script and edit
+only the config block (set `EXTRAS` if the base needs `TEMPLATE`/`RENDERER`/`PARSER`).
 
 ## Structure
 
@@ -62,13 +53,8 @@ ai/
 │   ├── system.md         # core directives
 │   ├── personality.md    # voice
 │   ├── formatting.md     # output shape
-│   ├── safety.md         # operational safety
-│   └── roles/            # per-model overlays (selected by $ROLE)
-│       ├── coding.md     # *-coder (gemma/granite)
-│       ├── prose.md      # *-content (gemma)
-│       └── tutor.md      # *-tutor (gemma/granite) — teaches; never full solutions
+│   └── safety.md         # operational safety
 ├── memory/user.md        # durable user profile
-├── memory/learning-profile.md  # tutor-only: level/gaps/goals (role-gated inject)
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # evaluation suite (see below)
 ├── models/<name>/        # generated: system.txt + Modelfile
@@ -77,18 +63,16 @@ ai/
 
 ## Prompt assembly order
 
-`system.md` → `personality.md` → `formatting.md` → `roles/$ROLE.md` →
-`safety.md` → `memory/user.md` → `knowledge/**/*.md` (sorted; each wrapped in
-`--- START/END FILE ---`; files >100k skipped). Each block is wrapped in
-`=== HEADING ===` markers. The `Modelfile` embeds `system.txt` literally inside
-`SYSTEM """ ... """` (no shell expansion); builders abort if a source contains `"""`.
+`prompts/` + `memory/` + `knowledge/` are injected in sorted order, each file
+wrapped in `--- START/END FILE ---` (files >100k skipped). The `Modelfile`
+embeds `system.txt` literally inside `SYSTEM """ ... """` (no shell expansion);
+builders abort if a source contains `"""`.
 
 ## Where changes belong
 
 | Change | Goes in |
 |---|---|
 | Behavior rule, all models | `prompts/` |
-| Behavior rule, one role | `prompts/roles/<role>.md` |
 | Stable fact about Casey | `memory/user.md` |
 | Reusable technical reference | `knowledge/` |
 | New eval task | `eval/coding_tasks.py` / `eval/learning_tasks.py` |
@@ -99,31 +83,34 @@ Keep prompts terse — every token is spent every turn. When a model misbehaves,
 
 ## Evaluation
 
-The eval suite, current leaderboards, the 3-model decision, and testing plans
-live in **[TESTING.md](TESTING.md)** — the testing source of truth. Five runners
-under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1),
-`run-learn.py` (tutoring + code/explanation), `run-tutor.py` (tutor leak-gated
-guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands in
-`eval/runs/<UTC>/`.
+Five runners under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1
+by real execution), `run-learn.py` (tutoring + code/explanation), `run-tutor.py`
+(tutor leak-gated guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands
+in `eval/runs/<UTC>/`.
+
+```bash
+./eval/run-speed.py --models gemma granite     # speed floor first
+./eval/run-code.py  --models gemma granite     # coding pass@1
+./eval/run.py       --models gemma granite     # content/SEO
+```
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
 > subprocess with a timeout, but it is **not** containerized. Trusted models only.
 
 ## Tuning
 
-**Sampler params** live in each builder's `PARAMS` block, tuned per role. All
-gemma/granite builds run hotter prose/coding sampling (`temperature 0.8`,
-`top_p 0.92`, `top_k 40`, `repeat_penalty 1.2` prose / `1.15` coder).
+**Sampler params** live in each builder's `PARAMS` block (`temperature 0.8`,
+`top_p 0.92`, `top_k 40`, `repeat_penalty 1.15`, `repeat_last_n 256`,
+`num_predict 2048`).
 
 **Context** (`num_ctx`) is set per-family targeting a 10 GB GPU: gemma `131072`
 (full native window — sliding-window attention keeps its KV tiny, so it fits 100%
 on-GPU at ~4.6 GB), granite `16384` (Q5 sits 100% on-GPU; 32k+ spills). The
-server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. **Note:** The AUR 
-package layers in `/etc/ollama.conf` (defaulting to `16384`), but we override 
-this in the service definition to `131072` to allow Gemma its full window. 
-Measured GPU/CPU splits are in TESTING.md.
+server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. **Note:** the AUR
+package layers in `/etc/ollama.conf` (defaulting to `16384`), but we override it
+in the service definition to `131072` to allow gemma its full window.
 
-**Ollama server** (Resolved via `EnvironmentFile` and `systemctl edit`):
+**Ollama server** (resolved via `EnvironmentFile` and `systemctl edit`):
 
 ### /etc/systemd/system/ollama.service.d/override.conf
 ```ini
@@ -147,36 +134,35 @@ read — separating what the benchmarks measured from how the models behave in r
 
 | Task | Pick | Why |
 |---|---|---|
-| Content / SEO / copy | **gemma-content** | 80% clean @ ~99 tok/s; production-useful |
-| Coding (small/boilerplate) | **gemma-coder** | fastest (~97 tok/s); granite-coder edges accuracy (90% vs 80% last run) at ~78 tok/s |
-| Tutor / learning | **gemma-tutor** daily; **granite-tutor** fallback | gemma clean (0 leaks) + fast; granite teach 8.3 on a separate base |
+| Content / SEO / copy | **gemma** | 100% clean format, holds length; granite drops to 60% |
+| Coding (small/boilerplate) | **gemma** | ties granite on pass@1 (26/30) and is fine on speed once warm |
+| Learning / explaining | **gemma** | same shared prompt covers it; no separate tutor build |
 
-Operational reason gemma takes the whole lineup: all three gemma builds share one
-6.2 GB base, so with `OLLAMA_MAX_LOADED_MODELS=1` a single warm model covers all
-three roles via overlay swaps. granite is separate weights → a reload per switch.
+Operational reason to default to one model: with `OLLAMA_MAX_LOADED_MODELS=1` a
+single warm model covers every job, so staying on gemma avoids reload churn.
+granite is separate weights → a reload per switch.
 
 **Where local (gemma) genuinely helps**
 
-- **Content / SEO / marketing copy** — objective format rules, gemma-content passes
+- **Content / SEO / marketing copy** — objective format rules, gemma passes
   reliably. The one *production-grade* local use.
 - **Small/self-contained coding** — boilerplate, single functions, regex, scripts,
   "explain this error." Fast rubber-duck.
-- **Learning / upskilling** — the tutor overlay's refuse-to-solve behavior is good pedagogy.
+- **Learning / upskilling** — quick explanations without leaving the machine.
 - **Privacy / offline** — nothing leaves the machine.
 
 **Where to reach for a frontier model instead (be realistic)**
 
 - **Real project coding** — multi-file changes, debugging, architecture, unfamiliar
   frameworks. A 4B-effective model hallucinates APIs and loses the thread past a couple
-  files. The 93% benchmark is six self-contained algorithm puzzles — it does **not**
+  files. The pass@1 benchmark is six self-contained algorithm puzzles — it does **not**
   predict real-repo performance.
-- **Long-context / whole-repo reasoning** — even at 65k ctx, reasoning *over* that
+- **Long-context / whole-repo reasoning** — even at high ctx, reasoning *over* that
   context is weak at this size.
 - **High-stakes answers** where a subtle mistake is expensive.
 
 **Caveats on the numbers:** coding pass@1 is the most misleading (toy tasks, not real
-work). Tutor scores are soft (judged by other small models — trust the leak gate, not
-the decimals). Content is the most trustworthy result (objective pass/fail).
+work). Content is the most trustworthy result (objective pass/fail).
 
 **Bottom line:** use gemma as a fast, private first-pass for content + small coding +
 learning; offload heavy project work to a frontier model. Raising the local ceiling is
@@ -185,27 +171,27 @@ a VRAM decision, not a tuning one — dense models ≥15 GB drop to ~3 tok/s on 
 ## Models tested — history
 
 Every base that's been through the suite, with where it landed. Current lineup =
-gemma (3 roles) + granite (coder/tutor) (above). Retired models are gone from
-`ollama`/build scripts but kept here for the record.
+gemma (primary) + granite (fallback), both versatile generalists (above). Retired
+models are gone from `ollama`/build scripts but kept here for the record.
 
 | Model (base) | Status | Pros | Cons | Good for |
 |---|---|---|---|---|
-| **gemma** (`batiai/gemma4-e4b:q6`, ~6.2 GB) | **current — locked lineup** | Won content + coding; 100% on-GPU at full ctx (~100 tok/s); e4b sliding-window keeps KV tiny; one base covers 3 roles | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, tutoring — the all-rounder |
-| **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | current — coder/tutor fallback | Strong pass@1 (90% on Q5), ~78 tok/s, 100% on-GPU @ 16k; was the prior coding/tutor king | Cratered at content (0% clean) → no granite-content; no longer leads any role | Coding/tutor fallback on a separate base |
-| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **dropped 2026-06-03** | Only thinking model; best tutor explanations (9.0); strongest raw reasoning | Thinking too slow (~31 s/answer); separate weights → reload per switch; 1 tutor leak | Tutoring when depth > speed (if re-added) |
-| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by the Q6 qwen builds, then qwen dropped entirely | — (was a separate project) |
-| `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all three roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every role | — (was a strong generalist) |
-| `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8); won no role | — |
-| `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run; failed content/tutor | Would be viable on bigger/unified-memory VRAM |
-| `qwen-moe` (`qwen3.6:35b-a3b-mtp-q4_K_M`, 22 GB) | **shelved 2026-06-03** | MTP + MoE clears the 15 tok/s floor (~32–42 tok/s) despite 73% CPU spill | ~83 s/answer (mostly thinking trace); cold-start HTTP 500s; no q3 quant to shrink it | Revisit only with more VRAM (`build-qwen-moe` kept) |
+| **gemma** (`batiai/gemma4-e4b:q6`, ~6.2 GB) | **current — primary** | Won content + coding; 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny; one versatile build covers every job | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
+| **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | current — fallback | Ties coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and runs shorter; no longer leads any axis | Coding fallback on a separate base |
+| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **dropped 2026-06-03** | Only thinking model; strong reasoning + tutor explanations | Thinking too slow (~31 s/answer); separate weights → reload per switch | Tutoring when depth > speed (if re-added) |
+| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then qwen dropped entirely | — |
+| `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every job | — |
+| `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8) | — |
+| `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run | Would be viable on bigger/unified-memory VRAM |
+| `qwen-moe` (`qwen3.6:35b-a3b-mtp-q4_K_M`, 22 GB) | **shelved 2026-06-03** | MTP + MoE clears the 15 tok/s floor (~32–42 tok/s) despite 73% CPU spill | ~83 s/answer; cold-start HTTP 500s; no q3 quant to shrink it | Revisit only with more VRAM |
 | `gemma-big` (`batiai/gemma4-26b:iq4`, 13 GB) | **retired 2026-06-02** | More capacity than e4b | Lost every category; ~4.5× slower (23 t/s); 43% CPU spill | — |
 
 **Hardware limit driving all of this:** RTX 3080 (10 GB, ~9 usable), Ryzen 5900x,
 32 GB DDR4-3600. Models that fit 100% on-GPU run fast; anything that spills is
 bottlenecked by ~57 GB/s DDR4 (not compute) and gen tok/s falls off a cliff. Dense
 models ≥15 GB are effectively dead here (~3 tok/s); MoE survives spill better but
-still isn't interactive. Full splits + run history in [TESTING.md](TESTING.md).
+still isn't interactive.
 
 ## Docs
 
-`AGENTS.md` (agent workflow contract) · [`TESTING.md`](TESTING.md) (testing source of truth: suite, results, plans).
+`AGENTS.md` (agent workflow contract). Eval suite under `eval/`; results and run history in this README.
