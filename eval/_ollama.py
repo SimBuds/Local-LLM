@@ -18,11 +18,10 @@ from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# Current lineup (2026-06-04): two versatile generalists, no role overlays. gemma
-# is the primary — won content (5/5 clean) and ties coding (26/30 pass@1); granite
-# stays built as the fallback (ties coding, weaker content). Full results in README.
-# qwen was dropped from the lineup.
-DEFAULT_MODELS = ["gemma", "granite"]
+# Current lineup (2026-06-04): one versatile generalist, no role overlays. gemma
+# won content (5/5 clean) and coding (26/30 pass@1). Full results in README.
+# granite and qwen were dropped from the lineup.
+DEFAULT_MODELS = ["gemma"]
 
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
@@ -34,7 +33,7 @@ def resolve_model(spec: str) -> tuple[str, bool]:
     A trailing `:think` selects thinking mode while keeping the real Ollama
     model name intact, so a model and its `:think` variant can be ranked as
     separate entries. Thinking is a runtime flag, not a Modelfile setting. The
-    current lineup (gemma/granite) doesn't support it and errors on `--think`,
+    current lineup (gemma) doesn't support it and errors on `--think`,
     so don't tag them — the hook stays for re-evaluating thinking-capable bases.
     """
     if spec.endswith(":think"):

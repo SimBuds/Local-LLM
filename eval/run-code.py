@@ -11,7 +11,7 @@ by overall pass rate (tie-break: speed) and declares a winner.
 Usage:
   ./eval/run-code.py                         # all models, 3 attempts/task
   ./eval/run-code.py --attempts 5
-  ./eval/run-code.py --models granite gemma
+  ./eval/run-code.py --models gemma
   ./eval/run-code.py --tasks two_sum lru_cache
   ./eval/run-code.py --exec-timeout 10       # per-program wall clock
 

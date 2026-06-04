@@ -6,20 +6,17 @@ only. Edit Markdown, run a builder, `ollama create` produces a local model.
 
 ## Models
 
-Two **versatile generalists** built from one shared prompt stack (`prompts/` +
-`memory/user.md` + `knowledge/`) — no role overlays. Each is a single all-rounder
+One **versatile generalist** built from a shared prompt stack (`prompts/` +
+`memory/user.md` + `knowledge/`) — no role overlays. A single all-rounder
 expected to handle content, coding, and learning from the same system prompt.
 
-**Current head-to-head (2026-06-04): `gemma` wins all three evals.**
+| Model   | Base                  | ctx    | Notes                                                        |
+|---------|-----------------------|--------|-------------------------------------------------------------|
+| `gemma` | `gemma4:e4b-it-q8_0`  | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
 
-| Model     | Base                     | ctx    | Notes                                                        |
-|-----------|--------------------------|--------|-------------------------------------------------------------|
-| `gemma`   | `batiai/gemma4-e4b:q6`   | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
-| `granite` | `granite4.1:8b-Q5_K_M`   | 16384  | Fallback — ties coding (26/30); content 3/5, runs shorter.  |
-
-Both fit 100% on-GPU and clear the 15 tok/s floor. They tie on coding pass@1
-(26/30 each); gemma separates on content formatting (100% vs 60% clean) and
-holds full output length. `num_ctx` is tuned per-family for a 10 GB GPU.
+Fits 100% on-GPU and clears the 15 tok/s floor. e4b sliding-window attention
+keeps the KV cache tiny, so the full native window fits at ~4.6 GB. `num_ctx`
+is tuned for a 10 GB GPU.
 
 Bases/ctx tuned on ollama 0.30 (leaner VRAM than 0.23.2). Full run history is in
 the **Models tested** table below.
@@ -37,13 +34,13 @@ Each builder assembles the prompt stack, writes
 ## Build
 
 ```bash
-./build-gemma        ./build-granite
+./build-gemma
 ```
 
-The scripts are mirrored: only the top config block differs (`MODEL_NAME`,
-`BASE_MODEL`, `EXTRAS`, `PARAMS`); the assembly logic below the divider is
-byte-identical and must stay in lock-step. **New model:** copy a script and edit
-only the config block (set `EXTRAS` if the base needs `TEMPLATE`/`RENDERER`/`PARSER`).
+The config block at the top (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`) is
+separated from the shared assembly logic below the divider. **New model:** copy
+the script and edit only the config block (set `EXTRAS` if the base needs
+`TEMPLATE`/`RENDERER`/`PARSER`).
 
 ## Structure
 
@@ -89,9 +86,9 @@ by real execution), `run-learn.py` (tutoring + code/explanation), `run-tutor.py`
 in `eval/runs/<UTC>/`.
 
 ```bash
-./eval/run-speed.py --models gemma granite     # speed floor first
-./eval/run-code.py  --models gemma granite     # coding pass@1
-./eval/run.py       --models gemma granite     # content/SEO
+./eval/run-speed.py --models gemma     # speed floor first
+./eval/run-code.py  --models gemma     # coding pass@1
+./eval/run.py       --models gemma     # content/SEO
 ```
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
@@ -103,10 +100,10 @@ in `eval/runs/<UTC>/`.
 `top_p 0.92`, `top_k 40`, `repeat_penalty 1.15`, `repeat_last_n 256`,
 `num_predict 2048`).
 
-**Context** (`num_ctx`) is set per-family targeting a 10 GB GPU: gemma `131072`
-(full native window — sliding-window attention keeps its KV tiny, so it fits 100%
-on-GPU at ~4.6 GB), granite `16384` (Q5 sits 100% on-GPU; 32k+ spills). The
-server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on top. **Note:** the AUR
+**Context** (`num_ctx`) is set targeting a 10 GB GPU: gemma `131072` (full
+native window — sliding-window attention keeps its KV tiny, so it fits 100%
+on-GPU at ~4.6 GB). The server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on
+top. **Note:** the AUR
 package layers in `/etc/ollama.conf` (defaulting to `16384`), but we override it
 in the service definition to `131072` to allow gemma its full window.
 
@@ -134,13 +131,12 @@ read — separating what the benchmarks measured from how the models behave in r
 
 | Task | Pick | Why |
 |---|---|---|
-| Content / SEO / copy | **gemma** | 100% clean format, holds length; granite drops to 60% |
-| Coding (small/boilerplate) | **gemma** | ties granite on pass@1 (26/30) and is fine on speed once warm |
+| Content / SEO / copy | **gemma** | 100% clean format, holds length |
+| Coding (small/boilerplate) | **gemma** | solid pass@1 (26/30) and fine on speed once warm |
 | Learning / explaining | **gemma** | same shared prompt covers it; no separate tutor build |
 
-Operational reason to default to one model: with `OLLAMA_MAX_LOADED_MODELS=1` a
-single warm model covers every job, so staying on gemma avoids reload churn.
-granite is separate weights → a reload per switch.
+Operational reason to run one model: with `OLLAMA_MAX_LOADED_MODELS=1` a single
+warm model covers every job, so staying on gemma avoids reload churn.
 
 **Where local (gemma) genuinely helps**
 
@@ -171,13 +167,13 @@ a VRAM decision, not a tuning one — dense models ≥15 GB drop to ~3 tok/s on 
 ## Models tested — history
 
 Every base that's been through the suite, with where it landed. Current lineup =
-gemma (primary) + granite (fallback), both versatile generalists (above). Retired
-models are gone from `ollama`/build scripts but kept here for the record.
+gemma, a versatile generalist (above). Retired models are gone from
+`ollama`/build scripts but kept here for the record.
 
 | Model (base) | Status | Pros | Cons | Good for |
 |---|---|---|---|---|
-| **gemma** (`batiai/gemma4-e4b:q6`, ~6.2 GB) | **current — primary** | Won content + coding; 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny; one versatile build covers every job | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
-| **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | current — fallback | Ties coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and runs shorter; no longer leads any axis | Coding fallback on a separate base |
+| **gemma** (`gemma4:e4b-it-q8_0`) | **current** | Won content + coding; 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny; one versatile build covers every job | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
+| **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | **dropped 2026-06-03** | Tied coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and ran shorter; led no axis; separate weights → reload per switch | — |
 | **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **dropped 2026-06-03** | Only thinking model; strong reasoning + tutor explanations | Thinking too slow (~31 s/answer); separate weights → reload per switch | Tutoring when depth > speed (if re-added) |
 | `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then qwen dropped entirely | — |
 | `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every job | — |

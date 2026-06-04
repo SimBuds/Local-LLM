@@ -4,7 +4,7 @@ Speed benchmark: measure raw token throughput per model — NOT correctness.
 
 Purpose: quantify the speed tradeoff of CPU-spillover models (e.g. qwen-big =
 qwen3.6:27b, ~17 GB, runs ~⅔ on CPU on a 10 GB GPU) against the models that fit
-on-GPU and we actually use daily (gemma, granite).
+on-GPU and we actually use daily (gemma).
 
 Deliberately small so a heavily-spilling model finishes in minutes, not all day:
 a few short prompts, output capped via num_predict, 1 attempt each, thinking OFF
@@ -42,7 +42,7 @@ DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
 # The on-GPU models we use daily. All run thinking-OFF (no :think) — this is a
 # throughput test, not a reasoning test.
-DEFAULT_MODELS = ["gemma", "granite"]
+DEFAULT_MODELS = ["gemma"]
 
 # Mixed-length prompts: a short one and a longer one, so we also exercise
 # prompt-eval. Content is irrelevant — we measure throughput, and num_predict

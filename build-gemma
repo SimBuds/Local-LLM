@@ -2,13 +2,13 @@
 set -euo pipefail
 
 MODEL_NAME="gemma"
-BASE_MODEL="batiai/gemma4-e4b:q6"
+BASE_MODEL="gemma4:e4b-it-q8_0"
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER).
 EXTRAS=()
 
 PARAMS=(
-  'num_ctx 131072'
+  'num_ctx 32768'
   'temperature 0.8'
   'top_p 0.92'
   'top_k 40'

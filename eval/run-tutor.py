@@ -7,7 +7,7 @@ on scaffolding, concept, calibration, pitfalls, and clarity.
 
 Usage:
   ./eval/run-tutor.py
-  ./eval/run-tutor.py --models gemma granite --judges gemma granite
+  ./eval/run-tutor.py --models gemma --judges gemma
   ./eval/run-tutor.py --tasks two_sum --attempts 1
 
 Output:
@@ -100,7 +100,7 @@ def solution_leak_check(response: str, tests: str, exec_timeout: int) -> tuple[b
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", default=["gemma", "granite"])
+    ap.add_argument("--models", nargs="+", default=["gemma"])
     ap.add_argument("--judges", nargs="+", default=None,
                     help="judge panel (default: all --models, leave-one-out)."
                          " Each response is graded by every judge except the model "
