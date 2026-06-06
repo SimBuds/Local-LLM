@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, extract_code, generate, new_run_dir,
+    REPO_ROOT, extract_code, generate, get_effective_think, new_run_dir,
     resolve_model, run_program, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
@@ -47,12 +47,7 @@ def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
     print(f"    [{n}/{total}] {task.name:<18}", end="", flush=True)
     name, model_think = resolve_model(model)
 
-    if thinking_mode == "on":
-        think = True
-    elif thinking_mode == "off":
-        think = False
-    else:
-        think = model_think
+    think = get_effective_think(thinking_mode, model_think)
 
     t0 = time.monotonic()
     try:

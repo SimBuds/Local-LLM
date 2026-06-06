@@ -20,6 +20,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
+THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
 
 
 def resolve_model(spec: str) -> tuple[str, bool]:
@@ -34,6 +35,15 @@ def resolve_model(spec: str) -> tuple[str, bool]:
     if spec.endswith(":think"):
         return spec[: -len(":think")], True
     return spec, False
+
+
+def get_effective_think(mode: str, model_default: bool) -> bool:
+    """Determine if thinking should be enabled based on CLI flag and model default."""
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    return model_default
 
 
 def generate(model: str, prompt: str, timeout: int, think: bool = False,
@@ -92,13 +102,20 @@ def extract_code(text: str, prefer_lang: str = "python") -> str:
     `prefer_lang`, then any fenced block, then (last resort) the raw text —
     a model that ignored the 'code only' instruction still gets executed.
     """
-    blocks = FENCE_RE.findall(text)
+    # Strip thinking traces which often leak into the response text
+    clean_text = THOUGHT_RE.sub("", text).strip()
+
+    blocks = FENCE_RE.findall(clean_text)
     if blocks:
         for lang, body in blocks:
             if lang.lower() == prefer_lang:
                 return body.strip("\n")
         return blocks[0][1].strip("\n")  # first fenced block, whatever the tag
-    return text.strip()
+
+    # If no fences, use the text stripped of thought blocks
+    # Note: We return clean_text even if it's empty to allow the runner
+    # to catch 'no-code' failures properly.
+    return clean_text
 
 
 def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:

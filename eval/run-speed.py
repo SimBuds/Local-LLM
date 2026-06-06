@@ -35,7 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, generate, new_run_dir, prompt_tok_per_s, resolve_model, tok_per_s,
+    REPO_ROOT, generate, get_effective_think, new_run_dir, 
+    prompt_tok_per_s, resolve_model, tok_per_s,
 )
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
@@ -75,13 +76,7 @@ def time_model(model: str, prompts: list[str], attempts: int, num_predict: int,
                timeout: int, thinking_mode: str, extra_opts: dict | None = None) -> dict:
     name, model_think = resolve_model(model)
     
-    # Determine thinking execution path based on versatile CLI flags
-    if thinking_mode == "on":
-        think = True
-    elif thinking_mode == "off":
-        think = False
-    else:
-        think = model_think
+    think = get_effective_think(thinking_mode, model_think)
 
     opts = {"num_predict": num_predict, **(extra_opts or {})}
     gen_tps: list[float] = []

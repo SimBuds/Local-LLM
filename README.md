@@ -13,6 +13,7 @@ expected to handle content, coding, and learning from the same system prompt.
 | Model   | Base                  | ctx    | Notes                                                        |
 |---------|-----------------------|--------|-------------------------------------------------------------|
 | `gemma` | `gemma4:e4b-it-q8_0`  | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
+| `qwen`  | `batiai/qwen3.5-9b:q6`| 32768  | ⚡ speed & reasoning — highest throughput, ~88 tok/s.        |
 
 Fits 100% on-GPU and clears the 15 tok/s floor. e4b sliding-window attention
 keeps the KV cache tiny, so the full native window fits at ~4.6 GB. `num_ctx`
@@ -132,6 +133,7 @@ read — separating what the benchmarks measured from how the models behave in r
 | Task | Pick | Why |
 |---|---|---|
 | Content / SEO / copy | **gemma** | 100% clean format, holds length |
+| Speed / Throughput | **qwen** | Highest raw speed (88 tok/s) and fits 100% on GPU |
 | Coding (small/boilerplate) | **gemma** | solid pass@1 (26/30) and fine on speed once warm |
 | Learning / explaining | **gemma** | same shared prompt covers it; no separate tutor build |
 
@@ -173,8 +175,8 @@ gemma, a versatile generalist (above). Retired models are gone from
 | Model (base) | Status | Pros | Cons | Good for |
 |---|---|---|---|---|
 | **gemma** (`gemma4:e4b-it-q8_0`) | **current** | Won content + coding; 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny; one versatile build covers every job | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
+| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **Active** | Only thinking model; strongest reasoning + tutor explanations; fastest raw throughput (~88 tok/s) | High TTFT when "thinking" is active | Speed-critical reasoning and complex logic |
 | **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | **dropped 2026-06-03** | Tied coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and ran shorter; led no axis; separate weights → reload per switch | — |
-| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **dropped 2026-06-03** | Only thinking model; strong reasoning + tutor explanations | Thinking too slow (~31 s/answer); separate weights → reload per switch | Tutoring when depth > speed (if re-added) |
 | `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then qwen dropped entirely | — |
 | `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every job | — |
 | `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8) | — |
@@ -185,8 +187,20 @@ gemma, a versatile generalist (above). Retired models are gone from
 **Hardware limit driving all of this:** RTX 3080 (10 GB, ~9 usable), Ryzen 5900x,
 32 GB DDR4-3600. Models that fit 100% on-GPU run fast; anything that spills is
 bottlenecked by ~57 GB/s DDR4 (not compute) and gen tok/s falls off a cliff. Dense
-models ≥15 GB are effectively dead here (~3 tok/s); MoE survives spill better but
-still isn't interactive.
+
+## Qwen Benchmark Summary (Consolidated)
+
+The Qwen family was evaluated as the primary "reasoning" candidates for this stack. 
+
+| Model | Token Speed | Avg. Latency | VRAM Status | Verdict |
+|---|---|---|---|---|
+| **Qwen 3.5 9B (Q6)** | ~88 tok/s (raw) | ~31s | 100% GPU | **Active**; high speed makes it the primary reasoning model despite latency. |
+| **Qwen 3.6 35B (MoE)** | 32–42 tok/s | ~83s | 73% CPU spill | **Shelved**; MTP/MoE clears the 15 tok/s floor, but thinking is too slow for 10GB. |
+
+**Key Findings:**
+- **Architecture:** The 35B MoE is the only "large" model to clear the 15 tok/s floor on this hardware despite a 73% CPU spill, likely due to Multi-Token Prediction (MTP).
+- **Bottlenecks:** Reasoning performance is hampered by high "Time to First Token" (TTFT) and thinking durations that frequently approach the 120s timeout on complex logic tasks.
+- **Stability:** Significant CPU spill led to intermittent HTTP 500 errors during model loading and concurrent requests.
 
 ## Docs
 

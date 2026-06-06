@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, extract_code, generate, new_run_dir,
+    REPO_ROOT, extract_code, generate, get_effective_think, new_run_dir,
     resolve_model, run_program, tok_per_s,
 )
 from tutor_tasks import TASKS, TutorTask  # noqa: E402
@@ -136,12 +136,7 @@ def main() -> int:
         print(f"=== generate: {model} ===")
         name, model_think = resolve_model(model)
 
-        if args.thinking == "on":
-            think = True
-        elif args.thinking == "off":
-            think = False
-        else:
-            think = model_think
+        think = get_effective_think(args.thinking, model_think)
 
         mdir = run_dir / model
         mdir.mkdir()

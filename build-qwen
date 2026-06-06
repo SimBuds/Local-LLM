@@ -8,13 +8,13 @@ BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"
 EXTRAS=()
 
 PARAMS=(
-  'num_ctx 16384'
-  'temperature 1.0'
+  'num_ctx 131072'
+  'temperature 0.6'
   'top_p 0.95'
   'top_k 20'
-  'repeat_penalty 1.0'
-  'repeat_last_n 256'
-  'num_predict 2048'
+  'min_p 0.0'
+  'presence_penalty 1.5'
+  'repeat_penalty 1'
 )
 
 # ============================================================================

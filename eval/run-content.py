@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, generate, new_run_dir, resolve_model, tok_per_s,
+    REPO_ROOT, generate, get_effective_think, new_run_dir, resolve_model, tok_per_s,
 )
 
 DEFAULT_PROMPT = Path(__file__).parent / "prompts" / "seo-product.md"
@@ -103,12 +103,7 @@ def run_attempt(model: str, prompt: str, n: int, total: int, timeout: int,
     print(f"  [{n}/{total}] ", end="", flush=True)
     name, model_think = resolve_model(model)
 
-    if thinking_mode == "on":
-        think = True
-    elif thinking_mode == "off":
-        think = False
-    else:
-        think = model_think
+    think = get_effective_think(thinking_mode, model_think)
 
     t0 = time.monotonic()
     try:
