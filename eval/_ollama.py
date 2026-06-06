@@ -1,5 +1,5 @@
 """
-Shared plumbing for the eval runners (run.py = content, run-code.py = coding).
+Shared plumbing for the eval runners (run-content.py = content, run-code.py = coding).
 Stdlib-only; talks to the local Ollama HTTP API. No scoring lives here — each
 runner owns its own scorer and summary. This file is just the transport plus a
 few helpers both runners need.
@@ -18,11 +18,6 @@ from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# Current lineup (2026-06-04): one versatile generalist, no role overlays. gemma
-# won content (5/5 clean) and coding (26/30 pass@1). Full results in README.
-# granite and qwen were dropped from the lineup.
-DEFAULT_MODELS = ["gemma"]
-
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
 

@@ -81,14 +81,14 @@ Keep prompts terse — every token is spent every turn. When a model misbehaves,
 ## Evaluation
 
 Five runners under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1
-by real execution), `run-learn.py` (tutoring + code/explanation), `run-tutor.py`
+by real execution), `run-content.py` (content/SEO), `run-learn.py` (tutoring + code/explanation), `run-tutor.py`
 (tutor leak-gated guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands
 in `eval/runs/<UTC>/`.
 
 ```bash
 ./eval/run-speed.py --models gemma     # speed floor first
 ./eval/run-code.py  --models gemma     # coding pass@1
-./eval/run.py       --models gemma     # content/SEO
+./eval/run-content.py --models gemma     # content/SEO
 ```
 
 > Safety: `run-code.py`/`run-learn.py` execute model-generated code in a

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Content eval: drive a fixed SEO content-writing prompt against each custom model
-in turn, N attempts per model, and score format + instruction-following with
+Content benchmark: drive a fixed SEO content-writing prompt against each custom
+model in turn, N attempts per model, and score format + instruction-following with
 cheap regex signals (no LLM judge). The summary ranks models by a composite
 "clean rate" (tie-break: speed) and declares a winner.
 
 Usage:
-  ./eval/run.py                                  # all models, 5 attempts
-  ./eval/run.py --models gemma                   # single model
-  ./eval/run.py --attempts 3
-  ./eval/run.py --prompt-file eval/prompts/x.md  # different prompt
+  ./eval/run-content.py                          # all models, 5 attempts
+  ./eval/run-content.py --models gemma           # single model
+  ./eval/run-content.py --attempts 3
+  ./eval/run-content.py --prompt-file eval/prompts/x.md  # different prompt
 
 Output:
-  eval/runs/<UTC>/
+  eval/runs/<UTC>/content/
     summary.md
     <model>/attempt-<n>.md
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    DEFAULT_MODELS, REPO_ROOT, generate, new_run_dir, resolve_model, tok_per_s,
+    REPO_ROOT, generate, new_run_dir, resolve_model, tok_per_s,
 )
 
 DEFAULT_PROMPT = Path(__file__).parent / "prompts" / "seo-product.md"
@@ -99,9 +99,17 @@ def is_clean(s: dict, keyword: str | None) -> bool:
 
 
 def run_attempt(model: str, prompt: str, n: int, total: int, timeout: int,
-                keyword: str | None) -> dict:
+                thinking_mode: str, keyword: str | None) -> dict:
     print(f"  [{n}/{total}] ", end="", flush=True)
-    name, think = resolve_model(model)
+    name, model_think = resolve_model(model)
+
+    if thinking_mode == "on":
+        think = True
+    elif thinking_mode == "off":
+        think = False
+    else:
+        think = model_think
+
     t0 = time.monotonic()
     try:
         text, meta = generate(name, prompt, timeout, think=think)
@@ -129,10 +137,12 @@ def run_attempt(model: str, prompt: str, n: int, total: int, timeout: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
+    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
     ap.add_argument("--attempts", type=int, default=5)
     ap.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT)
     ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
+                    help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     ap.add_argument("--keyword", type=str, default=None)
     args = ap.parse_args()
@@ -143,7 +153,8 @@ def main() -> int:
     prompt = args.prompt_file.read_text(encoding="utf-8").strip()
     keyword = args.keyword or extract_keyword(prompt)
 
-    run_dir = new_run_dir(args.out_root)
+    run_dir = new_run_dir(args.out_root) / "content"
+    run_dir.mkdir(parents=True)
     print(f"Run dir: {run_dir.relative_to(REPO_ROOT)}")
     print(f"Prompt:  {args.prompt_file.relative_to(REPO_ROOT)} ({len(prompt.split())} words)")
     print(f"Models:  {', '.join(args.models)} × {args.attempts} attempts")
@@ -156,7 +167,7 @@ def main() -> int:
         mdir.mkdir()
         rs = []
         for n in range(1, args.attempts + 1):
-            r = run_attempt(model, prompt, n, args.attempts, args.timeout, keyword)
+            r = run_attempt(model, prompt, n, args.attempts, args.timeout, args.thinking, keyword)
             if r.get("ok"):
                 (mdir / f"attempt-{n}.md").write_text(r["text"], encoding="utf-8")
             rs.append(r)
@@ -189,7 +200,7 @@ def write_summary(run_dir, summary, args, keyword, prompt) -> None:
         })
     ranked.sort(key=lambda r: (-r["clean_rate"], -r["avg_tps"]))
 
-    L = [f"# Content eval {run_dir.name}", "",
+    L = ["# Content benchmark", "",
          f"- Prompt: `{args.prompt_file.relative_to(REPO_ROOT)}` ({len(prompt.split())} words)",
          f"- Attempts per model: {args.attempts}",
          f"- Target keyword: `{keyword}`" if keyword else "- Target keyword: _(none)_",

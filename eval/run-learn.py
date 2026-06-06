@@ -43,7 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    DEFAULT_MODELS, REPO_ROOT, extract_code, generate, new_run_dir,
+    REPO_ROOT, extract_code, generate, new_run_dir,
     resolve_model, run_program, tok_per_s,
 )
 from learning_tasks import TASKS, LearnTask  # noqa: E402
@@ -97,7 +97,7 @@ def judge_scores(judge_model: str, topic: str, response: str, timeout: int) -> d
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
+    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
     ap.add_argument("--judges", nargs="+", default=None,
                     help="judge panel (default: all --models, leave-one-out). "
                          "Each response is graded by every judge except the model "
@@ -105,6 +105,8 @@ def main() -> int:
     ap.add_argument("--attempts", type=int, default=3, help="attempts per task (default 3)")
     ap.add_argument("--tasks", nargs="+", default=None)
     ap.add_argument("--timeout", type=int, default=120, help="model call timeout (s); culls runaway thinking traces")
+    ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
+                    help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--exec-timeout", type=int, default=10)
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     args = ap.parse_args()
@@ -127,7 +129,15 @@ def main() -> int:
     records: list[dict] = []
     for model in args.models:
         print(f"=== generate: {model} ===")
-        name, think = resolve_model(model)
+        name, model_think = resolve_model(model)
+
+        if args.thinking == "on":
+            think = True
+        elif args.thinking == "off":
+            think = False
+        else:
+            think = model_think
+
         mdir = run_dir / model
         mdir.mkdir()
         for task in tasks:

@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    DEFAULT_MODELS, REPO_ROOT, extract_code, generate, new_run_dir,
+    REPO_ROOT, extract_code, generate, new_run_dir,
     resolve_model, run_program, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
@@ -43,9 +43,17 @@ DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
 
 def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
-                exec_timeout: int, out_dir: Path) -> dict:
+                exec_timeout: int, thinking_mode: str, out_dir: Path) -> dict:
     print(f"    [{n}/{total}] {task.name:<18}", end="", flush=True)
-    name, think = resolve_model(model)
+    name, model_think = resolve_model(model)
+
+    if thinking_mode == "on":
+        think = True
+    elif thinking_mode == "off":
+        think = False
+    else:
+        think = model_think
+
     t0 = time.monotonic()
     try:
         text, meta = generate(name, task.prompt, timeout, think=think)
@@ -72,11 +80,13 @@ def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
+    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
     ap.add_argument("--attempts", type=int, default=5, help="attempts per task (default 5)")
     ap.add_argument("--tasks", nargs="+", default=None,
                     help="subset of task names (default: all)")
     ap.add_argument("--timeout", type=int, default=120, help="model call timeout (s); culls runaway thinking traces")
+    ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
+                    help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--exec-timeout", type=int, default=10, help="per-program timeout (s)")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     args = ap.parse_args()
@@ -106,7 +116,7 @@ def main() -> int:
             for n in range(1, per_task + 1):
                 i += 1
                 rs.append(run_attempt(model, task, n, per_task, args.timeout,
-                                      args.exec_timeout, mdir))
+                                      args.exec_timeout, args.thinking, mdir))
         results[model] = rs
         npass = sum(1 for r in rs if r["passed"])
         print(f"  -> {npass}/{len(rs)} passed\n")
