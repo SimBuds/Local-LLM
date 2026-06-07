@@ -32,16 +32,18 @@ mkdir -p "$OUT_DIR"
   echo "Built: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo
 
-  # Inject all prompts/, memory/, and knowledge/ files
-  find "$AI_ROOT/prompts" "$AI_ROOT/memory" "$AI_ROOT/knowledge" -type f -name '*.md' -size -100k -print0 2>/dev/null \
-    | sort -z \
-    | while IFS= read -r -d '' f; do
-        rel="${f#"$AI_ROOT/"}"
-        echo "--- START FILE: $rel ---"
-        cat "$f"
-        echo "--- END FILE: $rel ---"
-        echo
-      done
+  # Inject reference first, user context second, behavior rules last.
+  for dir in "$AI_ROOT/knowledge" "$AI_ROOT/memory" "$AI_ROOT/prompts"; do
+    find "$dir" -type f -name '*.md' -size -100k -print0 2>/dev/null \
+      | sort -z \
+      | while IFS= read -r -d '' f; do
+          rel="${f#"$AI_ROOT/"}"
+          echo "--- START FILE: $rel ---"
+          cat "$f"
+          echo "--- END FILE: $rel ---"
+          echo
+        done
+  done
 } > "$SYSTEM_FILE"
 
 if grep -q '"""' "$SYSTEM_FILE"; then

@@ -52,10 +52,11 @@ Each `build-*` script assembles the prompt stack, writes
 └── build-qwen
 ```
 
-Prompt assembly order is sorted `prompts/`, `memory/`, then `knowledge/`, with
-each Markdown file wrapped in `--- START/END FILE ---`. Files over 100k are
-skipped. Builders abort if the assembled prompt contains `"""`, because that
-would break the Ollama `SYSTEM """..."""` block.
+Prompt assembly order is `knowledge/`, then `memory/`, then `prompts/`; files
+within each directory are sorted. That keeps reference context first and behavior
+rules last. Each Markdown file is wrapped in `--- START/END FILE ---`. Files over
+100k are skipped. Builders abort if the assembled prompt contains `"""`, because
+that would break the Ollama `SYSTEM """..."""` block.
 
 ## Build And Tune
 
