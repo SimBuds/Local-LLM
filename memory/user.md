@@ -39,6 +39,7 @@ Skills are bucketed by depth. Do not promote a Familiar skill to Core when answe
 
 ## Active projects
 - `~/Apps/jobhunt`: local-first Python/uv CLI for personal job search automation — pulls ATS APIs, scores/tailors via local Ollama, Playwright autofill (human submits).
+- `~/Apps/Local-LLM`: local Ollama prompt-stack project with Markdown prompt assembly, Gemma/Qwen builders, and eval runners for speed, content, coding, learning, and tutoring.
 
 ## Don't suggest
 - Cloud-hosted LLMs when a local one will do.
