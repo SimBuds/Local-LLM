@@ -98,7 +98,6 @@ Local service override:
 ```ini
 # /etc/systemd/system/ollama.service.d/override.conf
 [Service]
-Environment="OLLAMA_CONTEXT_LENGTH=262144"
 Environment="OLLAMA_KV_CACHE_TYPE=q4_0"
 Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_NUM_PARALLEL=1"
@@ -145,18 +144,18 @@ flags and safety details are in [`TESTING.md`](TESTING.md).
 Latest Gemma/Qwen head-to-head: 2026-06-07. The leak-gated tutor runner was not
 completed in that pass; previous tutor history remains in [`TESTING.md`](TESTING.md).
 
-| Suite | Winner | `gemma` | `qwen` | Run |
-|---|---|---:|---:|---|
-| Speed | `gemma` | 56.9 tok/s, 100% GPU | 34.9 tok/s, 77%/23% CPU/GPU | `20260607T123431Z` |
-| Coding | `qwen` | 27/30 | 30/30 | `20260607T123539Z` |
-| Content | `gemma` | 5/5 clean | 4/5 clean | `20260607T132233Z` |
-| Learning | `qwen` | 9.2/10, code 12/12 | 10.0/10, code 12/12 | `20260607T132644Z` |
+| Suite | Winner | `gemma` | `qwen` |
+|---|---|---:|---:|
+| Speed | `gemma` | 56.9 tok/s, 100% GPU | 34.9 tok/s, 77%/23% CPU/GPU |
+| Coding | `qwen` | 27/30 | 30/30 |
+| Content | `gemma` | 5/5 clean | 4/5 clean |
+| Learning | `qwen` | 9.2/10, code 12/12 | 10.0/10, code 12/12 |
 
 Current picks:
 
 | Use | Pick | Reason |
 |---|---|---|
-| Content / SEO / copy | `gemma` | 100% clean in the latest content run; faster and fully on GPU. |
+| Content / SEO / copy | `gemma` | 100% clean in content run; faster and fully on GPU. |
 | Coding puzzles / small functions | `qwen` | Latest run swept 30/30, including `calc` 5/5. |
 | Learning explanations | `qwen` | Latest `run-learn.py` score: 10.0/10 with code 12/12. |
 | Fast local general use | `gemma` | Best fit/speed and no CPU spill. |
