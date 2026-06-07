@@ -1,6 +1,5 @@
 .claude
 .vscode
 
-models/
-eval/runs/
 eval/__pycache__/
+runs/

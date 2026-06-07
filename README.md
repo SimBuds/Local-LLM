@@ -1,119 +1,104 @@
 # AI Context Stack
 
-Layered-Markdown → customized Ollama models, plus an eval suite that picks the
-right model per job. No fine-tuning: customization is prompt + reference context
-only. Edit Markdown, run a builder, `ollama create` produces a local model.
+Layered Markdown prompts compiled into local Ollama models. There is no
+fine-tuning here: behavior comes from `prompts/`, durable memory, reusable
+knowledge files, and each model builder's sampler/context params.
+
+The repo also includes an eval suite. `README.md` keeps the operational view and
+current leaderboards; [`TESTING.md`](TESTING.md) is the source of truth for
+runner usage, safety notes, run history, and detailed benchmark notes.
 
 ## Models
 
-One **versatile generalist** built from a shared prompt stack (`prompts/` +
-`memory/user.md` + `knowledge/`) — no role overlays. A single all-rounder
-expected to handle content, coding, and learning from the same system prompt.
+Current lineup:
 
-| Model   | Base                  | ctx    | Notes                                                        |
-|---------|-----------------------|--------|-------------------------------------------------------------|
-| `gemma` | `gemma4:e4b-it-q8_0`  | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
-| `qwen`  | `qwen3.6:35b-a3b-mtp-q4_K_M` | 131072 | 🏆 reasoning/coding — coding 29/30, tutor 7.0/10, ~39–51 tok/s. |
+| Model | Base | ctx | Role |
+|---|---|---:|---|
+| `gemma` | `gemma4:12b-it-q4_K_M` | 65536 | Fast local all-rounder; best content/format compliance. |
+| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 262144 | Patient reasoning/coding model; best coding and learning scores. |
 
-`gemma` fits 100% on-GPU and clears the 15 tok/s floor. e4b sliding-window
-attention keeps the KV cache tiny, so the full native window fits at ~4.6 GB.
-`qwen` spills heavily but the 35B MoE/MTP build still clears the floor. `num_ctx`
-is tuned for a 10 GB GPU.
-
-Bases/ctx tuned on ollama 0.30 (leaner VRAM than 0.23.2). Full run history is in
-the **Models tested** table below.
+`gemma` fits fully on GPU and is the reliable local content model. `qwen` is a
+35B MoE/MTP model: it spills heavily to CPU, but still clears the local usability
+floor and wins the reasoning-heavy benchmarks.
 
 ## Quickstart
 
 ```bash
-./build-gemma                             # build the model
-ollama run gemma                          # run it
+./build-gemma
+ollama run gemma
 ```
 
-Each builder assembles the prompt stack, writes
-`models/<name>/{system.txt,Modelfile}`, and runs `ollama create <name>`.
-
-## Build
+Build Qwen the same way:
 
 ```bash
-./build-gemma
+./build-qwen
+ollama run qwen
 ```
 
-The config block at the top (`MODEL_NAME`, `BASE_MODEL`, `EXTRAS`, `PARAMS`) is
-separated from the shared assembly logic below the divider. **New model:** copy
-the script and edit only the config block (set `EXTRAS` if the base needs
-`TEMPLATE`/`RENDERER`/`PARSER`).
+Each `build-*` script assembles the prompt stack, writes
+`models/<name>/system.txt` and `models/<name>/Modelfile`, then runs
+`ollama create <name> -f models/<name>/Modelfile`.
 
 ## Structure
 
-```
-ai/
-├── prompts/              # behavior controls (terse, durable — runs every turn)
-│   ├── system.md         # core directives
-│   ├── personality.md    # voice
-│   ├── formatting.md     # output shape
-│   └── safety.md         # operational safety
+```text
+.
+├── prompts/              # behavior controls; runs every turn
 ├── memory/user.md        # durable user profile
 ├── knowledge/**/*.md     # reusable reference context
-├── eval/                 # evaluation suite (see below)
-├── models/<name>/        # generated: system.txt + Modelfile
-└── build-*               # one builder per model
+├── eval/                 # benchmark runners and tasks
+├── models/<name>/        # generated system.txt + Modelfile
+├── build-gemma
+└── build-qwen
 ```
 
-## Prompt assembly order
+Prompt assembly order is sorted `prompts/`, `memory/`, then `knowledge/`, with
+each Markdown file wrapped in `--- START/END FILE ---`. Files over 100k are
+skipped. Builders abort if the assembled prompt contains `"""`, because that
+would break the Ollama `SYSTEM """..."""` block.
 
-`prompts/` + `memory/` + `knowledge/` are injected in sorted order, each file
-wrapped in `--- START/END FILE ---` (files >100k skipped). The `Modelfile`
-embeds `system.txt` literally inside `SYSTEM """ ... """` (no shell expansion);
-builders abort if a source contains `"""`.
+## Build And Tune
 
-## Where changes belong
-
-| Change | Goes in |
-|---|---|
-| Behavior rule, all models | `prompts/` |
-| Stable fact about Casey | `memory/user.md` |
-| Reusable technical reference | `knowledge/` |
-| New eval task | `eval/coding_tasks.py` / `eval/learning_tasks.py` |
-| One-off context | not in the build |
-
-Keep prompts terse — every token is spent every turn. When a model misbehaves,
-**remove** rules before adding; sampler tuning (`PARAMS`) is fair game.
-
-## Evaluation
-
-Five runners under `eval/`: `run.py` (content/SEO), `run-code.py` (coding pass@1
-by real execution), `run-content.py` (content/SEO), `run-learn.py` (tutoring + code/explanation), `run-tutor.py`
-(tutor leak-gated guidance), `run-speed.py` (tok/s + GPU/CPU split). Output lands
-in `eval/runs/<UTC>/`.
+The only model-specific part of a builder is the top config block:
 
 ```bash
-./eval/run-speed.py --models gemma     # speed floor first
-./eval/run-code.py  --models gemma     # coding pass@1
-./eval/run-content.py --models gemma     # content/SEO
+MODEL_NAME="gemma"
+BASE_MODEL="gemma4:12b-it-q4_K_M"
+EXTRAS=()
+PARAMS=(
+  'num_ctx 65536'
+  'temperature 1.0'
+  'top_p 0.95'
+  'top_k 64'
+  'repeat_penalty 1.0'
+)
 ```
 
-> Safety: `run-code.py`/`run-learn.py` execute model-generated code in a
-> subprocess with a timeout, but it is **not** containerized. Trusted models only.
+For a new model, copy an existing `build-*` script and edit only that config
+block. The shared assembly section below the divider is mirrored across builders
+and should stay byte-identical.
 
-## Tuning
+Where changes belong:
 
-**Sampler params** live in each builder's `PARAMS` block (`temperature 0.8`,
-`top_p 0.92`, `top_k 40`, `repeat_penalty 1.15`, `repeat_last_n 256`,
-`num_predict 2048`).
+| Change | File |
+|---|---|
+| Behavior rule for all models | `prompts/` |
+| Stable user preference/fact | `memory/user.md` |
+| Reusable technical reference | `knowledge/` |
+| New coding eval task | `eval/coding_tasks.py` |
+| New learning/tutor eval task | `eval/learning_tasks.py` / `eval/tutor_tasks.py` |
 
-**Context** (`num_ctx`) is set targeting a 10 GB GPU: gemma `131072` (full
-native window — sliding-window attention keeps its KV tiny, so it fits 100%
-on-GPU at ~4.6 GB). The server's `OLLAMA_CONTEXT_LENGTH` is a hard ceiling on
-top. **Note:** the AUR
-package layers in `/etc/ollama.conf` (defaulting to `16384`), but we override it
-in the service definition to `131072` to allow gemma its full window.
+Keep prompt text terse. Every prompt token is spent every turn; prefer removing
+bad rules or tuning `PARAMS` before adding more instructions.
 
-**Ollama server** (resolved via `EnvironmentFile` and `systemctl edit`):
+## Ollama Server
 
-### /etc/systemd/system/ollama.service.d/override.conf
+Local service override:
+
 ```ini
+# /etc/systemd/system/ollama.service.d/override.conf
 [Service]
+Environment="OLLAMA_CONTEXT_LENGTH=262144"
 Environment="OLLAMA_KV_CACHE_TYPE=q4_0"
 Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_NUM_PARALLEL=1"
@@ -121,91 +106,69 @@ Environment="OLLAMA_MAX_LOADED_MODELS=1"
 Environment="OLLAMA_KEEP_ALIVE=-1"
 ```
 
-KV-cache quantization is server-only (no Modelfile equivalent) and needs flash
-attention on to take effect.
+Common commands:
 
-## Honest assessment (9 GB usable VRAM)
+```bash
+systemctl status ollama
+systemctl edit ollama
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
 
-The 9 GB ceiling caps this box at ~4–9B models. Within that, here's the realistic
-read — separating what the benchmarks measured from how the models behave in real work.
+ollama list
+ollama ps
+ollama show gemma
+ollama run gemma
+ollama run qwen
+```
 
-**Best pick per task**
+`OLLAMA_CONTEXT_LENGTH` is a server-side ceiling above the model `num_ctx`.
+KV-cache quantization is also server-side and requires flash attention.
 
-| Task | Pick | Why |
+## Evaluation
+
+Runners live under `eval/` and write results to `eval/runs/<UTC>/`.
+
+```bash
+./eval/run-speed.py --models gemma qwen
+./eval/run-code.py --models gemma qwen
+./eval/run-content.py --models gemma qwen
+./eval/run-learn.py --models gemma qwen
+./eval/run-tutor.py --models gemma qwen
+```
+
+`run-code.py`, `run-learn.py`, and `run-tutor.py` execute model-generated Python
+with timeouts but are not containerized. Run trusted models only. Full runner
+flags and safety details are in [`TESTING.md`](TESTING.md).
+
+## Benchmark Leaderboard
+
+Latest Gemma/Qwen head-to-head: 2026-06-07. The leak-gated tutor runner was not
+completed in that pass; previous tutor history remains in [`TESTING.md`](TESTING.md).
+
+| Suite | Winner | `gemma` | `qwen` | Run |
+|---|---|---:|---:|---|
+| Speed | `gemma` | 56.9 tok/s, 100% GPU | 34.9 tok/s, 77%/23% CPU/GPU | `20260607T123431Z` |
+| Coding | `qwen` | 27/30 | 30/30 | `20260607T123539Z` |
+| Content | `gemma` | 5/5 clean | 4/5 clean | `20260607T132233Z` |
+| Learning | `qwen` | 9.2/10, code 12/12 | 10.0/10, code 12/12 | `20260607T132644Z` |
+
+Current picks:
+
+| Use | Pick | Reason |
 |---|---|---|
-| Content / SEO / copy | **gemma** | 100% clean format, holds length |
-| Speed / Throughput | **qwen** | 35B MoE stays usable at ~39–51 tok/s despite CPU spill |
-| Coding (small/boilerplate) | **qwen** | strongest pass@1 so far (29/30) |
-| Learning / explaining | **qwen** | best tutor result so far (7.0/10, 0/15 leaks) |
+| Content / SEO / copy | `gemma` | 100% clean in the latest content run; faster and fully on GPU. |
+| Coding puzzles / small functions | `qwen` | Latest run swept 30/30, including `calc` 5/5. |
+| Learning explanations | `qwen` | Latest `run-learn.py` score: 10.0/10 with code 12/12. |
+| Fast local general use | `gemma` | Best fit/speed and no CPU spill. |
 
-Operational reason to run one model: with `OLLAMA_MAX_LOADED_MODELS=1` a single
-warm model avoids reload churn. Use `gemma` for reliable local content work; use
-`qwen` when reasoning/coding quality matters more than memory footprint.
+## Hardware Envelope
 
-**Where local (gemma) genuinely helps**
-
-- **Content / SEO / marketing copy** — objective format rules, gemma passes
-  reliably. The one *production-grade* local use.
-- **Small/self-contained coding** — boilerplate, single functions, regex, scripts,
-  "explain this error." Fast rubber-duck.
-- **Learning / upskilling** — quick explanations without leaving the machine.
-- **Privacy / offline** — nothing leaves the machine.
-
-**Where to reach for a frontier model instead (be realistic)**
-
-- **Real project coding** — multi-file changes, debugging, architecture, unfamiliar
-  frameworks. A 4B-effective model hallucinates APIs and loses the thread past a couple
-  files. The pass@1 benchmark is six self-contained algorithm puzzles — it does **not**
-  predict real-repo performance.
-- **Long-context / whole-repo reasoning** — even at high ctx, reasoning *over* that
-  context is weak at this size.
-- **High-stakes answers** where a subtle mistake is expensive.
-
-**Caveats on the numbers:** coding pass@1 is the most misleading (toy tasks, not real
-work). Content is the most trustworthy result (objective pass/fail).
-
-**Bottom line:** current best local picks are Gemma4 for fast, reliable content
-and Qwen3.6:35B for reasoning, coding, and tutoring. Offload heavy project work
-to a frontier model. Raising the local ceiling is a VRAM decision, not a tuning
-one — dense models ≥15 GB drop to ~3 tok/s on this card.
-
-## Models tested — history
-
-Every base that's been through the suite, with where it landed. Current lineup =
-gemma and qwen, the two best local picks above. Retired models are gone from
-`ollama`/build scripts but kept here for the record.
-
-| Model (base) | Status | Pros | Cons | Good for |
-|---|---|---|---|---|
-| **gemma** (`gemma4:e4b-it-q8_0`) | **current** | Won content; solid coding run (26/30); 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
-| **qwen** (`qwen3.6:35b-a3b-mtp-q4_K_M`, ~28 GB loaded) | **current** | Best coding run (29/30); best tutor run (7.0/10, 0 leaks); usable ~39–51 tok/s despite spill | Heavy CPU spill (about 75–77% CPU in recent speed runs); poor content-format compliance | Reasoning, coding, tutoring |
-| **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | **dropped 2026-06-03** | Tied coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and ran shorter; led no axis; separate weights → reload per switch | — |
-| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then by current Qwen3.6 | — |
-| `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every job | — |
-| `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8) | — |
-| `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run | Would be viable on bigger/unified-memory VRAM |
-| `qwen-moe` (`qwen3.6:35b-a3b-mtp-q4_K_M`, 22 GB) | **promoted to qwen 2026-06-06** | MTP + MoE clears the 15 tok/s floor (~32–42 tok/s) despite 73% CPU spill | Earlier runs showed ~83 s/answer and cold-start HTTP 500s | Rebuilt as current `qwen` after stronger June 6 coding/tutor runs |
-| `gemma-big` (`batiai/gemma4-26b:iq4`, 13 GB) | **retired 2026-06-02** | More capacity than e4b | Lost every category; ~4.5× slower (23 t/s); 43% CPU spill | — |
-
-**Hardware limit driving all of this:** RTX 3080 (10 GB, ~9 usable), Ryzen 5900x,
-32 GB DDR4-3600. Models that fit 100% on-GPU run fast; anything that spills is
-bottlenecked by ~57 GB/s DDR4 (not compute) and gen tok/s falls off a cliff. Dense
-
-## Qwen Benchmark Summary (Consolidated)
-
-The Qwen family was evaluated as the primary "reasoning" candidates for this stack.
-Recent June 6 runs promoted the 35B MoE build to the active `qwen` model.
-
-| Model | Token Speed | Avg. Latency | VRAM Status | Verdict |
-|---|---|---|---|---|
-| **Qwen 3.5 9B (Q6)** | ~88 tok/s (raw) | ~31s | 100% GPU | **Retired**; fast, but superseded by stronger Qwen 3.6 coding/tutor results. |
-| **Qwen 3.6 35B (MoE)** | ~39–51 tok/s in recent runs | 46.8s avg on coding run | 75–77% CPU spill in recent speed runs | **Current best reasoning/coding pick**; coding 29/30, tutor 7.0/10 with 0/15 leaks. |
-
-**Key Findings:**
-- **Architecture:** The 35B MoE is the only "large" model to clear the 15 tok/s floor on this hardware despite heavy CPU spill, likely due to Multi-Token Prediction (MTP).
-- **Recent results:** `qwen:think` scored 29/30 on coding, 7.0/10 on tutor guidance with 0/15 leaks, and ~39 tok/s on the latest speed run.
-- **Tradeoff:** It remains a poor content-format model (0/5 clean in the content run), so Gemma4 stays the content/all-rounder pick.
+Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
+Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
+spillover can remain usable because fewer parameters are active per token.
 
 ## Docs
 
-`AGENTS.md` (agent workflow contract). Eval suite under `eval/`; results and run history in this README.
+- [`AGENTS.md`](AGENTS.md): workflow contract for coding agents.
+- [`TESTING.md`](TESTING.md): testing source of truth, runner docs, safety notes,
+  benchmark history, and detailed results.

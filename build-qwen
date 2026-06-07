@@ -7,9 +7,10 @@ BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"
 # Modelfile extras (TEMPLATE/RENDERER/PARSER).
 EXTRAS=()
 
+# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
 PARAMS=(
   'num_ctx 131072'
-  'temperature 0.6'
+  'temperature 0.7'
   'top_p 0.95'
   'top_k 20'
   'min_p 0.0'

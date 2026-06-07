@@ -2,19 +2,18 @@
 set -euo pipefail
 
 MODEL_NAME="gemma"
-BASE_MODEL="gemma4:e4b-it-q8_0"
+BASE_MODEL="gemma4:12b-it-q4_K_M"
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER).
 EXTRAS=()
 
+# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
 PARAMS=(
-  'num_ctx 131072'
-  'temperature 0.8'
-  'top_p 0.92'
-  'top_k 40'
-  'repeat_penalty 1.15'
-  'repeat_last_n 256'
-  'num_predict 2048'
+  'num_ctx 65536'
+  'temperature 1.0'
+  'top_p 0.95'
+  'top_k 64'
+  'repeat_penalty 1.0'
 )
 
 # ============================================================================
