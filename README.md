@@ -13,10 +13,11 @@ expected to handle content, coding, and learning from the same system prompt.
 | Model   | Base                  | ctx    | Notes                                                        |
 |---------|-----------------------|--------|-------------------------------------------------------------|
 | `gemma` | `gemma4:e4b-it-q8_0`  | 131072 | 🏆 all-rounder — content 5/5 clean, coding 26/30, ~51 tok/s. |
-| `qwen`  | `batiai/qwen3.5-9b:q6`| 32768  | ⚡ speed & reasoning — highest throughput, ~88 tok/s.        |
+| `qwen`  | `qwen3.6:35b-a3b-mtp-q4_K_M` | 131072 | 🏆 reasoning/coding — coding 29/30, tutor 7.0/10, ~39–51 tok/s. |
 
-Fits 100% on-GPU and clears the 15 tok/s floor. e4b sliding-window attention
-keeps the KV cache tiny, so the full native window fits at ~4.6 GB. `num_ctx`
+`gemma` fits 100% on-GPU and clears the 15 tok/s floor. e4b sliding-window
+attention keeps the KV cache tiny, so the full native window fits at ~4.6 GB.
+`qwen` spills heavily but the 35B MoE/MTP build still clears the floor. `num_ctx`
 is tuned for a 10 GB GPU.
 
 Bases/ctx tuned on ollama 0.30 (leaner VRAM than 0.23.2). Full run history is in
@@ -133,12 +134,13 @@ read — separating what the benchmarks measured from how the models behave in r
 | Task | Pick | Why |
 |---|---|---|
 | Content / SEO / copy | **gemma** | 100% clean format, holds length |
-| Speed / Throughput | **qwen** | Highest raw speed (88 tok/s) and fits 100% on GPU |
-| Coding (small/boilerplate) | **gemma** | solid pass@1 (26/30) and fine on speed once warm |
-| Learning / explaining | **gemma** | same shared prompt covers it; no separate tutor build |
+| Speed / Throughput | **qwen** | 35B MoE stays usable at ~39–51 tok/s despite CPU spill |
+| Coding (small/boilerplate) | **qwen** | strongest pass@1 so far (29/30) |
+| Learning / explaining | **qwen** | best tutor result so far (7.0/10, 0/15 leaks) |
 
 Operational reason to run one model: with `OLLAMA_MAX_LOADED_MODELS=1` a single
-warm model covers every job, so staying on gemma avoids reload churn.
+warm model avoids reload churn. Use `gemma` for reliable local content work; use
+`qwen` when reasoning/coding quality matters more than memory footprint.
 
 **Where local (gemma) genuinely helps**
 
@@ -162,26 +164,27 @@ warm model covers every job, so staying on gemma avoids reload churn.
 **Caveats on the numbers:** coding pass@1 is the most misleading (toy tasks, not real
 work). Content is the most trustworthy result (objective pass/fail).
 
-**Bottom line:** use gemma as a fast, private first-pass for content + small coding +
-learning; offload heavy project work to a frontier model. Raising the local ceiling is
-a VRAM decision, not a tuning one — dense models ≥15 GB drop to ~3 tok/s on this card.
+**Bottom line:** current best local picks are Gemma4 for fast, reliable content
+and Qwen3.6:35B for reasoning, coding, and tutoring. Offload heavy project work
+to a frontier model. Raising the local ceiling is a VRAM decision, not a tuning
+one — dense models ≥15 GB drop to ~3 tok/s on this card.
 
 ## Models tested — history
 
 Every base that's been through the suite, with where it landed. Current lineup =
-gemma, a versatile generalist (above). Retired models are gone from
+gemma and qwen, the two best local picks above. Retired models are gone from
 `ollama`/build scripts but kept here for the record.
 
 | Model (base) | Status | Pros | Cons | Good for |
 |---|---|---|---|---|
-| **gemma** (`gemma4:e4b-it-q8_0`) | **current** | Won content + coding; 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny; one versatile build covers every job | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
-| **qwen** (`batiai/qwen3.5-9b:q6`, ~7.4 GB) | **Active** | Only thinking model; strongest reasoning + tutor explanations; fastest raw throughput (~88 tok/s) | High TTFT when "thinking" is active | Speed-critical reasoning and complex logic |
+| **gemma** (`gemma4:e4b-it-q8_0`) | **current** | Won content; solid coding run (26/30); 100% on-GPU at full ctx; e4b sliding-window keeps KV tiny | 4B-effective → weak on complex/multi-file reasoning | Content/SEO (production), small coding, learning — the all-rounder |
+| **qwen** (`qwen3.6:35b-a3b-mtp-q4_K_M`, ~28 GB loaded) | **current** | Best coding run (29/30); best tutor run (7.0/10, 0 leaks); usable ~39–51 tok/s despite spill | Heavy CPU spill (about 75–77% CPU in recent speed runs); poor content-format compliance | Reasoning, coding, tutoring |
 | **granite** (`granite4.1:8b-Q5_K_M`, ~6.3 GB) | **dropped 2026-06-03** | Tied coding pass@1 (26/30); ~71 tok/s, 100% on-GPU @ 16k | Content 60% clean and ran shorter; led no axis; separate weights → reload per switch | — |
-| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then qwen dropped entirely | — |
+| `qwen-custom` (`qwen3.5:9b` Q4, ~6.6 GB) | **removed 2026-06-02** | Fast (~88 tok/s), 100% on-GPU; thinking-capable | Superseded by Q6 qwen, then by current Qwen3.6 | — |
 | `ministral-custom` | **removed 2026-05-31** | Genuine #2 across all roles (content 100%, coding 83%, teach 9.0) | Redundant once gemma + granite covered every job | — |
 | `llama-custom` | **removed 2026-05-31** | — | Last/near-last on every axis (content 20%, coding 73%, teach 6.8) | — |
 | `qwen-big` (qwen3.6 27B dense → 35B MoE) | **retired 2026-06-02** | MoE reasoning beat qwen-custom (escapes dense-spill curse) | 13 t/s (MoE) / 3 t/s (dense) — too slow + too big to co-run | Would be viable on bigger/unified-memory VRAM |
-| `qwen-moe` (`qwen3.6:35b-a3b-mtp-q4_K_M`, 22 GB) | **shelved 2026-06-03** | MTP + MoE clears the 15 tok/s floor (~32–42 tok/s) despite 73% CPU spill | ~83 s/answer; cold-start HTTP 500s; no q3 quant to shrink it | Revisit only with more VRAM |
+| `qwen-moe` (`qwen3.6:35b-a3b-mtp-q4_K_M`, 22 GB) | **promoted to qwen 2026-06-06** | MTP + MoE clears the 15 tok/s floor (~32–42 tok/s) despite 73% CPU spill | Earlier runs showed ~83 s/answer and cold-start HTTP 500s | Rebuilt as current `qwen` after stronger June 6 coding/tutor runs |
 | `gemma-big` (`batiai/gemma4-26b:iq4`, 13 GB) | **retired 2026-06-02** | More capacity than e4b | Lost every category; ~4.5× slower (23 t/s); 43% CPU spill | — |
 
 **Hardware limit driving all of this:** RTX 3080 (10 GB, ~9 usable), Ryzen 5900x,
@@ -190,17 +193,18 @@ bottlenecked by ~57 GB/s DDR4 (not compute) and gen tok/s falls off a cliff. Den
 
 ## Qwen Benchmark Summary (Consolidated)
 
-The Qwen family was evaluated as the primary "reasoning" candidates for this stack. 
+The Qwen family was evaluated as the primary "reasoning" candidates for this stack.
+Recent June 6 runs promoted the 35B MoE build to the active `qwen` model.
 
 | Model | Token Speed | Avg. Latency | VRAM Status | Verdict |
 |---|---|---|---|---|
-| **Qwen 3.5 9B (Q6)** | ~88 tok/s (raw) | ~31s | 100% GPU | **Active**; high speed makes it the primary reasoning model despite latency. |
-| **Qwen 3.6 35B (MoE)** | 32–42 tok/s | ~83s | 73% CPU spill | **Shelved**; MTP/MoE clears the 15 tok/s floor, but thinking is too slow for 10GB. |
+| **Qwen 3.5 9B (Q6)** | ~88 tok/s (raw) | ~31s | 100% GPU | **Retired**; fast, but superseded by stronger Qwen 3.6 coding/tutor results. |
+| **Qwen 3.6 35B (MoE)** | ~39–51 tok/s in recent runs | 46.8s avg on coding run | 75–77% CPU spill in recent speed runs | **Current best reasoning/coding pick**; coding 29/30, tutor 7.0/10 with 0/15 leaks. |
 
 **Key Findings:**
-- **Architecture:** The 35B MoE is the only "large" model to clear the 15 tok/s floor on this hardware despite a 73% CPU spill, likely due to Multi-Token Prediction (MTP).
-- **Bottlenecks:** Reasoning performance is hampered by high "Time to First Token" (TTFT) and thinking durations that frequently approach the 120s timeout on complex logic tasks.
-- **Stability:** Significant CPU spill led to intermittent HTTP 500 errors during model loading and concurrent requests.
+- **Architecture:** The 35B MoE is the only "large" model to clear the 15 tok/s floor on this hardware despite heavy CPU spill, likely due to Multi-Token Prediction (MTP).
+- **Recent results:** `qwen:think` scored 29/30 on coding, 7.0/10 on tutor guidance with 0/15 leaks, and ~39 tok/s on the latest speed run.
+- **Tradeoff:** It remains a poor content-format model (0/5 clean in the content run), so Gemma4 stays the content/all-rounder pick.
 
 ## Docs
 
