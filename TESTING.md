@@ -43,8 +43,8 @@ All runners write to `eval/runs/<UTC>/`.
 Common flags:
 
 ```bash
---models qwen
---attempts N
+--models NAME
+--attempts TIMES
 --timeout SECONDS
 ```
 

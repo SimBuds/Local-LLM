@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_NAME="qwen"
-BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"
+MODEL_NAME="gemma"
+BASE_MODEL="gemma4:12b-it-qat"
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER).
 EXTRAS=()

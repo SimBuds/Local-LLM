@@ -15,6 +15,7 @@ Current lineup:
 | Model | Base | ctx | Role |
 |---|---|---:|---|
 | `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 32K Context | Patient reasoning/coding model; best coding and learning scores. |
+| `qwen` | `gemma4:12b-it-qat` | 32K Context | Content model; best content generation scores. |
 
 `qwen` is a
 35B MoE/MTP model: it spills heavily to CPU, but still clears the local usability
@@ -92,20 +93,20 @@ bad rules or tuning `PARAMS` before adding more instructions.
 Local service override:
 
 ```ini
-# /etc/systemd/system/ollama.service.d/override.conf
+# sudo systemctl edit ollama
 [Service]
 Environment="OLLAMA_KV_CACHE_TYPE=q4_0"
 Environment="OLLAMA_FLASH_ATTENTION=1"
 Environment="OLLAMA_NUM_PARALLEL=1"
-Environment="OLLAMA_MAX_LOADED_MODELS=1"
-Environment="OLLAMA_KEEP_ALIVE=-1"
+Environment="OLLAMA_MAX_LOADED_MODELS=2"
+Environment="OLLAMA_KEEP_ALIVE=10m"
 ```
 
 Common commands:
 
 ```bash
-systemctl status ollama
-systemctl edit ollama
+sudo ystemctl status ollama
+sudo systemctl edit ollama
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 
@@ -116,19 +117,16 @@ ollama run gemma
 ollama run qwen
 ```
 
-`OLLAMA_CONTEXT_LENGTH` is a server-side ceiling above the model `num_ctx`.
-KV-cache quantization is also server-side and requires flash attention.
-
 ## Evaluation
 
 Runners live under `eval/` and write results to `eval/runs/<UTC>/`.
 
 ```bash
-./eval/run-speed.py --models qwen
-./eval/run-code.py --models qwen
-./eval/run-content.py --models qwen
-./eval/run-learn.py --models qwen
-./eval/run-tutor.py --models qwen
+./eval/run-speed.py --models qwen gemma
+./eval/run-code.py --models qwen gemma
+./eval/run-content.py --models qwen gemma
+./eval/run-learn.py --models qwen gemma
+./eval/run-tutor.py --models qwen gemma
 ```
 
 `run-code.py`, `run-learn.py`, and `run-tutor.py` execute model-generated Python

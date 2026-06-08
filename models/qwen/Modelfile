@@ -4,7 +4,7 @@ SYSTEM """
 === SYSTEM METADATA ===
 Model: qwen
 Base:  qwen3.6:35b-a3b-mtp-q4_K_M
-Built: 2026-06-08T04:16:51Z
+Built: 2026-06-08T11:57:35Z
 
 --- START FILE: knowledge/linux/arch.md ---
 # Arch Linux Technical Reference
@@ -216,7 +216,7 @@ the ROLE GUIDANCE section below.
 
 """
 
-PARAMETER num_ctx 32768
+PARAMETER num_ctx 16384
 PARAMETER temperature 0.2
 PARAMETER top_p 0.95
 PARAMETER top_k 40

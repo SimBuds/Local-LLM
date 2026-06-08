@@ -1,7 +1,7 @@
 === SYSTEM METADATA ===
-Model: qwen
-Base:  qwen3.6:35b-a3b-mtp-q4_K_M
-Built: 2026-06-08T11:57:35Z
+Model: gemma
+Base:  gemma4:12b-it-qat
+Built: 2026-06-08T11:57:39Z
 
 --- START FILE: knowledge/linux/arch.md ---
 # Arch Linux Technical Reference
