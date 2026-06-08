@@ -14,21 +14,14 @@ Current lineup:
 
 | Model | Base | ctx | Role |
 |---|---|---:|---|
-| `gemma` | `gemma4:12b-it-q4_K_M` | 65536 | Fast local all-rounder; best content/format compliance. |
-| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 262144 | Patient reasoning/coding model; best coding and learning scores. |
+| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 32K Context | Patient reasoning/coding model; best coding and learning scores. |
 
-`gemma` fits fully on GPU and is the reliable local content model. `qwen` is a
+`qwen` is a
 35B MoE/MTP model: it spills heavily to CPU, but still clears the local usability
 floor and wins the reasoning-heavy benchmarks.
 
 ## Quickstart
 
-```bash
-./build-gemma
-ollama run gemma
-```
-
-Build Qwen the same way:
 
 ```bash
 ./build-qwen
@@ -48,7 +41,6 @@ Each `build-*` script assembles the prompt stack, writes
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # benchmark runners and tasks
 ├── models/<name>/        # generated system.txt + Modelfile
-├── build-gemma
 └── build-qwen
 ```
 
@@ -63,16 +55,19 @@ that would break the Ollama `SYSTEM """..."""` block.
 The only model-specific part of a builder is the top config block:
 
 ```bash
-MODEL_NAME="gemma"
-BASE_MODEL="gemma4:12b-it-q4_K_M"
+MODEL_NAME="qwen"
+BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"
 EXTRAS=()
-PARAMS=(
-  'num_ctx 65536'
-  'temperature 1.0'
+PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
+  'num_ctx 32768'         # 32k: The sweet spot for multi-file local tasks
+  'temperature 0.2'       # Low temperature forces strict compliance with code syntax and tool tags
   'top_p 0.95'
-  'top_k 64'
-  'repeat_penalty 1.0'
+  'top_k 40'
+  'min_p 0.05'            # Safeguards structural format without restricting code vocabulary
+  'presence_penalty 0.0'  # MUST BE ZERO. Coding requires reusing exact variable names.
+  'repeat_penalty 1.05'   # Prevents infinite code loops without breaking boilerplate code
 )
+
 ```
 
 For a new model, copy an existing `build-*` script and edit only that config
@@ -129,11 +124,11 @@ KV-cache quantization is also server-side and requires flash attention.
 Runners live under `eval/` and write results to `eval/runs/<UTC>/`.
 
 ```bash
-./eval/run-speed.py --models gemma qwen
-./eval/run-code.py --models gemma qwen
-./eval/run-content.py --models gemma qwen
-./eval/run-learn.py --models gemma qwen
-./eval/run-tutor.py --models gemma qwen
+./eval/run-speed.py --models qwen
+./eval/run-code.py --models qwen
+./eval/run-content.py --models qwen
+./eval/run-learn.py --models qwen
+./eval/run-tutor.py --models qwen
 ```
 
 `run-code.py`, `run-learn.py`, and `run-tutor.py` execute model-generated Python
