@@ -9,13 +9,13 @@ EXTRAS=()
 
 # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
 PARAMS=(
-  'num_ctx 131072'
-  'temperature 0.7'
+  'num_ctx 49152'         # 48k: The sweet spot for multi-file local tasks
+  'temperature 0.2'       # Low temperature forces strict compliance with code syntax and tool tags
   'top_p 0.95'
-  'top_k 20'
-  'min_p 0.0'
-  'presence_penalty 1.5'
-  'repeat_penalty 1'
+  'top_k 40'
+  'min_p 0.05'            # Safeguards structural format without restricting code vocabulary
+  'presence_penalty 0.0'  # MUST BE ZERO. Coding requires reusing exact variable names.
+  'repeat_penalty 1.05'   # Prevents infinite code loops without breaking boilerplate code
 )
 
 # ============================================================================

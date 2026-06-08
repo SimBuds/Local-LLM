@@ -43,7 +43,7 @@ All runners write to `eval/runs/<UTC>/`.
 Common flags:
 
 ```bash
---models gemma qwen
+--models qwen
 --attempts N
 --timeout SECONDS
 ```
@@ -67,19 +67,19 @@ thinking mode for content runs unless explicitly testing it.
 Full current comparison:
 
 ```bash
-./eval/run-speed.py --models gemma qwen
-./eval/run-code.py --models gemma qwen
-./eval/run-content.py --models gemma qwen
-./eval/run-learn.py --models gemma qwen
-./eval/run-tutor.py --models gemma qwen
+./eval/run-speed.py --models qwen
+./eval/run-code.py --models qwen
+./eval/run-content.py --models qwen
+./eval/run-learn.py --models qwen
+./eval/run-tutor.py --models qwen
 ```
 
 Quick smoke comparison:
 
 ```bash
-./eval/run-speed.py --models gemma qwen --num-predict 128
-./eval/run-code.py --models gemma qwen --tasks two_sum calc --attempts 2
-./eval/run-content.py --models gemma qwen --attempts 2
+./eval/run-speed.py --models qwen --num-predict 128
+./eval/run-code.py --models qwen --tasks two_sum calc --attempts 2
+./eval/run-content.py --models qwen --attempts 2
 ```
 
 Add tasks in:
