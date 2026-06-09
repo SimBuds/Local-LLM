@@ -1,12 +1,22 @@
 # AI Context Stack
 
-Layered Markdown prompts compiled into local Ollama models. There is no
-fine-tuning here: behavior comes from `prompts/`, durable memory, reusable
-knowledge files, and each model builder's sampler/context params.
+Layered Markdown prompts compiled into local Ollama models, plus an eval suite to
+pick the best model for each job. There is no fine-tuning here: behavior comes
+from `prompts/`, durable memory, reusable knowledge files, and each model
+builder's sampler/context params.
 
-The repo also includes an eval suite. `README.md` keeps the operational view and
-current leaderboards; [`TESTING.md`](TESTING.md) is the source of truth for
-runner usage, safety notes, run history, and detailed benchmark notes.
+**What this is for:** running a small, opinionated set of local models on one
+workstation, wiring them into editor assistants (Continue / Cline), and keeping
+an evidence-based record of which model wins which task.
+
+**What the testing is for:** every model in the lineup is benchmarked on speed,
+coding, content/SEO, learning, and leak-gated tutoring so the "which model"
+decision is measured, not guessed.
+
+This README is the **guide**: what the project is, how to build and run models,
+how to run the evals, and how to plug the models into VSCode. The benchmark
+**record** — full runner docs, safety notes, history, and detailed results —
+lives in [`TESTING.md`](TESTING.md).
 
 ## Models
 
@@ -15,7 +25,7 @@ Current lineup:
 | Model | Base | ctx | Role |
 |---|---|---:|---|
 | `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 32K Context | Patient reasoning/coding model; best coding and learning scores. |
-| `qwen` | `gemma4:12b-it-qat` | 32K Context | Content model; best content generation scores. |
+| `gemma` | `gemma4:12b-it-q4_K_M` | 32K Context | Content model; best content generation scores. |
 
 `qwen` is a
 35B MoE/MTP model: it spills heavily to CPU, but still clears the local usability
@@ -105,7 +115,7 @@ Environment="OLLAMA_KEEP_ALIVE=10m"
 Common commands:
 
 ```bash
-sudo ystemctl status ollama
+sudo systemctl status ollama
 sudo systemctl edit ollama
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
@@ -116,6 +126,44 @@ ollama show gemma
 ollama run gemma
 ollama run qwen
 ```
+
+## Use In VSCode (Continue / Cline)
+
+Both extensions talk to Ollama's local API at `http://localhost:11434`. Build the
+models first (`./build-qwen`, `./build-gemma`) so the custom names resolve, then
+confirm they are loaded with `ollama list`.
+
+### Continue
+
+Add the built models to `~/.continue/config.yaml` (Continue's provider name for
+Ollama is `ollama`; `model` is the Ollama model name):
+
+```yaml
+models:
+  - name: qwen (coding/learning)
+    provider: ollama
+    model: qwen
+    roles: [chat, edit, apply]
+  - name: gemma (content/fast)
+    provider: ollama
+    model: gemma
+    roles: [chat, edit, apply]
+```
+
+Pick `qwen` for coding/reasoning and `gemma` for fast content per the
+leaderboard above. Continue auto-discovers Ollama, but listing the custom names
+keeps the prompt-stacked builds (not the raw bases) in the model picker.
+
+### Cline
+
+In Cline's settings, set **API Provider** to `Ollama`, **Base URL** to
+`http://localhost:11434`, and **Model** to `qwen` or `gemma`. Cline is
+agentic/coding-heavy, so `qwen` is the better default there; switch to `gemma`
+when you want speed and the task is lighter.
+
+Notes for both: keep `OLLAMA_KEEP_ALIVE` long enough to avoid reload churn when
+switching models, and remember `qwen` spills to CPU on this box (slower first
+token, ~40 tok/s) while `gemma` stays fully on GPU.
 
 ## Evaluation
 
@@ -135,24 +183,51 @@ flags and safety details are in [`TESTING.md`](TESTING.md).
 
 ## Benchmark Leaderboard
 
-Latest Gemma/Qwen head-to-head: 2026-06-07. The leak-gated tutor runner was not
-completed in that pass; previous tutor history remains in [`TESTING.md`](TESTING.md).
+Latest Gemma/Qwen head-to-head: 2026-06-09 (all five suites from that run).
 
 | Suite | Winner | `gemma` | `qwen` |
 |---|---|---:|---:|
-| Speed | `gemma` | 56.9 tok/s, 100% GPU | 34.9 tok/s, 77%/23% CPU/GPU |
-| Coding | `qwen` | 27/30 | 30/30 |
-| Content | `gemma` | 5/5 clean | 4/5 clean |
-| Learning | `qwen` | 9.2/10, code 12/12 | 10.0/10, code 12/12 |
+| Speed | `gemma` | 58.3 tok/s, 100% GPU | 40.6 tok/s, 75%/25% CPU/GPU |
+| Coding | `qwen` | 29/30 | 30/30 |
+| Content | `gemma` | 5/5 clean | 5/5 clean |
+| Learning | `qwen` | 9.4/10, code 12/12 | 9.9/10, code 12/12 |
+| Tutor (leak-gated) | `gemma` | 8.0/10, leaks 2/15 | 5.9/10, leaks 6/15 |
 
 Current picks:
 
 | Use | Pick | Reason |
 |---|---|---|
 | Content / SEO / copy | `gemma` | 100% clean in content run; faster and fully on GPU. |
-| Coding puzzles / small functions | `qwen` | Latest run swept 30/30, including `calc` 5/5. |
-| Learning explanations | `qwen` | Latest `run-learn.py` score: 10.0/10 with code 12/12. |
+| Coding puzzles / small functions | `qwen` | Latest run swept 30/30; `gemma` dropped one `calc`. |
+| Learning explanations | `qwen` | Latest `run-learn.py` teach score: 9.9/10 with code 12/12. |
+| Socratic tutoring (no spoilers) | `gemma` | Leak-gated `run-tutor.py`: 8.0/10 with only 2/15 leaks vs `qwen`'s 6/15. |
 | Fast local general use | `gemma` | Best fit/speed and no CPU spill. |
+
+## Models Tested
+
+Current lineup, scored out of 10 per suite (speed normalized to the fastest
+result; 2026-06-09 run):
+
+```text
+                gemma                          qwen
+Speed    10.0  ████████████████████  |  7.0  ██████████████
+Coding    9.7  ███████████████████   | 10.0  ████████████████████
+Content  10.0  ████████████████████  | 10.0  ████████████████████
+Learning  9.4  ███████████████████   |  9.9  ████████████████████
+Tutor     8.0  ████████████████      |  5.9  ████████████
+```
+
+Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reasoning:
+
+| Model | Base | Status |
+|---|---|---|
+| `gemma` | `gemma4:12b-it-q4_K_M` | current — content/speed/tutor pick |
+| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | current — coding/learning pick |
+| `granite` | `granite4.1:8b-Q5_K_M` | dropped — strong prior coding, no longer leads |
+| `qwen-custom` | `qwen3.5:9b` | removed — superseded by Qwen3.6 MoE |
+| `ministral-custom` | — | removed — historical #2 |
+| `llama-custom` | — | removed — trailed in early runs |
+| `gemma-big` | — | retired — lost the quality/speed tradeoff on this box |
 
 ## Hardware Envelope
 

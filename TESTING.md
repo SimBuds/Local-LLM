@@ -93,76 +93,89 @@ Add tasks in:
 ## Current Benchmark Snapshot
 
 Latest head-to-head: `gemma` (`gemma4:12b-it-q4_K_M`) vs `qwen`
-(`qwen3.6:35b-a3b-mtp-q4_K_M`) on 2026-06-07.
-
-The leak-gated tutor runner was not completed in this pass because the approval
-to run `./eval/run-tutor.py --models gemma qwen` was rejected. Treat tutor
-status as pending until that runner is rerun.
+(`qwen3.6:35b-a3b-mtp-q4_K_M`) on 2026-06-09. All five suites — speed, coding,
+content, learning, and the leak-gated tutor runner — completed this pass.
 
 ### Speed (`run-speed.py`)
 
-Run: `eval/runs/20260607T123431Z/speed/summary.md`
+Run: `eval/runs/20260609T101024Z/speed/summary.md`
 
 | Rank | Model | Think | Gen tok/s | Prompt tok/s | Load | Size | GPU/CPU split |
 |---|---|---|---:|---:|---:|---:|---|
-| 1 | `gemma` | off | 56.9 | 28774 | 0.4s | 7.8 GB | 100% GPU |
-| 2 | `qwen` | off | 34.9 | 2115 | 21.9s | 28 GB | 77%/23% CPU/GPU |
+| 1 | `gemma` | off | 58.3 | 16902 | 13.6s | 7.7 GB | 100% GPU |
+| 2 | `qwen` | off | 40.6 | 1689 | 0.3s | 28 GB | 75%/25% CPU/GPU |
 
 Finding: Gemma is the fast local default. Qwen remains usable despite heavy CPU
 spill, but it pays a load-time and throughput cost.
 
 ### Coding (`run-code.py`)
 
-Run: `eval/runs/20260607T123539Z/code/summary.md`
+Run: `eval/runs/20260609T101105Z/code/summary.md`
 
 | Rank | Model | Pass rate | Passed | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|
-| 1 | `qwen` | 100% | 30/30 | 5.0 | 52 |
-| 2 | `gemma` | 90% | 27/30 | 9.6 | 56 |
+| 1 | `qwen` | 100% | 30/30 | 4.8 | 57 |
+| 2 | `gemma` | 97% | 29/30 | 5.1 | 60 |
 
 Per task:
 
 | Model | two_sum | valid_parentheses | merge_intervals | lru_cache | edit_distance | calc |
 |---|---:|---:|---:|---:|---:|---:|
 | `qwen` | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
-| `gemma` | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 2/5 |
+| `gemma` | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 | 4/5 |
 
-Finding: Qwen is the current coding leader. Gemma's misses were isolated to
-`calc`, the suite's known operator-precedence stress task.
+Finding: Qwen is the current coding leader. Gemma's single miss was again on
+`calc`, the suite's known operator-precedence stress task (improved from 2/5 to
+4/5 versus the prior run).
 
 ### Content (`run-content.py`)
 
-Run: `eval/runs/20260607T132233Z/content/summary.md`
+Run: `eval/runs/20260609T101604Z/content/summary.md`
 
 | Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words | Keyword hits |
 |---|---|---:|---:|---:|---:|---:|---|
-| 1 | `gemma` | 100% | 5/5 | 12.6 | 46 | 373 | 3-3 |
-| 2 | `qwen` | 80% | 4/5 | 19.0 | 30 | 326 | 3-4 |
+| 1 | `gemma` | 100% | 5/5 | 10.1 | 60 | 388 | 3-4 |
+| 2 | `qwen` | 100% | 5/5 | 15.5 | 35 | 322 | 2-4 |
 
-Finding: Gemma remains the content/SEO pick. Qwen was mostly clean but had one
-H1-format miss and was slower.
+Finding: Both models were 5/5 clean this pass. Gemma keeps the content/SEO pick
+on speed (60 vs 35 tok/s, fully on GPU); Qwen closed the format gap from the
+prior run.
 
 ### Learning (`run-learn.py`)
 
-Run: `eval/runs/20260607T132644Z/learn/summary.md`
+Run: `eval/runs/20260609T101812Z/learn/summary.md`
 
 | Rank | Model | Teach /10 | Code pass | Explanation /10 | Expl. when correct |
 |---|---|---:|---:|---:|---:|
-| 1 | `qwen` | 10.0 | 12/12 | 10.0 | 10.0 |
-| 2 | `gemma` | 9.2 | 12/12 | 9.2 | 9.2 |
+| 1 | `qwen` | 9.9 | 12/12 | 9.9 | 9.9 |
+| 2 | `gemma` | 9.4 | 12/12 | 9.4 | 9.4 |
 
-Finding: Both models passed every code gate. Qwen won explanation quality in the
-leave-one-out judge panel.
+Finding: Both models passed every code gate. Qwen again won explanation quality
+in the leave-one-out judge panel.
+
+### Tutor (`run-tutor.py`, leak-gated)
+
+Run: `eval/runs/20260609T102550Z/tutor/summary.md`
+
+| Rank | Model | Teach /10 | Leaks | Explanation /10 | Explanation (no leaks) /10 |
+|---|---|---:|---:|---:|---:|
+| 1 | `gemma` | 8.0 | 2/15 | 9.0 | 9.2 |
+| 2 | `qwen` | 5.9 | 6/15 | 9.7 | 9.8 |
+
+Finding: This is the inverse of the open learning run. Qwen explains better when
+it does not leak (9.8 vs 9.2), but it gives away the full solution far more often
+(6/15 vs 2/15), and the gate zeroes those attempts. Gemma's discipline makes it
+the leak-gated tutoring pick.
 
 ## Current Picks
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `gemma` | 56.9 tok/s, 100% GPU, low load time. |
-| Content / SEO / copy | `gemma` | 5/5 clean in latest content run. |
+| Fast local default | `gemma` | 58.3 tok/s, 100% GPU. |
+| Content / SEO / copy | `gemma` | 5/5 clean and ~2x faster than Qwen in latest content run. |
 | Coding puzzles / small functions | `qwen` | 30/30 in latest coding run, including `calc` 5/5. |
-| Learning explanations | `qwen` | 10.0/10 in latest learning run, code 12/12. |
-| Leak-gated tutoring | pending | Needs latest `run-tutor.py` rerun for current Gemma/Qwen lineup. |
+| Learning explanations | `qwen` | 9.9/10 in latest learning run, code 12/12. |
+| Leak-gated tutoring | `gemma` | 8.0/10 with only 2/15 leaks vs Qwen's 6/15. |
 
 ## Hardware
 
@@ -249,10 +262,22 @@ it around the low-30 tok/s band thinking-off, with later runs showing stronger
 coding and tutor behavior. It was promoted into the current `qwen` slot for
 reasoning/coding comparison against Gemma.
 
-### Current head-to-head update (2026-06-07)
+### Head-to-head update (2026-06-07)
 
-The latest completed Gemma/Qwen run changed the practical split:
+This completed Gemma/Qwen run changed the practical split:
 
 - Gemma remains the fast content model.
 - Qwen is now the clear coding and learning model in the local lineup.
-- Leak-gated tutor status still needs a current rerun.
+- Leak-gated tutor status still needed a current rerun (done 2026-06-09).
+
+### Head-to-head update (2026-06-09)
+
+Full five-suite rerun:
+
+- Speed: Gemma 58.3 tok/s (100% GPU) vs Qwen 40.6 tok/s (75%/25% CPU/GPU).
+- Coding: Qwen still 30/30; Gemma improved to 29/30 (`calc` 4/5, up from 2/5).
+- Content: both now 5/5 clean; Gemma keeps the pick on speed.
+- Learning: Qwen 9.9 vs Gemma 9.4, both code 12/12.
+- Tutor (leak-gated, finally rerun): Gemma 8.0/10 with 2/15 leaks beats Qwen
+  5.9/10 with 6/15 leaks. Qwen explains better when it does not leak but fails
+  the gate more often, so Gemma is the tutoring pick.

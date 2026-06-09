@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODEL_NAME="gemma"
-BASE_MODEL="gemma4:12b-it-qat"
+BASE_MODEL="gemma4:12b-it-q4_K_M"
 
 # Modelfile extras (TEMPLATE/RENDERER/PARSER).
 EXTRAS=()
