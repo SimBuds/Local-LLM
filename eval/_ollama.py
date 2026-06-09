@@ -47,14 +47,19 @@ def get_effective_think(mode: str, model_default: bool) -> bool:
 
 
 def generate(model: str, prompt: str, timeout: int, think: bool = False,
-             options: dict | None = None) -> tuple[str, dict]:
+             options: dict | None = None, fmt: dict | str | None = None,
+             system: str | None = None) -> tuple[str, dict]:
     """Single non-streaming call. Returns (response_text, raw_meta).
 
     `model` is the real Ollama name (resolve a `:think` spec first). `think`
     toggles Qwen thinking mode; it is ignored by non-Qwen models. `options`, if
     given, is merged into the request as Ollama generate options (e.g.
     `{"num_predict": 256}` to cap output length) — used by run-speed.py to bound
-    generation so CPU-spillover models finish quickly.
+    generation so CPU-spillover models finish quickly. `fmt` sets Ollama's
+    `format` field for structured output: `"json"` for free JSON, or a JSON
+    schema object for schema-constrained decode (mirrors how jobhunt's gateway
+    constrains output) — used by run-json.py. `system` overrides the system
+    prompt for this call.
     """
     body_obj = {
         "model": model,
@@ -64,6 +69,10 @@ def generate(model: str, prompt: str, timeout: int, think: bool = False,
     }
     if options:
         body_obj["options"] = options
+    if fmt is not None:
+        body_obj["format"] = fmt
+    if system is not None:
+        body_obj["system"] = system
     payload = json.dumps(body_obj).encode("utf-8")
     req = urllib.request.Request(
         OLLAMA_URL, data=payload,

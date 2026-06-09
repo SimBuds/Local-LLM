@@ -175,7 +175,13 @@ Runners live under `eval/` and write results to `eval/runs/<UTC>/`.
 ./eval/run-content.py --models qwen gemma
 ./eval/run-learn.py --models qwen gemma
 ./eval/run-tutor.py --models qwen gemma
+./eval/run-json.py --models qwen gemma
 ```
+
+`run-json.py` is the structured-output test the consumer apps (Jobhunt,
+SEO-LLM) depend on: it constrains decode with a JSON schema, buries facts in a
+multi-thousand-token document, and scores schema conformance plus long-context
+fact recall. It pins `num_ctx 32768` to match how those apps call Ollama.
 
 `run-code.py`, `run-learn.py`, and `run-tutor.py` execute model-generated Python
 with timeouts but are not containerized. Run trusted models only. Full runner
@@ -184,6 +190,9 @@ flags and safety details are in [`TESTING.md`](TESTING.md).
 ## Benchmark Leaderboard
 
 Latest Gemma/Qwen head-to-head: 2026-06-09 (all five suites from that run).
+Note: `gemma` was rebuilt with new params after this run, so these numbers
+predate the current build — re-run the suites before relying on them. The
+`run-json.py` (schema/long-context) suite is wired in but not yet benchmarked.
 
 | Suite | Winner | `gemma` | `qwen` |
 |---|---|---:|---:|
@@ -223,11 +232,12 @@ Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reason
 |---|---|---|
 | `gemma` | `gemma4:12b-it-q4_K_M` | current — content/speed/tutor pick |
 | `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | current — coding/learning pick |
-| `granite` | `granite4.1:8b-Q5_K_M` | dropped — strong prior coding, no longer leads |
+| `gemma-custom` | `gemma4:e4b` | removed — superseded by gemma4 12B |
+| `granite-custom` | `granite4.1:8b-Q5_K_M` | dropped — strong prior coding, no longer leads |
 | `qwen-custom` | `qwen3.5:9b` | removed — superseded by Qwen3.6 MoE |
-| `ministral-custom` | — | removed — historical #2 |
-| `llama-custom` | — | removed — trailed in early runs |
-| `gemma-big` | — | retired — lost the quality/speed tradeoff on this box |
+| `ministral-custom` | `ministral-3:8b` | removed — historical #2 |
+| `llama-custom` | `llama3.1:8b` | removed — trailed in early runs |
+| `gemma-big` | `gemma3:27b` | retired — lost the quality/speed tradeoff on this box |
 
 ## Hardware Envelope
 

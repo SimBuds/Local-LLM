@@ -8,14 +8,16 @@ BASE_MODEL="gemma4:12b-it-q4_K_M"
 EXTRAS=()
 
 # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
+
+# Content Params
 PARAMS=(
-  'num_ctx 16384'         # 48k: The sweet spot for multi-file local tasks
-  'temperature 0.2'       # Low temperature forces strict compliance with code syntax and tool tags
-  'top_p 0.95'
+  'num_ctx 16384'
+  'temperature 0.75'
+  'top_p 0.9'
   'top_k 40'
-  'min_p 0.05'            # Safeguards structural format without restricting code vocabulary
-  'presence_penalty 0.0'  # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat_penalty 1.05'   # Prevents infinite code loops without breaking boilerplate code
+  'repeat_penalty 1.08'
+  'presence_penalty 0.2'
+  'frequency_penalty 0.1'  
 )
 
 # ============================================================================

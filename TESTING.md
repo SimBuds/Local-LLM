@@ -39,6 +39,7 @@ All runners write to `eval/runs/<UTC>/`.
 | `run-code.py` | Real pass@1 against hidden Python asserts | yes | 5 per task |
 | `run-learn.py` | Code + explanation, leave-one-out judge panel | yes | 3 per task |
 | `run-tutor.py` | Leak-gated tutoring guidance | yes | 3 per task |
+| `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task |
 
 Common flags:
 
@@ -57,6 +58,7 @@ Runner-specific flags:
 | `run-content.py` | `--prompt-file PATH`, `--keyword TEXT`, `--thinking auto|on|off` |
 | `run-learn.py` | `--tasks ...`, `--judges ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-tutor.py` | `--tasks ...`, `--judges ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
+| `run-json.py` | `--tasks ...`, `--num-ctx N` (default 32768), `--thinking auto|on|off` |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
@@ -72,6 +74,7 @@ Full current comparison:
 ./eval/run-content.py --models qwen
 ./eval/run-learn.py --models qwen
 ./eval/run-tutor.py --models qwen
+./eval/run-json.py --models qwen
 ```
 
 Quick smoke comparison:
@@ -80,6 +83,7 @@ Quick smoke comparison:
 ./eval/run-speed.py --models qwen --num-predict 128
 ./eval/run-code.py --models qwen --tasks two_sum calc --attempts 2
 ./eval/run-content.py --models qwen --attempts 2
+./eval/run-json.py --models qwen --tasks jd_extract --attempts 2
 ```
 
 Add tasks in:
@@ -89,6 +93,7 @@ Add tasks in:
 | Coding correctness | `eval/coding_tasks.py` |
 | Code + learning explanation | `eval/learning_tasks.py` |
 | Leak-gated tutoring | `eval/tutor_tasks.py` |
+| Schema/long-context extraction | `eval/json_tasks.py` |
 
 ## Current Benchmark Snapshot
 
@@ -166,6 +171,19 @@ Finding: This is the inverse of the open learning run. Qwen explains better when
 it does not leak (9.8 vs 9.2), but it gives away the full solution far more often
 (6/15 vs 2/15), and the gate zeroes those attempts. Gemma's discipline makes it
 the leak-gated tutoring pick.
+
+### JSON / long-context (`run-json.py`)
+
+**Not yet benchmarked.** This runner was added to cover the structured-output
+behaviour the consumer apps (jobhunt, seo-cli) depend on — schema-constrained
+decode plus fact recall over multi-thousand-token documents — which the other
+suites don't test. It is wired into the pipeline (runner matrix, standard
+commands, `eval/json_tasks.py`) but a Gemma/Qwen head-to-head has not been run.
+Run `./eval/run-json.py --models gemma qwen` to populate this section.
+
+Note: the rebuilt `gemma` params (post-2026-06-09) are also not yet reflected in
+the speed/coding/content/learning/tutor numbers above — those used the prior
+params. Re-run the relevant suites before trusting them for the new build.
 
 ## Current Picks
 
