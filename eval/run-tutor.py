@@ -22,22 +22,23 @@ an execution timeout and a fresh temp CWD, but it is NOT containerized.
 from __future__ import annotations
 
 import argparse
-import json
-import re
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, extract_code, generate, get_effective_think, new_run_dir,
-    resolve_model, run_program, tok_per_s,
+    REPO_ROOT, ci_str, close_call_note, extract_code, generate,
+    get_effective_think, new_run_dir, resolve_model, run_program, sample_caveat,
+    spread_note, tok_per_s,
 )
+from _judge import judge_scores, reliability_lines  # noqa: E402
 from tutor_tasks import TASKS, TutorTask  # noqa: E402
+
+CLOSE_PTS = 0.5  # teach scores within half a point (/10) are a tie, not a win
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 RUBRIC = ["scaffolding", "concept", "calibration", "pitfalls", "clarity"]
-JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 JUDGE_TEMPLATE = """You are grading a coding tutor response for someone learning
 this task. The task was: {topic}.
@@ -60,29 +61,6 @@ Return ONLY a JSON object, no other text, exactly these keys:
 --- RESPONSE TO GRADE ---
 {response}
 --- END ---"""
-
-
-def judge_scores(judge_model: str, topic: str, response: str, timeout: int) -> dict:
-    """Ask the judge for rubric scores. Returns dict of dim->int (0 on parse fail)."""
-    prompt = JUDGE_TEMPLATE.format(topic=topic, response=response)
-    jname, jthink = resolve_model(judge_model)
-    try:
-        text, _ = generate(jname, prompt, timeout, think=jthink)
-    except Exception:  # noqa: BLE001
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    m = JSON_RE.search(text)
-    if not m:
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    try:
-        raw = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    out = {}
-    for d in RUBRIC:
-        v = raw.get(d, 0)
-        out[d] = max(0, min(2, int(v))) if isinstance(v, (int, float)) else 0
-    out["_parsed"] = True
-    return out
 
 
 def solution_leak_check(response: str, tests: str, exec_timeout: int) -> tuple[bool, str]:
@@ -114,6 +92,8 @@ def main() -> int:
                     help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--exec-timeout", type=int, default=10,
                     help="per-program timeout (s)")
+    ap.add_argument("--judge-rubric", choices=["default", "strict"], default="default",
+                    help="strict pushes judges to reserve top marks (harsher grading)")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     args = ap.parse_args()
 
@@ -129,7 +109,8 @@ def main() -> int:
     print(f"Run dir: {run_dir.relative_to(REPO_ROOT)}")
     print(f"Tasks:   {', '.join(t.name for t in tasks)}  ({len(tasks)} × {args.attempts}/model)")
     print(f"Models:  {', '.join(args.models)}")
-    print(f"Judges:  {', '.join(judges)}  (leave-one-out: no model grades itself)\n")
+    print(f"Judges:  {', '.join(judges)}  (leave-one-out: no model grades itself)")
+    print(f"Rubric:  {args.judge_rubric}\n")
 
     records: list[dict] = []
     for model in args.models:
@@ -167,12 +148,16 @@ def main() -> int:
                 })
         print()
 
+    judge_stats: dict[str, list[bool]] = {j: [] for j in judges}  # parse-rate tracking
+    strict = args.judge_rubric == "strict"
     for judge in judges:
         jname = resolve_model(judge)[0]
         eligible = [r for r in records if resolve_model(r["model"])[0] != jname]
         print(f"=== judge: {judge}  ({len(eligible)} responses, skipping its own) ===")
         for i, rec in enumerate(eligible, 1):
-            sc = judge_scores(judge, rec["topic"], rec["text"], args.timeout)
+            sc = judge_scores(judge, rec["topic"], rec["text"], args.timeout,
+                              JUDGE_TEMPLATE, RUBRIC, strict)
+            judge_stats[judge].append(bool(sc.get("_parsed")))
             if sc.get("_parsed"):
                 rec["judge_expl"][judge] = sum(sc[d] for d in RUBRIC)
             if i % 15 == 0 or i == len(eligible):
@@ -196,12 +181,13 @@ def main() -> int:
         (run_dir / rec["model"] / f"{rec['task']}-attempt-{rec['attempt']}.md").write_text(
             body, encoding="utf-8")
 
-    write_summary(run_dir, records, tasks, args, judges)
+    write_summary(run_dir, records, tasks, args, judges, judge_stats)
     return 0
 
 
 def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
-                  args: argparse.Namespace, judges: list[str]) -> None:
+                  args: argparse.Namespace, judges: list[str],
+                  judge_stats: dict[str, list[bool]]) -> None:
     task_names = [t.name for t in tasks]
     ranked = []
     for model in args.models:
@@ -219,18 +205,24 @@ def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
             "expl": mean_expl,
             "expl_nonleak": mean_expl_nonleak,
             "nleak": nleak,
+            "leak_rate": nleak / len(rs),
             "n": len(rs),
         })
-    ranked.sort(key=lambda r: -r["teach"])
+    # Rank by teach score, but break ties on leak rate (lower is safer) — a leak
+    # is a hard tutoring failure, so when teach scores are level the more
+    # leak-resistant model wins. This is the Phase 5 tutor selection change.
+    ranked.sort(key=lambda r: (-r["teach"], r["leak_rate"]))
 
     L = ["# Tutor benchmark", "",
          f"- Tasks: {len(tasks)} ({', '.join(task_names)})",
          f"- Attempts per task: {args.attempts}",
          f"- Judges: {', '.join(f'`{j}`' for j in judges)} "
          f"(leave-one-out panel — no model grades its own output; rubric 0–2 each: "
-         f"{', '.join(RUBRIC)} → /10, averaged across judges)",
+         f"{', '.join(RUBRIC)} → /10, averaged across judges; grading: {args.judge_rubric})",
          "- **Gate:** any response containing a complete solution that passes the "
-         "hidden tests is treated as a leak and scores 0.", ""]
+         "hidden tests is treated as a leak and scores 0.",
+         "- **Ranking:** teach score first; **leak rate is the first tie-breaker** "
+         "(lower is safer) when teach scores are level.", ""]
     if ranked:
         w = ranked[0]
         L += [
@@ -238,11 +230,43 @@ def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
             f"(leaks {w['nleak']}/{w['n']}, explanation {w['expl']:.1f}/10, "
             f"non-leak explanation {w['expl_nonleak']:.1f}/10)", ""
         ]
+        runner_up = ranked[1]["teach"] if len(ranked) > 1 else None
+        note = close_call_note(w["teach"], runner_up, CLOSE_PTS,
+                               f"{(w['teach'] - (runner_up or 0)):.1f}/10")
+        if note:
+            L += [note, ""]
     L += ["| Rank | Model | Teach /10 | Leaks | Explanation /10 | Explanation (no leaks) /10 |",
           "|---|---|---|---|---|---|"]
     for i, r in enumerate(ranked, 1):
         L.append(f"| {i} | `{r['model']}` | {r['teach']:.1f} | {r['nleak']}/{r['n']} | "
                  f"{r['expl']:.1f} | {r['expl_nonleak']:.1f} |")
+    # uncertainty: leak rate is the binomial signal (95% Wilson CI); teach is a
+    # judge mean, so its weakest-task spread is the reliability signal.
+    L += ["", "### Uncertainty", "",
+          "Leak rate carries a 95% Wilson CI (a leak zeroes the attempt, so a "
+          "wide interval is real exposure). The teach score is a judge mean; its "
+          "weakest-task spread is the reliability signal. Small samples are flagged.", ""]
+    for r in ranked:
+        rs = [x for x in records if x["model"] == r["model"]]
+        teach_by_task = {}
+        for tn in task_names:
+            trs = [x for x in rs if x["task"] == tn]
+            if trs:
+                teach_by_task[tn] = sum(x["teach"] for x in trs) / len(trs)
+        bits = [f"leaks {r['nleak']}/{r['n']} (95% CI {ci_str(r['nleak'], r['n'])})"]
+        spread = spread_note(teach_by_task, scale=1.0, suffix="/10")
+        if spread:
+            bits.append(f"teach {spread}")
+        caveat = sample_caveat(r["n"])
+        if caveat:
+            bits.append(caveat)
+        L.append(f"- `{r['model']}`: {'; '.join(bits)}")
+    # judge reliability: how much to trust the explanation /10 numbers above
+    L += ["", "### Judge reliability", "",
+          "Parse rate, inter-judge disagreement, and under-judged warnings. The "
+          "explanation scores are only as trustworthy as the panel behind them; "
+          "the leak gate is deterministic and does not depend on judges.", ""]
+    L += reliability_lines(judge_stats, records)
     (run_dir / "summary.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Summary: {(run_dir / 'summary.md').relative_to(REPO_ROOT)}")
     if ranked:

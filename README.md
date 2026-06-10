@@ -93,6 +93,8 @@ Where changes belong:
 | Stable user preference/fact | `memory/user.md` |
 | Reusable technical reference | `knowledge/` |
 | New coding eval task | `eval/coding_tasks.py` |
+| New content eval task | `eval/content_tasks.py` |
+| New JSON/long-context eval task | `eval/json_tasks.py` |
 | New learning/tutor eval task | `eval/learning_tasks.py` / `eval/tutor_tasks.py` |
 
 Keep prompt text terse. Every prompt token is spent every turn; prefer removing
@@ -167,7 +169,17 @@ token, ~40 tok/s) while `gemma` stays fully on GPU.
 
 ## Evaluation
 
-Runners live under `eval/` and write results to `eval/runs/<UTC>/`.
+Runners live under `eval/` and write results to `eval/runs/<UTC>/`. Routine
+testing goes through profiles (`smoke` after a rebuild, `standard` for the
+under-1-hour comparison, `deep` for a several-hour confidence run — see
+[`TESTING.md`](TESTING.md) for when to use each):
+
+```bash
+./eval/run-profile.py smoke --models qwen gemma
+./eval/run-profile.py standard --models qwen gemma
+```
+
+Individual runners remain available for targeted sweeps:
 
 ```bash
 ./eval/run-speed.py --models qwen gemma
@@ -189,10 +201,10 @@ flags and safety details are in [`TESTING.md`](TESTING.md).
 
 ## Benchmark Leaderboard
 
-Latest Gemma/Qwen head-to-head: 2026-06-09 (all five suites from that run).
-Note: `gemma` was rebuilt with new params after this run, so these numbers
-predate the current build — re-run the suites before relying on them. The
-`run-json.py` (schema/long-context) suite is wired in but not yet benchmarked.
+Latest full Gemma/Qwen head-to-head: 2026-06-09 for speed, coding,
+content, learning, and tutor. JSON was run on 2026-06-10 after the `gemma`
+rebuild. Treat small score gaps as directional: failures are strong signal,
+close wins are weak signal, and speed breaks quality ties.
 
 | Suite | Winner | `gemma` | `qwen` |
 |---|---|---:|---:|
@@ -201,6 +213,7 @@ predate the current build — re-run the suites before relying on them. The
 | Content | `gemma` | 5/5 clean | 5/5 clean |
 | Learning | `qwen` | 9.4/10, code 12/12 | 9.9/10, code 12/12 |
 | Tutor (leak-gated) | `gemma` | 8.0/10, leaks 2/15 | 5.9/10, leaks 6/15 |
+| JSON / long-context | `gemma` | 100%, 3.3s avg, 50 tok/s | 100%, 8.4s avg, 46 tok/s |
 
 Current picks:
 
@@ -210,12 +223,13 @@ Current picks:
 | Coding puzzles / small functions | `qwen` | Latest run swept 30/30; `gemma` dropped one `calc`. |
 | Learning explanations | `qwen` | Latest `run-learn.py` teach score: 9.9/10 with code 12/12. |
 | Socratic tutoring (no spoilers) | `gemma` | Leak-gated `run-tutor.py`: 8.0/10 with only 2/15 leaks vs `qwen`'s 6/15. |
+| Structured JSON / app smoke tests | `gemma` | Both models scored 100%; `gemma` was faster in `eval/runs/20260610T100002Z/json/summary.md`. |
 | Fast local general use | `gemma` | Best fit/speed and no CPU spill. |
 
 ## Models Tested
 
 Current lineup, scored out of 10 per suite (speed normalized to the fastest
-result; 2026-06-09 run):
+result; 2026-06-09 run, JSON added from the 2026-06-10 run):
 
 ```text
                 gemma                          qwen
@@ -224,6 +238,7 @@ Coding    9.7  ███████████████████   | 10.
 Content  10.0  ████████████████████  | 10.0  ████████████████████
 Learning  9.4  ███████████████████   |  9.9  ████████████████████
 Tutor     8.0  ████████████████      |  5.9  ████████████
+JSON     10.0  ████████████████████  | 10.0  ████████████████████
 ```
 
 Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reasoning:

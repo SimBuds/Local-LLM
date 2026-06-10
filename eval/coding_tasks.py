@@ -154,4 +154,64 @@ assert calculate("100") == 100
 assert calculate("2*3+4*5") == 26
 """,
     ),
+    # --- Phase 3 additions: parser, DP, and data-shape transform --------------
+    Task(
+        name="decode_string",
+        difficulty="hard",
+        entrypoint="decode_string",
+        prompt=_p(
+            "def decode_string(s: str) -> str:",
+            "Decode a string encoded as `k[encoded]`, where `encoded` is repeated "
+            "exactly `k` times. `k` is a positive integer and may be multiple "
+            "digits; brackets may be nested. The input always contains only "
+            "digits, square brackets, and lowercase letters and is well-formed. "
+            "Example: '3[a2[c]]' decodes to 'accaccacc'.",
+        ),
+        tests="""
+assert decode_string("3[a]2[bc]") == "aaabcbc"
+assert decode_string("3[a2[c]]") == "accaccacc"
+assert decode_string("2[abc]3[cd]ef") == "abcabccdcdcdef"
+assert decode_string("abc") == "abc"
+assert decode_string("10[a]") == "a" * 10
+assert decode_string("2[2[b]]") == "bbbb"
+""",
+    ),
+    Task(
+        name="coin_change",
+        difficulty="hard",
+        entrypoint="coin_change",
+        prompt=_p(
+            "def coin_change(coins: list[int], amount: int) -> int:",
+            "Return the fewest number of coins from `coins` (unlimited supply of "
+            "each denomination) that sum to exactly `amount`, or -1 if no "
+            "combination does. `amount` of 0 needs 0 coins.",
+        ),
+        tests="""
+assert coin_change([1,2,5], 11) == 3
+assert coin_change([2], 3) == -1
+assert coin_change([1], 0) == 0
+assert coin_change([1,2,5], 0) == 0
+assert coin_change([186,419,83,408], 6249) == 20
+assert coin_change([2,5,10,1], 27) == 4
+""",
+    ),
+    Task(
+        name="flatten_dict",
+        difficulty="medium",
+        entrypoint="flatten_dict",
+        prompt=_p(
+            "def flatten_dict(d: dict) -> dict:",
+            "Flatten a nested dictionary into a single-level dict whose keys are "
+            "the paths to each leaf joined by '.' (a dot). Recurse into nested "
+            "dicts only; treat any non-dict value (including lists) as a leaf and "
+            "keep it unchanged. Example: {'a':{'b':1}} -> {'a.b':1}.",
+        ),
+        tests="""
+assert flatten_dict({"a":1,"b":{"c":2,"d":{"e":3}}}) == {"a":1,"b.c":2,"b.d.e":3}
+assert flatten_dict({"x":{"y":{"z":1}}}) == {"x.y.z":1}
+assert flatten_dict({"a":1}) == {"a":1}
+assert flatten_dict({}) == {}
+assert flatten_dict({"a":{"b":1},"c":[1,2]}) == {"a.b":1,"c":[1,2]}
+""",
+    ),
 ]

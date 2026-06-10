@@ -79,13 +79,56 @@ def _doc(needle: str, target_words: int = 2600, position: float = 0.55) -> str:
     return "\n\n".join(out)
 
 
+def _doc_multi(needles: list[str], target_words: int = 2800) -> str:
+    """Bury several `needles` at evenly spread positions in filler, in order.
+
+    Used by tasks that need more than one planted fact — a later correction that
+    overrides an earlier value, or several records the model must collect. Spread
+    is deterministic so extraction accuracy stays comparable run to run.
+    """
+    n = len(needles)
+    positions = [(i + 1) / (n + 1) for i in range(n)]  # spread, none at the edges
+    out: list[str] = []
+    count = ni = i = 0
+    while count < target_words:
+        while ni < n and count >= target_words * positions[ni]:
+            out.append(needles[ni])
+            count += len(needles[ni].split())
+            ni += 1
+        para = _FILLER[i % len(_FILLER)]
+        out.append(para)
+        count += len(para.split())
+        i += 1
+    while ni < n:  # flush any needle whose position rounded past the word budget
+        out.append(needles[ni])
+        ni += 1
+    return "\n\n".join(out)
+
+
 @dataclass
 class JsonTask:
     key: str
     instruction: str           # task + (where relevant) candidate profile
-    context: str               # long document the facts are buried in
+    needles: list[str]         # planted fact(s); >1 spreads them across the doc
     schema: dict[str, Any]     # Ollama `format` schema
     checks: list[tuple[str, Callable[[Any], bool]]]  # content-correctness probes
+    base_words: int = 2600     # normal-pressure document length (run-json scales this)
+    default_position: float = 0.55  # single-needle placement (ignored if multi-needle)
+
+
+def build_context(task: "JsonTask", target_words: int,
+                  position: float | None = None) -> str:
+    """Build a task's long document at a chosen length and needle position.
+
+    `target_words` lets run-json.py dial context *pressure* (longer doc = harder
+    long-context recall); `position` overrides single-needle placement (None →
+    the task default) so the needle can be put near the start, middle, or end.
+    Multi-needle tasks ignore `position` and keep their deterministic spread.
+    """
+    if len(task.needles) == 1:
+        pos = task.default_position if position is None else position
+        return _doc(task.needles[0], target_words=target_words, position=pos)
+    return _doc_multi(task.needles, target_words=target_words)
 
 
 def _has_skill(parsed: Any, key: str, needle: str) -> bool:
@@ -117,7 +160,8 @@ JD_EXTRACT = JsonTask(
         "the schema from the posting below. Use only what the posting states; do "
         "not invent skills or numbers."
     ),
-    context=_doc(_JD_NEEDLE),
+    needles=[_JD_NEEDLE],
+    base_words=2600, default_position=0.55,
     schema={
         "type": "object",
         "properties": {
@@ -155,7 +199,8 @@ NEEDLE_RECALL = JsonTask(
         "and report whether relocation assistance is offered and its cap in CAD. "
         "If the document does not state a cap, use null."
     ),
-    context=_doc(_POLICY_NEEDLE, target_words=3200, position=0.6),
+    needles=[_POLICY_NEEDLE],
+    base_words=3200, default_position=0.6,
     schema={
         "type": "object",
         "properties": {
@@ -190,7 +235,8 @@ DECLINE_GUARD = JsonTask(
         "demanding far more experience or core responsibilities the candidate "
         "lacks (e.g. managing people) should NOT be recommended."
     ),
-    context=_doc(_EM_NEEDLE, target_words=2400, position=0.5),
+    needles=[_EM_NEEDLE],
+    base_words=2400, default_position=0.5,
     schema={
         "type": "object",
         "properties": {
@@ -210,6 +256,176 @@ DECLINE_GUARD = JsonTask(
 )
 
 
+# --- task 4: conflicting facts (a later correction overrides an earlier value) -
+_SALARY_ORIGINAL = (
+    "COMPENSATION: The posted salary band for this role is 95,000 to 115,000 CAD "
+    "per year, depending on experience, plus an annual performance bonus."
+)
+_SALARY_CORRECTION = (
+    "CORRECTION (posting updated): An earlier version of this listing showed an "
+    "incorrect salary band. The correct annual salary band for this role is "
+    "120,000 to 140,000 CAD. Please disregard any earlier figure in this document."
+)
+
+CONFLICTING_CORRECTION = JsonTask(
+    key="conflicting_correction",
+    instruction=(
+        "Extract the salary band for this role from the posting below. The "
+        "document may contain an outdated figure that is later corrected; if so, "
+        "use the corrected values, not the earlier ones."
+    ),
+    needles=[_SALARY_ORIGINAL, _SALARY_CORRECTION],
+    base_words=2800,
+    schema={
+        "type": "object",
+        "properties": {
+            "salary_min_cad": {"type": "integer"},
+            "salary_max_cad": {"type": "integer"},
+        },
+        "required": ["salary_min_cad", "salary_max_cad"],
+    },
+    checks=[
+        ("uses corrected min=120000",
+         lambda p: isinstance(p, dict) and p.get("salary_min_cad") == 120000),
+        ("uses corrected max=140000",
+         lambda p: isinstance(p, dict) and p.get("salary_max_cad") == 140000),
+    ],
+)
+
+# --- task 5: strict enum classification (map prose to exact enum values) -------
+_ENUM_NEEDLE = (
+    "EMPLOYMENT DETAILS: This is a permanent, salaried position with standard "
+    "40-hour weeks and a full benefits package; it is not a fixed-term or agency "
+    "engagement. Employees on this team come into our Toronto office three days "
+    "per week, with the remaining days worked from home."
+)
+
+ENUM_CLASSIFY = JsonTask(
+    key="enum_classify",
+    instruction=(
+        "Classify the employment terms described in the posting below. Choose the "
+        "single best value for each field strictly from its allowed enum. Map the "
+        "prose to the closest enum value; do not output any value outside the enum."
+    ),
+    needles=[_ENUM_NEEDLE],
+    base_words=2600, default_position=0.5,
+    schema={
+        "type": "object",
+        "properties": {
+            "employment_type": {
+                "type": "string",
+                "enum": ["full_time", "part_time", "contract", "internship", "temporary"],
+            },
+            "work_arrangement": {
+                "type": "string",
+                "enum": ["onsite", "hybrid", "remote"],
+            },
+        },
+        "required": ["employment_type", "work_arrangement"],
+    },
+    checks=[
+        ("employment_type=full_time",
+         lambda p: isinstance(p, dict) and p.get("employment_type") == "full_time"),
+        ("work_arrangement=hybrid",
+         lambda p: isinstance(p, dict) and p.get("work_arrangement") == "hybrid"),
+    ],
+)
+
+# --- task 6: multi-record extraction (collect every record, not just one) ------
+_TEAM_NEEDLE = (
+    "THE TEAM: You will join a pod of three engineers. Priya Nair is the Staff "
+    "Engineer and overall tech lead for the pod. Marco Rossi is a Senior Backend "
+    "Engineer focused on the payments service. Lena Okafor is a Frontend Engineer "
+    "who owns the customer dashboard. The pod reports to the Director of "
+    "Engineering."
+)
+
+
+def _members_named(parsed: Any, names: list[str]) -> bool:
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("members"), list):
+        return False
+    joined = " ".join(
+        str(m.get("name", "")) for m in parsed["members"] if isinstance(m, dict)
+    ).lower()
+    return all(name.lower() in joined for name in names)
+
+
+MULTI_EXTRACT = JsonTask(
+    key="multi_extract",
+    instruction=(
+        "Extract every named team member described in the posting below into the "
+        "members array, each with their name and role exactly as stated. Include "
+        "all of them; do not summarize or drop any."
+    ),
+    needles=[_TEAM_NEEDLE],
+    base_words=2800, default_position=0.55,
+    schema={
+        "type": "object",
+        "properties": {
+            "members": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "role": {"type": "string"},
+                    },
+                    "required": ["name", "role"],
+                },
+            },
+        },
+        "required": ["members"],
+    },
+    checks=[
+        ("exactly 3 members",
+         lambda p: isinstance(p, dict) and isinstance(p.get("members"), list)
+                   and len(p["members"]) == 3),
+        ("all three names present",
+         lambda p: _members_named(p, ["Priya Nair", "Marco Rossi", "Lena Okafor"])),
+    ],
+)
+
+# --- task 7: do-not-infer (return null for an unstated field, ignore distractor) -
+_NOINFER_NEEDLE = (
+    "ELIGIBILITY: All applicants must be legally eligible to work in Canada. This "
+    "role supports government and defense-sector clients, so professionalism and "
+    "discretion are expected at all times. We do not sponsor work visas for this "
+    "position."
+)
+
+NO_INFER = JsonTask(
+    key="no_infer",
+    instruction=(
+        "From the posting below, extract two fields. For security_clearance, "
+        "report the clearance level the posting REQUIRES — but only if the "
+        "posting explicitly states a clearance requirement. If it does not, "
+        "return null. Do NOT infer a clearance requirement from the industry, "
+        "the clients, or the seniority. For work_authorization, report the work "
+        "eligibility requirement the posting states."
+    ),
+    needles=[_NOINFER_NEEDLE],
+    base_words=2600, default_position=0.55,
+    schema={
+        "type": "object",
+        "properties": {
+            "security_clearance": {"type": ["string", "null"]},
+            "work_authorization": {"type": ["string", "null"]},
+        },
+        "required": ["security_clearance", "work_authorization"],
+    },
+    checks=[
+        ("clearance not inferred (null)",
+         lambda p: isinstance(p, dict) and p.get("security_clearance") is None),
+        ("work_authorization captured (non-empty)",
+         lambda p: isinstance(p, dict) and isinstance(p.get("work_authorization"), str)
+                   and p["work_authorization"].strip() != ""),
+    ],
+)
+
+
 TASKS: dict[str, JsonTask] = {
-    t.key: t for t in (JD_EXTRACT, NEEDLE_RECALL, DECLINE_GUARD)
+    t.key: t for t in (
+        JD_EXTRACT, NEEDLE_RECALL, DECLINE_GUARD,
+        CONFLICTING_CORRECTION, ENUM_CLASSIFY, MULTI_EXTRACT, NO_INFER,
+    )
 }

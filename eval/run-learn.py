@@ -35,22 +35,22 @@ Output:
 from __future__ import annotations
 
 import argparse
-import json
-import re
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, extract_code, generate, get_effective_think, new_run_dir,
-    resolve_model, run_program, tok_per_s,
+    REPO_ROOT, ci_str, close_call_note, extract_code, generate,
+    get_effective_think, new_run_dir, resolve_model, run_program, sample_caveat,
+    spread_note, tok_per_s,
 )
-from learning_tasks import TASKS, LearnTask  # noqa: E402
+from _judge import judge_scores, reliability_lines  # noqa: E402
+from learning_tasks import TASKS  # noqa: E402
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
+CLOSE_PTS = 0.5  # teach scores within half a point (/10) are a tie, not a win
 RUBRIC = ["approach", "complexity", "alternative", "pitfall", "clarity"]  # 0–2 each
-JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 JUDGE_TEMPLATE = """You are grading a coding explanation written for someone learning to code.
 The task was: {topic}.
@@ -71,29 +71,6 @@ Return ONLY a JSON object, no other text, exactly these keys:
 --- END ---"""
 
 
-def judge_scores(judge_model: str, topic: str, response: str, timeout: int) -> dict:
-    """Ask the judge for rubric scores. Returns dict of dim->int (0 on parse fail)."""
-    prompt = JUDGE_TEMPLATE.format(topic=topic, response=response)
-    jname, jthink = resolve_model(judge_model)
-    try:
-        text, _ = generate(jname, prompt, timeout, think=jthink)
-    except Exception:  # noqa: BLE001
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    m = JSON_RE.search(text)
-    if not m:
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    try:
-        raw = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return {d: 0 for d in RUBRIC} | {"_parsed": False}
-    out = {}
-    for d in RUBRIC:
-        v = raw.get(d, 0)
-        out[d] = max(0, min(2, int(v))) if isinstance(v, (int, float)) else 0
-    out["_parsed"] = True
-    return out
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -108,6 +85,8 @@ def main() -> int:
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
                     help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--exec-timeout", type=int, default=10)
+    ap.add_argument("--judge-rubric", choices=["default", "strict"], default="default",
+                    help="strict pushes judges to reserve top marks (harsher grading)")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     args = ap.parse_args()
 
@@ -123,7 +102,8 @@ def main() -> int:
     print(f"Run dir: {run_dir.relative_to(REPO_ROOT)}")
     print(f"Tasks:   {', '.join(t.name for t in tasks)}  ({len(tasks)} × {args.attempts}/model)")
     print(f"Models:  {', '.join(args.models)}")
-    print(f"Judges:  {', '.join(judges)}  (leave-one-out: no model grades itself)\n")
+    print(f"Judges:  {', '.join(judges)}  (leave-one-out: no model grades itself)")
+    print(f"Rubric:  {args.judge_rubric}\n")
 
     # --- Phase 1: generate + execution gate (each model loaded once) ---
     records: list[dict] = []
@@ -161,12 +141,16 @@ def main() -> int:
     # explanation total per record, then average across judges.
     for rec in records:
         rec["judge_expl"] = {}   # judge spec -> 0–10 total (parsed judges only)
+    judge_stats: dict[str, list[bool]] = {j: [] for j in judges}  # parse-rate tracking
+    strict = args.judge_rubric == "strict"
     for judge in judges:
         jname = resolve_model(judge)[0]
         eligible = [r for r in records if resolve_model(r["model"])[0] != jname]
         print(f"=== judge: {judge}  ({len(eligible)} responses, skipping its own) ===")
         for i, rec in enumerate(eligible, 1):
-            sc = judge_scores(judge, rec["topic"], rec["text"], args.timeout)
+            sc = judge_scores(judge, rec["topic"], rec["text"], args.timeout,
+                              JUDGE_TEMPLATE, RUBRIC, strict)
+            judge_stats[judge].append(bool(sc.get("_parsed")))
             if sc.get("_parsed"):
                 rec["judge_expl"][judge] = sum(sc[d] for d in RUBRIC)
             if i % 15 == 0 or i == len(eligible):
@@ -187,11 +171,11 @@ def main() -> int:
         (run_dir / rec["model"] / f"{rec['task']}-attempt-{rec['attempt']}.md").write_text(
             body, encoding="utf-8")
 
-    write_summary(run_dir, records, tasks, args, judges)
+    write_summary(run_dir, records, tasks, args, judges, judge_stats)
     return 0
 
 
-def write_summary(run_dir, records, tasks, args, judges) -> None:
+def write_summary(run_dir, records, tasks, args, judges, judge_stats) -> None:
     task_names = [t.name for t in tasks]
     ranked = []
     for model in args.models:
@@ -213,18 +197,48 @@ def write_summary(run_dir, records, tasks, args, judges) -> None:
          f"- Attempts per task: {args.attempts}",
          f"- Judges: {', '.join(f'`{j}`' for j in judges)} "
          f"(leave-one-out panel — no model grades its own output; rubric 0–2 each: "
-         f"{', '.join(RUBRIC)} → /10, averaged across judges)",
+         f"{', '.join(RUBRIC)} → /10, averaged across judges; grading: {args.judge_rubric})",
          "- **Teach score** = explanation (/10) counted only when the code passes "
          "execution; mean over all attempts. This is the ranking metric.", ""]
     if ranked:
         w = ranked[0]
         L += [f"## 🏆 Best tutor: `{w['model']}` — teach {w['teach']:.1f}/10 "
               f"(code {w['npass']}/{w['n']}, explanation {w['expl']:.1f}/10)", ""]
+        runner_up = ranked[1]["teach"] if len(ranked) > 1 else None
+        note = close_call_note(w["teach"], runner_up, CLOSE_PTS,
+                               f"{(w['teach'] - (runner_up or 0)):.1f}/10")
+        if note:
+            L += [note, ""]
     L += ["| Rank | Model | Teach /10 | Code pass | Explanation /10 | Expl. when correct |",
           "|---|---|---|---|---|---|"]
     for i, r in enumerate(ranked, 1):
         L.append(f"| {i} | `{r['model']}` | {r['teach']:.1f} | "
                  f"{r['npass']}/{r['n']} | {r['expl']:.1f} | {r['expl_pass']:.1f} |")
+    # uncertainty: code-pass CI (the binomial half) + weakest task by teach score
+    L += ["", "### Uncertainty", "",
+          "The code gate is a binomial pass rate (95% Wilson CI below); the "
+          "teach/explanation score is a judge mean, so its weakest-task spread "
+          "is the reliability signal. Small samples are flagged.", ""]
+    for r in ranked:
+        rs = [x for x in records if x["model"] == r["model"]]
+        teach_by_task = {}
+        for tn in task_names:
+            trs = [x for x in rs if x["task"] == tn]
+            if trs:
+                teach_by_task[tn] = sum(x["teach"] for x in trs) / len(trs)
+        bits = [f"code {r['npass']}/{r['n']} (95% CI {ci_str(r['npass'], r['n'])})"]
+        spread = spread_note(teach_by_task, scale=1.0, suffix="/10")
+        if spread:
+            bits.append(f"teach {spread}")
+        caveat = sample_caveat(r["n"])
+        if caveat:
+            bits.append(caveat)
+        L.append(f"- `{r['model']}`: {'; '.join(bits)}")
+    # judge reliability: how much to trust the /10 numbers above
+    L += ["", "### Judge reliability", "",
+          "Parse rate, inter-judge disagreement, and under-judged warnings. The "
+          "teach/explanation scores are only as trustworthy as the panel behind them.", ""]
+    L += reliability_lines(judge_stats, records)
     (run_dir / "summary.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Summary: {(run_dir / 'summary.md').relative_to(REPO_ROOT)}")
     if ranked:

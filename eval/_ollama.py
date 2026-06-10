@@ -1,13 +1,17 @@
 """
 Shared plumbing for the eval runners (run-content.py = content, run-code.py = coding).
-Stdlib-only; talks to the local Ollama HTTP API. No scoring lives here — each
-runner owns its own scorer and summary. This file is just the transport plus a
-few helpers both runners need.
+Stdlib-only; talks to the local Ollama HTTP API. No task scoring lives here —
+each runner owns its own scorer and summary. This file is the transport plus the
+helpers the runners share, including the uncertainty-reporting helpers (Wilson
+confidence interval, small-sample caveats, close-result notes, per-task spread)
+that keep small runs from being over-read. Those helpers are scoring-agnostic:
+they format counts/rates a runner already computed, they don't decide pass/fail.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import sys
@@ -152,3 +156,87 @@ def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:
     if "SyntaxError" in last:
         return False, "syntax"
     return False, last[:60]
+
+
+# --- uncertainty reporting ----------------------------------------------------
+# These keep small personal runs from being over-read. The default attempt
+# counts here (3–5/task) are tiny: at n=5 a single flipped attempt moves the
+# rate 20 points, so a bare "80% vs 100%" headline invites false confidence.
+# The helpers below attach a confidence interval, a small-sample flag, and a
+# "this was basically a tie" note so the summaries report uncertainty instead of
+# hiding it. They format numbers the runner already computed; they do not score.
+
+SMALL_SAMPLE_N = 10  # below this, one attempt swings the rate enough to mislead
+
+
+def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a binomial proportion k/n (z=1.96).
+
+    Returns (low, high) as fractions in [0, 1]. n == 0 returns (0.0, 1.0): no
+    data, no constraint. Wilson is used instead of the normal approximation
+    because these runs live at small n and extreme p (often 0% or 100%), where
+    the normal interval collapses to zero width and lies about certainty.
+    """
+    if n <= 0:
+        return 0.0, 1.0
+    p = k / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (p + z2 / (2 * n)) / denom
+    half = (z * math.sqrt((p * (1 - p) + z2 / (4 * n)) / n)) / denom
+    return max(0.0, center - half), min(1.0, center + half)
+
+
+def ci_str(k: int, n: int) -> str:
+    """Wilson 95% CI as a compact percent range, e.g. '44–100%' (em dash '—' if n==0)."""
+    if n <= 0:
+        return "—"
+    lo, hi = wilson_interval(k, n)
+    return f"{lo*100:.0f}–{hi*100:.0f}%"
+
+
+def sample_caveat(n: int, threshold: int = SMALL_SAMPLE_N) -> str:
+    """Short warning label for an untrustworthy sample size, else ''."""
+    if n <= 0:
+        return "⚠ no data"
+    if n < threshold:
+        return f"⚠ small n={n}"
+    return ""
+
+
+def close_call_note(top: float, runner_up: float | None, threshold: float,
+                    margin_str: str) -> str:
+    """Note when the winner's margin over the runner-up is within `threshold`.
+
+    `top`/`runner_up`/`threshold` are in whatever units the metric uses (0–1
+    fractions, /10 scores, …); `margin_str` is the caller-formatted margin for
+    display. Returns '' when there is no runner-up or the gap is real. The point
+    is to stop a noise-sized lead from reading as a quality win — close results
+    should break on speed and other signals, not the headline metric.
+    """
+    if runner_up is None or (top - runner_up) > threshold:
+        return ""
+    lead = (f"is tied with the runner-up" if (top - runner_up) < 1e-9
+            else f"leads by only {margin_str}")
+    return (f"⚠ **Close result:** winner {lead}, within the tie threshold — "
+            f"treat the top entries as tied and break on speed or other signals, "
+            f"not this metric.")
+
+
+def spread_note(rates: dict[str, float], scale: float = 100.0, suffix: str = "%") -> str:
+    """One-line per-task reliability note: weakest task + min–max spread.
+
+    `rates` maps task name -> rate (any scale; `scale`/`suffix` control display,
+    default percent). Surfaces the worst task a model-level average hides — a
+    model that is 100% on two tasks and 40% on a third is not a 'mostly 100%'
+    model for the thing it is bad at. Returns '' if there is nothing to compare.
+    """
+    items = [(k, v) for k, v in rates.items() if v is not None]
+    if not items:
+        return ""
+    wk, wv = min(items, key=lambda kv: kv[1])
+    vals = [v for _, v in items]
+    note = f"weakest `{wk}` at {wv*scale:.0f}{suffix}"
+    if len(items) > 1:
+        note += f"; spread {min(vals)*scale:.0f}–{max(vals)*scale:.0f}{suffix}"
+    return note

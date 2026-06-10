@@ -34,10 +34,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
-    REPO_ROOT, extract_code, generate, get_effective_think, new_run_dir,
-    resolve_model, run_program, tok_per_s,
+    REPO_ROOT, ci_str, close_call_note, extract_code, generate,
+    get_effective_think, new_run_dir, resolve_model, run_program, sample_caveat,
+    spread_note, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
+
+CLOSE_PTS = 0.05  # pass-rate gaps within 5 points are a tie, not a quality win
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 
@@ -148,6 +151,11 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
         L += [f"## 🏆 Winner: `{w['model']}` — "
               f"{w['npass']}/{w['total']} ({w['rate']*100:.0f}%) "
               f"@ {w['avg_tps']:.0f} tok/s", ""]
+        runner_up = ranked[1]["rate"] if len(ranked) > 1 else None
+        note = close_call_note(w["rate"], runner_up, CLOSE_PTS,
+                               f"{(w['rate'] - (runner_up or 0))*100:.0f} pts")
+        if note:
+            L += [note, ""]
     # leaderboard
     L += ["| Rank | Model | Pass rate | Passed | Avg s | Tok/s |",
           "|---|---|---|---|---|---|"]
@@ -161,6 +169,20 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
     for r in ranked:
         cells = " | ".join(f"{r['bytask'][tn]}/{attempts}" for tn in task_names)
         L.append(f"| `{r['model']}` | {cells} |")
+    # uncertainty: CI on the headline pass rate + the task each model is worst at
+    L += ["", "### Uncertainty", "",
+          "Pass rate with a 95% Wilson CI, the weakest single task, and a "
+          "small-sample flag. Treat a one-attempt edge as noise.", ""]
+    for r in ranked:
+        rates = {tn: r["bytask"][tn] / attempts for tn in task_names}
+        bits = [f"{r['rate']*100:.0f}% (95% CI {ci_str(r['npass'], r['total'])})"]
+        spread = spread_note(rates)
+        if spread:
+            bits.append(spread)
+        caveat = sample_caveat(r["total"])
+        if caveat:
+            bits.append(caveat)
+        L.append(f"- `{r['model']}`: {'; '.join(bits)}")
     (run_dir / "summary.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Summary: {(run_dir / 'summary.md').relative_to(REPO_ROOT)}")
     if ranked:

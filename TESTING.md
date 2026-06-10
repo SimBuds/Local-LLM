@@ -32,14 +32,14 @@ reviewing the risk.
 
 All runners write to `eval/runs/<UTC>/`.
 
-| Runner | Measures | Executes model code? | Default attempts |
-|---|---|---:|---:|
-| `run-speed.py` | Raw generation tok/s, prompt tok/s, load time, GPU/CPU split | no | 1 per prompt |
-| `run-content.py` | SEO/content format compliance | no | 5 |
-| `run-code.py` | Real pass@1 against hidden Python asserts | yes | 5 per task |
-| `run-learn.py` | Code + explanation, leave-one-out judge panel | yes | 3 per task |
-| `run-tutor.py` | Leak-gated tutoring guidance | yes | 3 per task |
-| `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task |
+| Runner | Measures | Executes model code? | Default attempts | Confidence |
+|---|---|---:|---:|---|
+| `run-speed.py` | Raw generation tok/s, prompt tok/s, load time, GPU/CPU split | no | 1 per prompt | High for this machine |
+| `run-content.py` | Format/instruction compliance across content tasks (SEO copy, technical explanation, Markdown brief) | no | 5 | Medium-high for prompt discipline |
+| `run-code.py` | Real pass@1 against hidden Python asserts | yes | 5 per task | Medium-high for the covered task shapes |
+| `run-learn.py` | Code + explanation, leave-one-out judge panel | yes | 3 per task | Medium because explanation quality is judge-scored |
+| `run-tutor.py` | Leak-gated tutoring guidance | yes | 3 per task | Medium because leak checks are strong but teaching quality is judge-scored |
+| `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
 
 Common flags:
 
@@ -55,51 +55,99 @@ Runner-specific flags:
 |---|---|
 | `run-speed.py` | `--num-predict N`, `--thinking auto|on|off`, `--opt KEY=VAL` |
 | `run-code.py` | `--tasks ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-content.py` | `--prompt-file PATH`, `--keyword TEXT`, `--thinking auto|on|off` |
-| `run-learn.py` | `--tasks ...`, `--judges ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-tutor.py` | `--tasks ...`, `--judges ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-json.py` | `--tasks ...`, `--num-ctx N` (default 32768), `--thinking auto|on|off` |
+| `run-content.py` | `--tasks ...`, `--prompt-file PATH` (ad-hoc SEO prompt), `--keyword TEXT`, `--thinking auto|on|off` |
+| `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
+| `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
+| `run-json.py` | `--tasks ...`, `--num-ctx N` (default 32768), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
 thinking mode for content runs unless explicitly testing it.
 
-## Standard Commands
+`run-json.py --context-pressure` scales document length to probe true
+long-context degradation: `normal` (default) is the standard ~6-7k-token
+prompts, `medium` lands ~15-19k, and `high` ~21-27k — as close to the 32k
+`num_ctx` pin as fits without truncation. `--position early|middle|late|all`
+moves the buried needle to measure position bias. Both are manual sweeps, not
+part of the default comparison. `--judge-rubric strict` on the learn/tutor
+runners pushes judges to reserve top marks when default grading saturates.
 
-Full current comparison:
+## Interpreting Results
+
+These tests are for personal model selection on this workstation, not broad
+public claims about model quality. Treat failures as strong signal: a model that
+misses schema, leaks a full tutoring solution, or fails hidden asserts is risky
+for that use. Treat small wins as weak signal until repeated: a one-attempt or
+one-task edge can be noise. When quality is tied or close enough to be unclear,
+break ties by speed, load behavior, and GPU residency.
+
+Every summary now reports its own uncertainty: a 95% Wilson confidence interval
+on the headline rate, a small-sample flag below 10 attempts, the weakest task
+per model, and a close-result warning when the winner's margin is within the tie
+threshold (5 points for rates, 0.5/10 for judge scores). Learn/tutor summaries
+add a judge-reliability section (parse rate, inter-judge disagreement, and a
+warning when a response was scored by fewer than two judges — with the current
+2-model lineup, leave-one-out always leaves a single judge, so those /10 scores
+are soft signal until a third model joins the panel). Tutor ranking breaks
+teach-score ties on leak rate: the model that leaks less wins.
+
+Confidence by signal:
+
+| Signal | Confidence | How to use it |
+|---|---|---|
+| Speed, load time, GPU/CPU split | High | Directly measured on this machine. |
+| Code pass/fail | Medium-high | Real execution against hidden asserts, scoped to these tasks. |
+| JSON schema + fact checks | Medium | Good structured-output smoke test, but still a small task set. |
+| Content compliance | Medium-high | Useful for the project prompts, not a general writing benchmark. |
+| Learning explanation score | Medium | Leave-one-out judging reduces self-bias, but judges are still models. |
+| Tutor score | Medium | Leak failures are strong. Teaching scores are judge-sensitive. |
+
+
+## Benchmark Profiles
+
+`./eval/run-profile.py` is the standard way to run comparisons; it wraps the
+individual runners so routine testing doesn't drift across hand-typed flags.
 
 ```bash
-./eval/run-speed.py --models qwen
-./eval/run-code.py --models qwen
-./eval/run-content.py --models qwen
-./eval/run-learn.py --models qwen
-./eval/run-tutor.py --models qwen
-./eval/run-json.py --models qwen
+./eval/run-profile.py smoke --models gemma qwen      # after a model rebuild
+./eval/run-profile.py standard --models gemma qwen   # routine full comparison
+./eval/run-profile.py deep --models gemma qwen       # pre-decision confidence run
+./eval/run-profile.py standard --models gemma qwen --dry-run  # show commands
 ```
 
-Quick smoke comparison:
+| Profile | When to run | Runtime | What it does |
+|---|---|---|---|
+| `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 1 JSON task, 2 attempts each |
+| `standard` | When picking models or after prompt-stack changes | under 1 hour | All six suites; code/content trimmed to 3 attempts so the expanded task set stays in budget |
+| `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps plus medium and high context-pressure JSON runs |
 
-```bash
-./eval/run-speed.py --models qwen --num-predict 128
-./eval/run-code.py --models qwen --tasks two_sum calc --attempts 2
-./eval/run-content.py --models qwen --attempts 2
-./eval/run-json.py --models qwen --tasks jd_extract --attempts 2
-```
+The wrapper prints every `summary.md` it produced at the end. Individual runners
+remain usable directly for targeted sweeps (single task, context pressure,
+needle position, strict rubric).
 
 Add tasks in:
 
 | Task type | File |
 |---|---|
 | Coding correctness | `eval/coding_tasks.py` |
+| Content compliance | `eval/content_tasks.py` |
 | Code + learning explanation | `eval/learning_tasks.py` |
 | Leak-gated tutoring | `eval/tutor_tasks.py` |
 | Schema/long-context extraction | `eval/json_tasks.py` |
 
 ## Current Benchmark Snapshot
 
-Latest head-to-head: `gemma` (`gemma4:12b-it-q4_K_M`) vs `qwen`
-(`qwen3.6:35b-a3b-mtp-q4_K_M`) on 2026-06-09. All five suites — speed, coding,
-content, learning, and the leak-gated tutor runner — completed this pass.
+Latest full head-to-head: `gemma` (`gemma4:12b-it-q4_K_M`) vs `qwen`
+(`qwen3.6:35b-a3b-mtp-q4_K_M`) on 2026-06-09. Speed, coding, content,
+learning, and the leak-gated tutor runner completed that pass. The JSON runner
+was added afterward and first ran against both models on 2026-06-10.
+
+Two caveats on the tables below. First, the raw run artifacts behind them were
+lost on 2026-06-10 (an errant cleanup deleted `eval/runs/`); the run IDs are
+kept as provenance labels, but these tables are now the only record. Second,
+the task set expanded on 2026-06-10 (coding 6→9, JSON 3→7, content 1→3 tasks)
+and summaries gained uncertainty reporting, so these pre-expansion numbers are
+not directly comparable to new runs. Re-run `standard` before leaning on them.
 
 ### Speed (`run-speed.py`)
 
@@ -174,16 +222,24 @@ the leak-gated tutoring pick.
 
 ### JSON / long-context (`run-json.py`)
 
-**Not yet benchmarked.** This runner was added to cover the structured-output
-behaviour the consumer apps (jobhunt, seo-cli) depend on — schema-constrained
-decode plus fact recall over multi-thousand-token documents — which the other
-suites don't test. It is wired into the pipeline (runner matrix, standard
-commands, `eval/json_tasks.py`) but a Gemma/Qwen head-to-head has not been run.
-Run `./eval/run-json.py --models gemma qwen` to populate this section.
+Run: `eval/runs/20260610T100002Z/json/summary.md`
 
-Note: the rebuilt `gemma` params (post-2026-06-09) are also not yet reflected in
-the speed/coding/content/learning/tutor numbers above — those used the prior
-params. Re-run the relevant suites before trusting them for the new build.
+| Rank | Model | Score | Valid JSON | Schema OK | Fact rate | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 1 | `gemma` | 100% | 100% | 100% | 100% | 3.3 | 50 |
+| 2 | `qwen` | 100% | 100% | 100% | 100% | 8.4 | 46 |
+
+Per task: both models scored 3/3 on `jd_extract`, `needle_recall`, and
+`decline_guard`.
+
+Finding: both models cleared the current structured-output smoke test. Gemma is
+the practical default for JSON-shaped consumer-app work when this suite is the
+only evidence, because it tied quality and won speed. This is still a small
+3-task, 3-attempt run, so treat it as a pass/fail gate plus speed tie-breaker.
+
+Note: the rebuilt `gemma` params (post-2026-06-09) are reflected in this JSON
+run, but not in the speed/coding/content/learning/tutor numbers above. Re-run
+the relevant suites before trusting those older numbers for the new build.
 
 ## Current Picks
 
@@ -191,6 +247,7 @@ params. Re-run the relevant suites before trusting them for the new build.
 |---|---|---|
 | Fast local default | `gemma` | 58.3 tok/s, 100% GPU. |
 | Content / SEO / copy | `gemma` | 5/5 clean and ~2x faster than Qwen in latest content run. |
+| Structured JSON / consumer-app smoke tests | `gemma` | Tied Qwen at 100%, faster in the 2026-06-10 JSON run. |
 | Coding puzzles / small functions | `qwen` | 30/30 in latest coding run, including `calc` 5/5. |
 | Learning explanations | `qwen` | 9.9/10 in latest learning run, code 12/12. |
 | Leak-gated tutoring | `gemma` | 8.0/10 with only 2/15 leaks vs Qwen's 6/15. |
