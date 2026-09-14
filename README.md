@@ -1,9 +1,10 @@
 # AI Context Stack
 
-Layered Markdown prompts compiled into local Ollama models, plus an eval suite to
-pick the best model for each job. There is no fine-tuning here: behavior comes
-from `prompts/`, durable memory, reusable knowledge files, and each model
-builder's sampler/context params.
+Layered Markdown prompts served with local GGUF models through a llama.cpp
+`llama-server` router, plus an eval suite to pick the best model for each job.
+There is no fine-tuning here. Behavior comes from `prompts/`, durable memory,
+reusable knowledge files, and each model builder's sampler, context and offload
+settings.
 
 **What this is for:** running a small, opinionated set of local models on one
 workstation, wiring them into editor assistants (Continue / Cline), and keeping
@@ -20,13 +21,19 @@ lives in [`TESTING.md`](TESTING.md).
 
 ## Models
 
-Current lineup (rebuilt 2026-07-28):
+Current lineup (moved to llama.cpp 2026-09-14):
 
-| Model | Base | ctx | Role |
-|---|---|---:|---|
-| `gemma` | `gemma4:26b-a4b-it-qat` | 32K | 26B A4B MoE, QAT. Strongest prompt-ingest throughput. |
-| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | 32K | 35B A3B MoE. Largest model that stays usable here. |
-| `lite` | `qwen3.5:9b` | 32K | Dense 9B. The only one that fits entirely in 10 GB — speed anchor and 3rd judge. |
+| Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
+|---|---|---:|---|---|
+| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 32K | 18 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 32K | 32 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
+| `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 32K | all GPU, MTP | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
+
+`gemma` and `qwen` are the same weights the Ollama-era benchmarks used, copied
+byte for byte out of Ollama's blob store. `lite` is not: Ollama's `qwen3.5:9b`
+file does not load in llama.cpp, so it was replaced with unsloth's MTP build at
+the same Q4_K_M quant, and its scores are not comparable with its Ollama history.
+MTP (multi-token prediction) is speculative decoding built into the Qwen GGUFs.
 
 `gemma` and `qwen` are MoE: few active parameters per token, so CPU spillover
 stays usable on a 10 GB card even though neither fits fully in VRAM. `lite` is
@@ -45,18 +52,67 @@ number.
 ```bash
 cp memory/user.example.md memory/user.md                          # then edit
 cp memory/learning-profile.example.md memory/learning-profile.md  # then edit
-make build        # builds gemma, qwen, and lite
-ollama run qwen
+# stage the three GGUFs in ~/models/gguf first (see Model Files below)
+make build        # writes models/models.ini and each model's prompt.txt
+make serve        # llama-server router on http://localhost:8080, leave it running
 ```
 
-The assembled system prompt carries a real user profile — skills, clients,
-hardware — so `memory/*.md` is gitignored and only the `*.example.md` templates
-are published. Seed them before the first build; the builders abort with the
-copy commands above rather than quietly assembling a model with no profile.
+Then, from a second terminal in the repo, send one request with the prompt stack
+as the system message:
 
-Each `build-*` script assembles the prompt stack, writes
-`models/<name>/system.txt` and `models/<name>/Modelfile`, then runs
-`ollama create <name> -f models/<name>/Modelfile`.
+```bash
+jq -n --rawfile sys models/qwen/prompt.txt \
+  '{model: "qwen", max_tokens: 80, chat_template_kwargs: {enable_thinking: false},
+    messages: [{role: "system", content: $sys}, {role: "user", content: "Who are you, in one sentence?"}]}' \
+  | curl -s http://localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -d @- \
+  | jq -r '.choices[0].message.content'
+```
+
+The router loads a model on its first request (a few seconds) and keeps one
+model resident at a time.
+
+The assembled system prompt carries a real user profile (skills, clients,
+hardware), so `memory/*.md` is gitignored and only the `*.example.md` templates
+are published. Seed them before the first build. The builders abort with the
+copy commands above rather than quietly assembling a prompt with no profile.
+
+Each `build-*` script assembles the prompt stack and writes three files under
+`models/<name>/`: `system.txt` (human debug copy with per-file markers),
+`prompt.txt` (what clients send as the system message), and `preset.ini` (the
+model's llama-server section). `make build` then joins `server.ini` and every
+`preset.ini` into `models/models.ini`, the one file `make serve` reads.
+Nothing is baked into the model: a client that does not send `prompt.txt` gets
+the bare base model.
+
+## Model Files
+
+The GGUFs live outside the repo in `~/models/gguf` (override with `GGUF_DIR`).
+Builders abort naming the missing path if a file is not there.
+
+| Model | File | Where it came from |
+|---|---|---|
+| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | Copied from Ollama's `gemma4:26b-a4b-it-qat` blob. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Copied from Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob. |
+| `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
+
+Check the staged files against the checksums the benchmarks were run with:
+
+```bash
+# Runs in: local terminal. Read-only, safe to repeat.
+cd ~/models/gguf && sha256sum -c <<'EOF'
+4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5  gemma4-26b-a4b-it-qat.gguf
+d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
+e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
+EOF
+```
+
+Each line must print `OK`. `lite` can be downloaded again with
+`curl -L --fail -C - -o ~/models/gguf/qwen3.5-9b-mtp-q4_K_M.gguf https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf`.
+The `gemma` and `qwen` copies have no public byte-identical source once Ollama's
+store is gone. The closest downloads are `google/gemma-4-26B-A4B-it-qat-q4_0-gguf`
+(`gemma-4-26B_q4_0-it.gguf`) and `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`
+(`Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`). Neither has been tested on this box, both are
+different files, and switching to one starts a new baseline for that model.
 
 ## Structure
 
@@ -65,9 +121,11 @@ Each `build-*` script assembles the prompt stack, writes
 ├── prompts/              # behavior controls; runs every turn
 ├── memory/user.md        # durable user profile (gitignored; see *.example.md)
 ├── knowledge/**/*.md     # reusable reference context
-├── eval/                 # benchmark runners and tasks
-├── models/<name>/        # generated system.txt + Modelfile
-├── Makefile              # make check: rebuild changed models, verify the stack
+├── eval/                 # benchmark runners, tasks, and offline unit tests
+├── models/<name>/        # generated system.txt, prompt.txt, preset.ini
+├── models/models.ini     # generated router preset: server.ini + every preset.ini
+├── server.ini            # llama-server settings shared by every model
+├── Makefile              # make build / serve / check
 └── build-{gemma,qwen,lite}
 ```
 
@@ -75,8 +133,9 @@ Prompt assembly order is `knowledge/`, then `memory/`, then `prompts/`; files
 within each directory are sorted. That keeps reference context first and behavior
 rules last. Each Markdown file is wrapped in `--- START/END FILE ---`. Files over
 100k are skipped, as are `*.example.md` templates — injecting a template beside
-the real file would hand the model two conflicting profiles. Builders abort if the assembled prompt contains `"""`, because
-that would break the Ollama `SYSTEM """..."""` block.
+the real file would hand the model two conflicting profiles. The markers stay in
+`system.txt` for debugging and are stripped from `prompt.txt`, because models
+recite them.
 
 ## Build And Tune
 
@@ -84,33 +143,60 @@ The only model-specific part of a builder is the top config block:
 
 ```bash
 MODEL_NAME="qwen"
-BASE_MODEL="qwen3.6:35b-a3b-mtp-q4_K_M"
-EXTRAS=()
+BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"   # filename under $GGUF_DIR
 PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-  'num_ctx 32768'         # 32k: The sweet spot for multi-file local tasks
-  'temperature 0.2'       # Low temperature forces strict compliance with code syntax and tool tags
-  'top_p 0.95'
-  'top_k 40'
-  'min_p 0.05'            # Safeguards structural format without restricting code vocabulary
-  'presence_penalty 0.0'  # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat_penalty 1.05'   # Prevents infinite code loops without breaking boilerplate code
+  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks
+  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
+  'top-p = 0.95'
+  'top-k = 40'
+  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
+  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
+  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
 )
-
+LOAD=(
+  'n-cpu-moe = 32'           # expert layers kept in system RAM, pinned (see below)
+  'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
+)
 ```
 
-For a new model, copy an existing `build-*` script and edit only that config
-block. The shared assembly section below the divider is mirrored across builders
-and should stay byte-identical. Builders abort up front if `BASE_MODEL` is not
-pulled, so a stale or retargeted base fails loudly instead of leaving a
-half-written `system.txt` behind.
+Keys are llama-server flag names without the leading dashes. For a new model,
+copy an existing `build-*` script and edit only that config block. Builders
+source the shared `build-common.sh`, which aborts up front if the GGUF is not in
+`GGUF_DIR`, so a stale or retargeted base fails loudly instead of leaving a
+half-written preset behind.
 
 **Keep `PARAMS` identical across builders.** Only `run-json.py` sends sampler
-options; every other suite inherits whatever the Modelfile sets. Differing values
-across builders mean the leaderboard measures model × sampler instead of model —
-that mistake invalidated the 2026-06-14 coding, learning, and tutor tables, which
+options. Every other suite inherits whatever the preset sets, so differing values
+across builders make the leaderboard measure model × sampler instead of model.
+That mistake invalidated the 2026-06-14 coding, learning, and tutor tables, which
 compared `gemma` at `temperature 0.75` / `presence_penalty 0.2` against `qwen` at
 `0.2` / `0.0`. If a model needs its own decoding for daily use, make that a
-separate tag rather than skewing the shared baseline.
+separate preset rather than skewing the shared baseline.
+
+**`LOAD` is per model and pinned.** It holds how the model is split between GPU
+and CPU, which has to differ by model size. `server.ini` sets `fit = off`, so the
+split is exactly what the builder declares rather than whatever llama.cpp's
+automatic fitting picks from the VRAM free at load time (an open browser would
+otherwise change a benchmark's offload between runs). The current values are what
+`--fit` chose on 2026-09-14 with about 1 GB of desktop VRAM in use. To re-derive
+one after a model or hardware change, load the GGUF with fitting on, with the
+same `spec-type` its builder uses, and read the fit line. Leaving MTP off gives a
+wrong answer, because the MTP layer needs VRAM of its own: without it the recipe
+reported `41 layers (30 overflowing)` for `qwen` in testing.
+
+```bash
+# Runs in: local terminal, with nothing else holding the GPU. Stop it with Ctrl-C once the line prints.
+llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 32768 -np 1 -fa on \
+  -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --port 8081 -lv 4 2>&1 \
+  | grep 'layers (.* overflowing)'
+```
+
+A line ending `42 layers (32 overflowing), 7226 MiB used` means `n-cpu-moe = 32`.
+Drop `--spec-type draft-mtp` for `gemma`, which has no MTP layer. A model that
+fits entirely prints no overflow and needs no `n-cpu-moe`. The answer moves with
+free VRAM, which is why it is pinned rather than re-fitted per run: the same
+command read `33 overflowing` with 1.5 GB of desktop use instead of 1 GB. Close
+apps that hold VRAM before deriving a value.
 
 Where changes belong:
 
@@ -149,93 +235,129 @@ single `build-*` script rebuilds only that model; editing anything under
 `prompts/`, `memory/`, or `knowledge/` rebuilds all three, because every builder
 assembles the same stack.
 
-## Ollama Server
+## llama-server
 
-Local service override:
+The runtime is llama.cpp's `llama-server` in router mode: one process on port
+8080 that starts a child server per model on demand and routes each request by
+its `model` field. `make serve` runs it in the foreground over
+`models/models.ini`. The repo ships no service unit.
 
-```ini
-# sudo systemctl edit ollama
-[Service]
-Environment="OLLAMA_KV_CACHE_TYPE=q4_0"
-Environment="OLLAMA_FLASH_ATTENTION=1"
-Environment="OLLAMA_NUM_PARALLEL=1"
-Environment="OLLAMA_KEEP_ALIVE=10m"
-Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Benchmarks were run on llama.cpp build 10968 (commit `41abbfd59`), built from
+source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
+pins `g++-15` as the CUDA host compiler for CUDA 13.4. Building with the system
+GCC 16 was not tried.
+
+```bash
+# Runs in: local terminal, as your user (no sudo). Safe to re-run.
+SRC="$HOME/src/llama.cpp"
+[ -d "$SRC/.git" ] || git clone https://github.com/ggml-org/llama.cpp "$SRC"
+cmake -S "$SRC" -B "$SRC/build" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-15 -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build "$SRC/build" -j 20 --target llama-server \
+  && ln -sfn "$SRC/build/bin/llama-server" "$HOME/.local/bin/llama-server" \
+  && llama-server --version
 ```
 
-`OLLAMA_MAX_LOADED_MODELS=1` matters for the benchmarks, not just for daily use.
-At `2` the resident models compete for the same 10 GB, so a model's measured
-throughput depends on which other model happens to be loaded beside it — the
-leaderboard would be measuring co-residency, not the model. At `1` each model
-gets the whole card in turn. `run-learn.py` and `run-tutor.py` are already built
-for this: they generate every response first, then loop by judge, so each model
-loads once per phase instead of thrashing on every call.
+`server.ini` holds the settings every model shares, and replaces the old Ollama
+systemd override:
 
-**Restarting the Ollama service invalidates a run in flight.** The runners now
-preflight the server and abort on a streak of connection failures rather than
-recording every attempt as a model failure — but an abort still costs you the
-run. Let a `standard` pass finish before touching the unit file.
+| Was (Ollama) | Now (llama-server) | Where |
+|---|---|---|
+| `OLLAMA_NUM_PARALLEL=1` | `parallel = 1` (the server default is 4 slots) | `server.ini` |
+| `OLLAMA_FLASH_ATTENTION=1` | `flash-attn = on` | `server.ini` |
+| `OLLAMA_KV_CACHE_TYPE=q4_0` | `cache-type-k = q4_0`, `cache-type-v = q4_0` | `server.ini` |
+| `OLLAMA_MAX_LOADED_MODELS=1` | `--models-max 1` | `make serve` |
+| `OLLAMA_KEEP_ALIVE=10m` | not set (in testing a model stayed loaded until another was requested) | none |
+| automatic GPU/CPU split | `fit = off` plus each builder's `LOAD` | `server.ini`, `build-*` |
+
+`--models-max 1` matters for the benchmarks, not just for daily use. With two
+resident models they compete for the same 10 GB, so a model's measured
+throughput depends on which other model happens to be loaded beside it, and the
+leaderboard would be measuring co-residency rather than the model. With one, each
+model gets the whole card in turn. `run-learn.py` and `run-tutor.py` are built for
+this: they generate every response first, then loop by judge, so each model loads
+once per phase instead of thrashing on every call.
+
+The eval runners reach the router through `eval/_ollama.py`, which reads
+`LLM_URL` (default `http://localhost:8080`). It sends `prompt.txt` as the system
+message and turns prompt caching off on every call, because the llama-server docs
+warn that cached prefixes make results not bit-identical and reproducibility is
+already the weak spot here (see [`TESTING.md`](TESTING.md)).
+
+**Stopping `make serve` invalidates a run in flight.** `run-learn.py`,
+`run-persona.py`, and `run-tutor.py` preflight the router and abort on a streak
+of connection failures instead of recording every attempt as a model failure. An
+abort still costs the run, so let a `standard` pass finish before restarting.
 
 Common commands:
 
 ```bash
-sudo systemctl status ollama
-sudo systemctl edit ollama
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-
-ollama list
-ollama ps
-ollama show gemma
-ollama run gemma
-ollama run qwen
-ollama run lite
+make build && make serve                               # rebuild presets, start the router
+curl -s localhost:8080/models | jq '.data[] | {id, status: .status.value}'
+curl -s -X POST localhost:8080/models/load   -H 'Content-Type: application/json' -d '{"model":"gemma"}'
+curl -s -X POST localhost:8080/models/unload -H 'Content-Type: application/json' -d '{"model":"gemma"}'
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
 ```
+
+A running router does not pick up a rebuilt `models/models.ini` on its own, so
+restart `make serve` after `make build`.
 
 ## Use In VSCode (Continue / Cline)
 
-Both extensions talk to Ollama's local API at `http://localhost:11434`. Build the
-models first (`make build`) so the custom names resolve, then confirm they are
-loaded with `ollama list`.
+Both extensions talk to the router's OpenAI-compatible API at
+`http://localhost:8080/v1`, with `make serve` running. The model names are the
+preset names `gemma`, `qwen`, and `lite`. The server has no API key set, so any
+non-empty key is accepted.
+
+The prompt stack is no longer part of the model. A client that does not send
+`models/<name>/prompt.txt` as its system message talks to the bare base model,
+without the identity, honesty, and formatting rules the persona suite measures.
 
 ### Continue
 
-Add the built models to `~/.continue/config.yaml` (Continue's provider name for
-Ollama is `ollama`; `model` is the Ollama model name):
+Continue takes a per-model system message in `chatOptions.baseSystemMessage`.
+This prints `~/.continue/config.yaml` model entries with each built `prompt.txt`
+embedded, ready to paste under `models:`:
 
-```yaml
-models:
-  - name: qwen (coding/learning)
-    provider: ollama
-    model: qwen
-    roles: [chat, edit, apply]
-  - name: gemma (content/fast)
-    provider: ollama
-    model: gemma
-    roles: [chat, edit, apply]
-  - name: lite (fast baseline)
-    provider: ollama
-    model: lite
-    roles: [chat, edit, apply]
+```bash
+# Runs in: repo root, after make build. Prints YAML only, writes nothing.
+python3 - <<'EOF'
+import json
+for name, label in [("qwen", "stack fidelity"), ("gemma", "coding/content/tutor"), ("lite", "fast")]:
+    prompt = open(f"models/{name}/prompt.txt", encoding="utf-8").read()
+    print(f"  - name: {name} ({label})\n"
+          f"    provider: openai\n"
+          f"    apiBase: http://localhost:8080/v1\n"
+          f"    apiKey: local\n"
+          f"    model: {name}\n"
+          f"    roles: [chat, edit, apply]\n"
+          f"    chatOptions:\n"
+          f"      baseSystemMessage: {json.dumps(prompt, ensure_ascii=False)}")
+EOF
 ```
 
-Pick the default from the leaderboard above rather than from load size — that
-guess is what the benchmark exists to replace. Continue auto-discovers Ollama,
-but listing the custom names keeps the prompt-stacked builds (not the raw bases)
-in the model picker.
+The embedded prompt includes the `memory/` profile, so treat that config file as
+personal. Re-run the script after `make build` when the stack changes. Pick the
+default from the leaderboard below rather than from load size, because that guess
+is what the benchmark exists to replace.
 
 ### Cline
 
-In Cline's settings, set **API Provider** to `Ollama`, **Base URL** to
-`http://localhost:11434`, and **Model** to `qwen`, `gemma`, or `lite`. Cline is
-agentic/coding-heavy and ingests large prompts, so prompt-eval throughput matters
-more here than generation speed — `run-speed.py` reports both, and the
-**Prompt tok/s** column is the one to drive this choice, not **Gen tok/s**.
+In Cline's settings, set **API Provider** to `OpenAI Compatible`, **Base URL** to
+`http://localhost:8080/v1`, **API Key** to any value, **Model ID** to `qwen`,
+`gemma`, or `lite`, and the context window to `32768`. Cline sends its own system
+prompt, and its docs describe no way to replace it, so Cline runs without this
+repo's prompt stack. Cline ingests large prompts, so prompt-eval throughput
+matters more here than generation speed. `run-speed.py` reports both, and the
+**Prompt tok/s** column is the one to drive this choice.
 
-Notes for both: keep `OLLAMA_KEEP_ALIVE` long enough to avoid reload churn when
-switching models. `gemma` and `qwen` do not fit entirely in 10 GB of VRAM, so expect
-CPU spill on both; both are MoE, which is what keeps that spill usable. `lite`
-fits, and is the control for how much that spill actually costs.
+Notes for both: the router keeps one model loaded, so switching models in the
+editor costs a reload (about 2 to 7 seconds on this box). `gemma` and `qwen` do
+not fit entirely in 10 GB of VRAM and keep some expert layers in system RAM. Both
+are MoE, which is what keeps that usable. `lite` fits, and is the control for how
+much the split actually costs. The eval runners turn thinking off per request.
+Requests without that flag get the model's chat-template default, and `gemma`
+was observed thinking by default.
 
 ## Evaluation
 
@@ -271,7 +393,10 @@ Scoring is deterministic regex, no judge.
 `run-json.py` is the structured-output test the consumer apps (Jobhunt,
 SEO-LLM) depend on: it constrains decode with a JSON schema, buries facts in a
 multi-thousand-token document, and scores schema conformance plus long-context
-fact recall. It pins `num_ctx 32768` to match how those apps call Ollama.
+fact recall. Before the run it checks that every model serves at least
+`--num-ctx` context (default 32768, what those apps were built around) and
+aborts if one does not. llama.cpp fixes context at load time, and a prompt that
+still overflows gets an HTTP 400 from the server rather than being truncated.
 
 `run-code.py`, `run-learn.py`, and `run-tutor.py` execute model-generated Python.
 That execution is confined by **bubblewrap**: read-only `/usr`, no network, no
@@ -280,6 +405,13 @@ throwaway CWD. Each run prints the active mode in its banner, and degrades
 loudly — not silently — to a bare timeout-bounded subprocess on a box without a
 working `bwrap`. Full runner flags and the sandbox details are in
 [`TESTING.md`](TESTING.md).
+
+The gateway and runner helpers have offline unit tests that need no server, GPU,
+or model:
+
+```bash
+python3 -m unittest discover -s eval -p 'test_*.py'
+```
 
 After a run, promote the numbers into the leaderboard below instead of copying
 them by hand:
@@ -291,7 +423,13 @@ them by hand:
 
 ## Benchmark Leaderboard
 
-Measured on the current lineup. This block is generated — `./eval/promote.py`
+**These numbers were measured under Ollama (2026-07-28), not llama.cpp.** They
+have not been re-run since the 2026-09-14 runtime switch, and `lite`'s base
+weights changed in that switch, so treat them as the Ollama-era baseline until
+the next `standard` pass replaces them. Single-request checks on llama.cpp are in
+[`TESTING.md`](TESTING.md) under *Runtime switch*.
+
+This block is generated. `./eval/promote.py`
 rewrites everything between the markers from `eval/runs/`, so it cannot drift
 away from the runs the way the hand-maintained 2026-06-14 tables did (those
 survived two base swaps still reading as current; see [`TESTING.md`](TESTING.md)
@@ -325,6 +463,8 @@ Winner is `tie` where the runner flagged the margin as within its close-result t
 <!-- BENCH:END -->
 
 ### Current picks
+
+From the Ollama-era 2026-07-28 run. Revisit them after the llama.cpp re-baseline.
 
 | Use | Pick | Basis |
 |---|---|---|
@@ -382,9 +522,10 @@ Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reason
 
 | Model | Base | Status |
 |---|---|---|
-| `gemma` | `gemma4:26b-a4b-it-qat` | current — rebuilt 2026-07-28 |
-| `qwen` | `qwen3.6:35b-a3b-mtp-q4_K_M` | current — rebuilt 2026-07-28 |
-| `lite` | `qwen3.5:9b` | current — added 2026-07-28 as the in-VRAM speed anchor and 3rd judge |
+| `gemma` | `gemma4-26b-a4b-it-qat.gguf` (Ollama `gemma4:26b-a4b-it-qat`, same bytes) | current. Rebuilt 2026-07-28, moved to llama.cpp 2026-09-14 |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` (Ollama `qwen3.6:35b-a3b-mtp-q4_K_M`, same bytes) | current. Rebuilt 2026-07-28, moved to llama.cpp 2026-09-14 with MTP on |
+| `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` (unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M) | current. Added 2026-07-28 as the in-VRAM speed anchor and 3rd judge, base replaced 2026-09-14 |
+| `lite` (Ollama) | `qwen3.5:9b` | replaced 2026-09-14. The Ollama file does not load in llama.cpp (`rope.dimension_sections` has 3 entries, llama.cpp expects 4). |
 | `qwen` (uncensored) | `hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M` | reverted 2026-07-28 — never benchmarked; works against `prompts/safety.md` by construction, so the shared stack spent tokens every turn fighting the base's own tuning. An uncensored base needs its own tag and its own stack, not a swap under the shared one. |
 | `gemma` (prior) | `gemma4:12b-it-q4_K_M` | retired 2026-07-27 — base no longer installed; source of the 2026-06-14 scores |
 | `gemma-custom` | `gemma4:e4b` | removed — superseded by gemma4 12B |
@@ -399,6 +540,9 @@ Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reason
 Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
+Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 10968
+(`41abbfd59`) with CUDA 13.4.
 
 ## Docs
 

@@ -4,8 +4,12 @@
 eval/__pycache__/
 eval/runs/
 
-# Regenerable build artifacts (system.txt + Modelfile), produced by build-*.
+# Regenerable build artifacts (system.txt, prompt.txt, preset.ini, models.ini),
+# produced by build-* and make build.
 models/
+
+# The working file of whoever is mid-task (see AGENTS.md). Not a repo artifact.
+IMPLEMENT.md
 
 # Personal context. The assembled prompt carries a real profile — skills,
 # clients, hardware — so the working copies stay untracked and only the

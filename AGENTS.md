@@ -1082,6 +1082,45 @@ Keep responses tight. State results and decisions directly. Do not narrate
 internal deliberation. The phase report, the DoD checklist, and the handoff
 line are the contract. Everything else is optional.
 
+### No standing-workflow reminders
+
+Do not close a response with the workflow Casey already runs. Specifically, no
+reminders to bring staging up or down, to refresh staging to see a change, to
+commit, to push, or to pull on the server to deploy. Casey runs this loop daily.
+Restating it turns every answer into a footer of things he already knew, and it
+buries the part he asked for.
+
+State what changed and what was verified, then stop.
+
+The exception is when the environment is itself the finding rather than a
+sign-off. A container in a state that would silently destroy work is worth a
+sentence: `up.sh` starts pristine and discards whatever is in the running
+container, while `docker start` on a stopped one keeps it. So is a fact that is
+only true in one environment, such as a stale stylesheet being served. The test
+is whether the reader learns something they could not have predicted. A generic
+"remember to deploy" fails that test. "The container is dead, and `up.sh` would
+wipe what you entered" passes it.
+
+Instructed 2026-08-17: "you dont need to give me reminders on staging or pushing
+to github".
+
+### Deliverables land in chat
+
+Reports are chat output. Audits, findings, comparisons, plans, summaries, and
+handoffs are written into the response itself, formatted with markdown. Do not
+publish an Artifact, and do not write a new `*.md` report into the repo, unless
+Casey asks for that file in the same message.
+
+A request for something "full", "thorough", or "complete" is about depth, not
+about format. It is not a request for a document.
+
+The ban covers **new** report files, not maintenance. Editing a tracked doc
+(`README.md`, this file, anything under `docs/`) is ordinary work when
+correcting or extending it is the task.
+
+Instructed 2026-08-27: "make note in AGENTS.md to not generate artifacts or
+markdown reports. should be producing it formatted in chat unless I specify".
+
 ---
 
 ## When stuck
@@ -1103,126 +1142,41 @@ the empty template below.
 
 When resetting, the section becomes exactly this and nothing more:
 
-```markdown
-## Project-specific rules
-
-Rules in this section are tier 1: they win over the universal body above, for
-their topic only. Each repo fills this in for itself. When porting this file
-to a new repo, carry the universal body verbatim and reset this section to
-the empty template it defines.
-
-<!-- One bullet per rule. Include the reason and the date for anything that
-     records an approved divergence, a locked value, or a past regression.
-     Stack, platform, build commands, environment label sets, and domain
-     rules belong here and in PLAN.md or README.md, never in the universal
-     body above. -->
-```
-
 <!-- One bullet per rule. Include the reason and the date for anything that
      records an approved divergence, a locked value, or a past regression.
      Stack, platform, build commands, environment label sets, and domain
      rules belong here and in PLAN.md or README.md, never in the universal
      body above. -->
 
-### Teach, do not take over
-
-This is a learning project with a real deliverable. The human performs each
-infrastructure and WordPress step, whichever provider hosts it.
-
-- Explain what the step does and why it matters.
-- **Always give the exact commands, in runnable form, labelled by where they
-  run.** Never withhold or summarise a command because the human is the one who
-  executes it. "Run this yourself" without the command is a failed instruction.
-- **Prefer commands over console click-paths.** Where a CLI exists, the commands
-  are the primary path and a click-path is an optional addition, never a
-  substitute. A click-path is the only acceptable form when no CLI equivalent
-  exists, such as accepting terms, a browser-only console setting, or the first
-  cloud identity created before any CLI credentials exist.
-- Stop after one step and let the human run it.
-- Answer questions before moving on.
-- Give the read-only verification commands for the human to run, then wait for
-  the output. Do not run them.
-- Update `README.md` only after verification.
-- Do not SSH into the server or configure it for the human. The verification
-  commands under *Verify before documenting* that touch the server are run by
-  the human, who shares the output.
-- Do not generate the complete theme, site, or infrastructure in one pass.
-
-Editing files in this repository is the assistant's work. Running
-infrastructure, Git, WordPress, and database commands is the human's.
-
-**Divergence recorded 2026-07-29.** The universal body under *Command
-boundaries* makes repo-local and read-only commands the agent's own job. That
-holds for this repository's own tooling (`git status`, `rg`, `ls`, the test
-runner). It does **not** extend to the hosting account, the container, the
-droplet, MySQL, or WP-CLI, where this rule wins and the human runs everything,
-including read-only checks. The reason is pedagogical rather than technical:
-the human is learning the stack, and an agent that runs the verification
-removes the step being taught.
-
-Record completed steps in this shape. This is the single definition of the
-build-log entry format, and `README.md` holds the entries themselves:
-
-```text
-#### Step N — <title> ✅
-**Goal:** one line.
-**Why it matters:** the reasoning.
-**Commands:** the commands that worked, labelled by location.
-**Verify:** the evidence.
-**Q&A:** the human's questions and answers.
-```
-
-The Q&A block is required, even when it says `none`.
-
-### Command labels
-
-- `# ON HOST` is the human's desktop terminal.
-- `# IN CONTAINER` is a shell inside the local Docker container, reached with
-  `ssh -p 2222 root@localhost` or `docker compose exec web bash`. This is the
-  only environment that currently exists, and build steps 6 and 7 run in it
-  regardless of the eventual hosting choice. (Restored 2026-07-29 after a
-  label-set migration deleted it while three build-log entries and the two
-  remaining local build steps still depended on it.)
-- `# IN AWS CONSOLE` and `# AWS CLI` were removed 2026-07-29 when hosting was
-  decided for the droplet. They are archived with `# ON AWS SERVER` in
-  `PLAN.md` under the deferred AWS candidate and return together if it does.
-- `# ON DROPLET` is an SSH session on the DigitalOcean droplet. This host also
-  serves a live portfolio site, so every command names it explicitly.
-- `# IN DO CONSOLE` is the DigitalOcean control panel.
-- `# IN WP-ADMIN` is the WordPress dashboard.
-- `# IN MYSQL` is the `mysql>` prompt.
-- `# WP-CLI` is the `wp` command running as the web user.
-
-This is the label set the universal body under *Commands handed to the human*
-requires this project to declare.
-
-More than one environment already exists, and one of them serves a live site.
-Every server, MySQL, and WP-CLI instruction names the environment it targets,
-and WP-CLI always carries an explicit `--path`. The common way to damage a live
-WordPress site is to run a correct command in the wrong environment.
-
-### Verify before documenting
-
-Tool output is not enough when the filesystem or live service can be checked.
-Confirm with appropriate read-only evidence such as:
-
-- the provider's own status view of the host
-- `ssh`, `hostnamectl`, `uname`, `lsb_release`, `free`, and `lsblk`
-- `systemctl status` on the droplet, `service <name> status` in the container
-- `curl`
-- `ls`, `stat`, and `rg`
-- WP-CLI list/get commands
-- MySQL read-only queries
-
-When a prediction and the live system disagree, correct the plan plainly and trust
-the live evidence.
-
-### Secrets and identifiers
-
-Passwords, private keys, credentials, live addresses, and unnecessary provider
-resource IDs never belong in the repository. This restates tier 0 for this
-project's specific artefacts: the droplet's ID and IP address (which also
-locates the live portfolio site), DigitalOcean API tokens, database passwords,
-and the banked AWS account's identifiers (Elastic IPs, instance IDs, account
-numbers, and access keys) stay out of `PLAN.md`, `README.md`, and the build
-log.
+- **Locked: presets pin the GPU/CPU split with `fit = off`.** Each `build-*`
+  declares its split in `LOAD`, taken from what `--fit` chose. Automatic fitting
+  sizes the split from the VRAM free at load time, so desktop apps would change a
+  benchmark's offload between runs, the same class of confound as the 2026-07-28
+  co-residency problem. Re-derive a value with the README recipe after a model or
+  hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
+- **Locked: `CACHE_PROMPT = False` in `eval/_ollama.py`.** The llama-server docs
+  state that cached prompt prefixes make logits not bit-identical, and `--seed`
+  reproducibility is already unresolved. Turning caching on for speed needs
+  Casey's approval and a reproducibility measurement. (2026-09-14)
+- **Locked: JSON schemas are sent as `response_format.json_schema.schema`.** The
+  top-level `response_format.schema` shape shown in the llama-server README was
+  accepted and silently ignored on build 10968, returning `{}`.
+  `test_schema_uses_the_openai_json_schema_shape` pins the working shape.
+  (2026-09-14)
+- **Locked: `PARAMS` stay identical across builders.** The 2026-06-14 coding,
+  learning, and tutor tables compared models at different samplers and had to be
+  thrown out. A model that needs its own decoding gets its own preset, not a
+  different baseline.
+- **Every router call goes through `eval/_ollama.py`**, including model load,
+  unload, and `/props` reads. Runners never open their own connection to the
+  router. (2026-09-14)
+- **Anything outside the repo is Casey's.** That covers the llama.cpp build in
+  `~/src/llama.cpp`, the GGUFs in `~/models/gguf`, Ollama, and any service unit.
+  The agent hands over commands for these under tier 0. Starting `make serve` to
+  verify a change is repo-local and is the agent's own job, and the router is
+  stopped again before handoff. (2026-09-14)
+- **Verification runs write to the scratchpad, not `eval/runs/`.** Pass
+  `--out-root` to a scratch directory when a benchmark run is only checking that
+  code works. `promote.py` treats the newest run per suite as the leaderboard, so
+  a verification run on a half-finished lineup would become the README's current
+  numbers. Only real comparison passes write to `eval/runs/`. (2026-09-14)

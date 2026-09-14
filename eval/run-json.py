@@ -2,7 +2,7 @@
 """
 JSON / long-context benchmark: the eval the consumer apps (jobhunt, seo-cli)
 actually depend on and the other runners ignore. For each task it constrains the
-model's decode with a JSON schema (Ollama `format=`), buries the answer facts
+model's decode with a JSON schema (`response_format`), buries the answer facts
 inside several thousand tokens of boilerplate, then measures three things:
 
   1. valid_json   — response parses as JSON at all.
@@ -22,14 +22,17 @@ Usage:
   ./eval/run-json.py --models gemma qwen lite --context-pressure medium   # longer docs
   ./eval/run-json.py --models gemma --tasks needle_recall --position all  # early/mid/late
 
-num_ctx defaults to 32768 to mirror jobhunt's gateway pin (without it Ollama
-truncates these long prompts to 4096 and the model answers from a fragment).
-Temperature is forced to 0 for deterministic extraction.
+--num-ctx is the minimum context each model must be serving (default 32768, the
+context jobhunt's gateway was built around). llama.cpp fixes context size when a
+model loads (ctx-size in its build-* preset), so it is checked against the router
+before the run starts rather than sent per request; a model below it aborts the
+run. A prompt that still overflows is rejected by the server with an HTTP 400, not
+truncated. Temperature is forced to 0 for deterministic extraction.
 
 --context-pressure scales document length to test true long-context degradation:
 normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high
-lengthen them (~15-19k and ~21-27k tok). high sits as close to the 32k num_ctx
-pin as fits without truncation and is a manual stress sweep, kept out of the
+lengthen them (~15-19k and ~21-27k tok). high sits as close to the 32k served
+context as fits and is a manual stress sweep, kept out of the
 default full comparison. --position moves the buried needle to the
 start/middle/end so position bias can be measured.
 
@@ -53,7 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ollama import (  # noqa: E402
     REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, generate,
     get_effective_think, new_run_dir, rel_path, resolve_model, sample_caveat,
-    seed_opts, spread_note, tok_per_s,
+    seed_opts, served_ctx, spread_note, tok_per_s,
 )
 from json_tasks import TASKS, JsonTask, build_context  # noqa: E402
 
@@ -64,7 +67,7 @@ CLOSE_PTS = 0.05  # score gaps within 5 points are a tie, not a quality win
 # normal reproduces the default docs exactly; medium/high lengthen them to stress
 # long-context recall. Observed prompt size ≈ 1.24 tok/word + ~3k system-prompt
 # tokens, so medium lands ~15-19k and high ~21-27k — high is as close to the 32k
-# num_ctx pin as fits without Ollama truncating the document.
+# served context as fits before the server rejects the prompt.
 PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 6.0}
 # Needle placement for single-needle tasks under --position (multi-needle tasks
 # keep their own spread). "default" leaves each task's baked-in position alone.
@@ -161,13 +164,30 @@ def build_prompt(task: JsonTask) -> str:
     )
 
 
+def require_ctx(models: list[str], required: int) -> dict[str, int]:
+    """Served n_ctx per model spec. Aborts when any model serves less than `required`.
+
+    Runs before the run dir exists, so a too-small context stops the run instead of
+    every attempt failing on the server's context-size 400 and the summary reading
+    as a model that cannot do the task.
+    """
+    served = {spec: served_ctx(resolve_model(spec)[0]) for spec in models}
+    short = [f"{spec} ({ctx})" for spec, ctx in served.items() if ctx < required]
+    if short:
+        raise SystemExit(
+            f"ERROR: served context below --num-ctx {required}: {', '.join(short)}\n"
+            f"  Raise ctx-size in that model's build-* script, then `make build` "
+            f"and restart `make serve`.")
+    return served
+
+
 def run_attempt(model: str, task: JsonTask, n: int, total: int, timeout: int,
-                num_ctx: int, thinking_mode: str, seed: int | None = None) -> dict:
+                thinking_mode: str, seed: int | None = None) -> dict:
     print(f"    {task.key:14s} [{n}/{total}] ", end="", flush=True)
     name, model_think = resolve_model(model)
     think = get_effective_think(thinking_mode, model_think)
     prompt = build_prompt(task)
-    options = seed_opts(attempt_seed(seed, n), {"num_ctx": num_ctx, "temperature": 0.0})
+    options = seed_opts(attempt_seed(seed, n), {"temperature": 0.0})
 
     t0 = time.monotonic()
     try:
@@ -220,13 +240,15 @@ def main() -> int:
     ap.add_argument("--tasks", nargs="+", default=list(TASKS),
                     help=f"Subset of: {', '.join(TASKS)}")
     ap.add_argument("--attempts", type=int, default=3)
-    ap.add_argument("--num-ctx", type=int, default=32768)
+    ap.add_argument("--num-ctx", type=int, default=32768,
+                    help="minimum context each model must serve (checked against the "
+                         "router before the run; default 32768)")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",
                     help="document length preset: normal (default, current docs), "
                          "medium (~15-19k prompt tok), high (~21-27k, near the 32k "
-                         "num_ctx pin). high is a manual stress sweep, not part of "
+                         "served context). high is a manual stress sweep, not part of "
                          "the default run.")
     ap.add_argument("--position", choices=["default", *POSITIONS, "all"], default="default",
                     help="single-needle placement: default (task's own), early/middle/late, "
@@ -240,6 +262,7 @@ def main() -> int:
         print(f"unknown tasks: {unknown}; choose from {list(TASKS)}", file=sys.stderr)
         return 1
     tasks = resolve_tasks([TASKS[t] for t in args.tasks], args.context_pressure, args.position)
+    served = require_ctx(args.models, args.num_ctx)
 
     run_dir = new_run_dir(args.out_root) / "json"
     run_dir.mkdir(parents=True)
@@ -248,7 +271,8 @@ def main() -> int:
     print(f"Models:   {', '.join(args.models)}")
     print(f"Pressure: {args.context_pressure} (×{PRESSURE[args.context_pressure]}), "
           f"position {args.position}")
-    print(f"num_ctx:  {args.num_ctx}, temperature 0\n")
+    print(f"Context:  served {', '.join(f'{m} {c}' for m, c in served.items())} "
+          f"(minimum {args.num_ctx}), temperature 0\n")
 
     summary: dict[str, dict[str, list[dict]]] = {}
     for model in args.models:
@@ -260,7 +284,7 @@ def main() -> int:
             rs = []
             for n in range(1, args.attempts + 1):
                 r = run_attempt(model, task, n, args.attempts, args.timeout,
-                                args.num_ctx, args.thinking, args.seed)
+                                args.thinking, args.seed)
                 if r.get("ok"):
                     (mdir / f"{task.key}-attempt-{n}.json").write_text(
                         r["text"], encoding="utf-8")
@@ -305,8 +329,8 @@ def write_summary(run_dir, summary, args, tasks) -> None:
          f"- Context pressure: **{args.context_pressure}** "
          f"(×{PRESSURE[args.context_pressure]} normal doc length), "
          f"needle position: {args.position}",
-         f"- Observed prompt size: ~{mean_prompt:.0f} tokens mean (num_ctx "
-         f"{args.num_ctx}, mirrors jobhunt's gateway pin), temperature 0",
+         f"- Observed prompt size: ~{mean_prompt:.0f} tokens mean (every model "
+         f"checked to serve at least {args.num_ctx} context), temperature 0",
          "- **Score** = fraction of attempts that are schema-valid AND pass every "
          "content check (right facts out of a long document). Schema-valid but "
          "wrong-fact output scores 0.", ""]

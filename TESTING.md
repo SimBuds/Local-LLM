@@ -1,9 +1,9 @@
 # Testing
 
-This is the source of truth for how this repo evaluates local Ollama models:
-runner usage, safety notes, current benchmark results, and historical testing
-decisions. `README.md` only carries the operational summary and compact
-leaderboards.
+This is the source of truth for how this repo evaluates local models served by
+llama.cpp's `llama-server` router (Ollama until 2026-09-14): runner usage, safety
+notes, current benchmark results, and historical testing decisions. `README.md`
+only carries the operational summary and compact leaderboards.
 
 ## Goals
 
@@ -85,15 +85,26 @@ Common flags:
 panel) and `--judge-repeats N` (score each response N times per judge and take the
 median; default 3).
 
-Every runner preflights the Ollama server and the model tags before it creates a
-run directory, and aborts mid-run if the server stops answering. See the
-2026-07-28 note in **Historical Notes** for why: a restart during a run previously
-produced complete, exit-0 summaries reporting that every model scored zero.
+`run-learn.py`, `run-persona.py`, and `run-tutor.py` preflight the router, the
+model names, and each model's built `prompt.txt` before they create a run
+directory, and abort mid-run if the server stops answering. `run-code.py`,
+`run-content.py`, `run-json.py`, and `run-speed.py` do not preflight yet, so an
+unbuilt model there shows up as failed attempts rather than an early abort.
+`run-json.py` does check each model's served context before its run directory
+exists. See the 2026-07-28 note in **Historical Notes** for why preflight matters:
+a restart during a run previously produced complete, exit-0 summaries reporting
+that every model scored zero.
+
+A server stopped mid-request surfaces as a connection error in every runner,
+since `generate()` re-raises dropped connections as `URLError`. Before
+2026-09-14 that case crashed the persona, content, and JSON runners with a
+traceback instead of counting toward the abort.
 
 ### Reproducibility (`--seed`)
 
-Every runner accepts `--seed N`. Without it Ollama samples freshly each call and a
-run cannot be replayed; with it the run is repeatable.
+Every runner accepts `--seed N`. Without it the server samples freshly each call
+and a run cannot be replayed. With it the run is meant to be repeatable, subject
+to the warning below.
 
 The seed is offset per attempt (`seed + attempt`), not reused verbatim. That
 matters: a single fixed seed makes every attempt of a task byte-identical, so an
@@ -124,6 +135,13 @@ between-attempt variance the suites exist to measure. Judge calls in
 > saved responses under `eval/runs/<UTC>/<suite>/<model>/` rather than re-running
 > the models. That isolates the change from model variance.
 
+The measurement above was taken under Ollama. The llama.cpp setup removes two of
+the suspected causes: the GPU/CPU split is pinned per model (`fit = off`) instead
+of chosen at each load, and the gateway sends `cache_prompt: false` on every call
+because the llama-server docs state cached prefixes make logits not bit-identical.
+Whether `--seed` now survives a restart has not been re-measured. Keep treating a
+seeded run as documented rather than replayable until it is.
+
 `--out-root PATH` writes results outside the repo. This previously crashed every
 runner (`Path.relative_to` raises rather than degrading when the target is outside
 the repo); runners now fall back to printing the absolute path.
@@ -132,12 +150,12 @@ Runner-specific flags:
 
 | Runner | Extra flags |
 |---|---|
-| `run-speed.py` | `--num-predict N`, `--thinking auto|on|off`, `--opt KEY=VAL` |
+| `run-speed.py` | `--num-predict N`, `--thinking auto|on|off`, `--opt KEY=VAL` (per-request options only: `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`, `seed`. Load-time settings such as `num_ctx` abort the run.) |
 | `run-code.py` | `--tasks ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-content.py` | `--tasks ...`, `--prompt-file PATH` (ad-hoc SEO prompt), `--keyword TEXT`, `--thinking auto|on|off` |
 | `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-json.py` | `--tasks ...`, `--num-ctx N` (default 32768), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
+| `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 32768), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
@@ -146,11 +164,35 @@ thinking mode for content runs unless explicitly testing it.
 
 `run-json.py --context-pressure` scales document length to probe true
 long-context degradation: `normal` (default) is the standard ~6-7k-token
-prompts, `medium` lands ~15-19k, and `high` ~21-27k — as close to the 32k
-`num_ctx` pin as fits without truncation. `--position early|middle|late|all`
+prompts, `medium` lands ~15-19k, and `high` ~21-27k, as close to the 32k served
+context as fits. On 2026-09-14 `high` measured 21250 to 27301 prompt tokens on
+`lite` with no context error. A prompt that does overflow gets an HTTP 400 from
+llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
 moves the buried needle to measure position bias. Both are manual sweeps, not
 part of the default comparison. `--judge-rubric strict` on the learn/tutor
 runners pushes judges to reserve top marks when default grading saturates.
+
+### Offline unit tests
+
+The live suites above need the router and real models. The plumbing they depend
+on has stdlib `unittest` tests that need neither, with responses captured from
+the router on 2026-09-14 and `urlopen`, the clock, and `nvidia-smi` patched:
+
+```bash
+python3 -m unittest discover -s eval -p 'test_*.py'
+```
+
+| File | Covers |
+|---|---|
+| `eval/test_gateway.py` | `generate()` request shape (system prompt from `prompt.txt`, thinking flag, JSON schema shape, option mapping, `num_ctx` rejected), metadata normalization, dropped-connection handling, preflight and dead-server abort, `load_model()` cold-load timing, `served_ctx()` |
+| `eval/test_speed.py` | `run-speed.py` offload label, GGUF size, per-process VRAM parsing |
+| `eval/test_json.py` | `run-json.py` served-context check, no `num_ctx` in requests |
+
+Every test was seen failing before its change landed. Where a test could only
+fail at first because its function did not exist yet, or because it guards
+behavior the change kept, the code was also broken on purpose to confirm the test
+catches a wrong implementation (24 such checks on 2026-09-14, all caught). Run
+them after any change to `eval/_ollama.py` or the runner helpers.
 
 ## Interpreting Results
 
@@ -260,6 +302,11 @@ ones whose rules are about *behavior* rather than *facts*: `identity`,
 deciding what to cut.
 
 ## Current Benchmark Snapshot
+
+> **Ollama-era snapshot.** Everything in this section was measured under Ollama.
+> It has not been re-run on llama.cpp, and `lite`'s base weights changed in the
+> 2026-09-14 switch. The single-request llama.cpp checks are in **Runtime switch:
+> Ollama to llama.cpp** under Historical Notes.
 
 Full `standard` pass, 2026-07-28, three models, 3 attempts/task, identical
 `PARAMS` across all builders and `OLLAMA_MAX_LOADED_MODELS=1` throughout. This is
@@ -426,7 +473,9 @@ Benchmarks are for this local machine:
 | GPU | RTX 3080, 10 GB VRAM |
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
-| Ollama | 0.30-era testing for current Qwen/Gemma runs |
+| Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
+| llama.cpp | build 10968 (`41abbfd59`), static, CUDA 13.4, from 2026-09-14 |
+| Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
 generation speed because DDR4 bandwidth becomes the bottleneck. MoE spillover is
@@ -441,9 +490,10 @@ active parameters per token does.
 
 | Model | Status | Notes |
 |---|---|---|
-| `gemma` (`gemma4:26b-a4b-it-qat`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT, 15 GB. |
-| `qwen` (`qwen3.6:35b-a3b-mtp-q4_K_M`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 22 GB. Official release; `build-qwen` was reverted to it from the uncensored tune below. |
-| `lite` (`qwen3.5:9b`) | current | Added 2026-07-28. Dense 9B, 7 GB — the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. |
+| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14 with 18 MoE layers on CPU. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with 32 MoE layers on CPU and MTP on. |
+| `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
+| `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
@@ -460,6 +510,78 @@ active parameters per token does.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Runtime switch: Ollama to llama.cpp (2026-09-14)
+
+The runtime moved from Ollama 0.33.3 to llama.cpp's `llama-server` (build 10968,
+commit `41abbfd59`) in router mode, as a hard switch with no dual-runtime code
+path. What changed, and what each change was checked against:
+
+- **Serving.** Builders write a llama-server preset per model instead of a
+  Modelfile, `make build` joins them with `server.ini` into `models/models.ini`,
+  and `make serve` runs the router with `--models-max 1`. The server defaults to
+  4 parallel slots, so `server.ini` sets `parallel = 1`.
+- **Prompt stack.** Sent by the client as the system message from
+  `models/<name>/prompt.txt` instead of baked into the model. Diffed against the
+  SYSTEM block the old builder produced: identical apart from the `Base:` and
+  `Built:` lines.
+- **Weights.** `gemma` and `qwen` were copied out of Ollama's blob store, and
+  their sha256 matches the blob digests, so they are the same bytes the
+  Ollama-era scores came from. Ollama's `qwen3.5:9b` failed to load
+  (`rope.dimension_sections` has 3 entries, llama.cpp expects 4), so `lite` moved
+  to unsloth's `Qwen3.5-9B-MTP-GGUF` Q4_K_M. `lite` history does not carry over.
+- **Offload.** Pinned per model from what `--fit` chose (gemma 18 and qwen 32 MoE
+  layers on CPU, lite all GPU) with `fit = off`, so free desktop VRAM cannot
+  change a run's split.
+- **Gateway (`eval/_ollama.py`).** `/v1/chat/completions` with thinking set
+  through `chat_template_kwargs.enable_thinking` and `cache_prompt: false` on
+  every call. JSON schemas use the nested OpenAI `response_format` shape: the
+  top-level `schema` shape shown in the server README was accepted and ignored on
+  this build, returning `{}`. `num_ctx` is rejected per request because context is
+  fixed at load time. Dropped connections are re-raised as `URLError`.
+- **Runners.** `run-speed.py` cold-loads each model through the router (unloading
+  first), reads VRAM per `llama-server` process, and reports the declared split.
+  `run-json.py` checks each model's served context before the run.
+
+Behavior observed while probing:
+
+- `gemma` thinks by default. `enable_thinking: false` turns thinking off on
+  `gemma` and `qwen`. `reasoning_budget: 0` does not turn it off on `gemma`, and
+  `reasoning_format: none` leaks `<|channel>thought` tags into the answer.
+- A prompt over the context gets HTTP 400 `exceed_context_size_error` (44016
+  tokens against 32768). Nothing is truncated.
+- `POST /models/load` returns at once and the model moves `loading` to `loaded`
+  (gemma 4.5s cold). `GET /props?model=` loads the model to answer.
+
+Speed on the new runtime, `run-speed.py` over 2 prompts × 1 attempt with a
+200-token cap. This is a directional check, not a `standard` pass:
+
+| Model | Gen tok/s | Ollama built tag (2026-07-28) | Prompt tok/s | Load | VRAM | Split |
+|---|---:|---:|---:|---:|---:|---|
+| `lite` | 127.5 | 89.4 (different weights) | 3043 | 4.1s | 6.1 GiB | all GPU, MTP |
+| `qwen` | 62.2 | 40.9 | 475 | 6.5s | 6.9 GiB | 32 MoE layers on CPU, MTP |
+| `gemma` | 50.8 | 28.3 | 818 | 1.6s (warm page cache) | 7.3 GiB | 18 MoE layers on CPU |
+
+Prompt tok/s now covers the ~3k-token system prompt on every call, so it is not
+comparable with the prompt column of the 2026-08-11 base survey below, which ran
+without one. MTP was measured separately on `lite`: 142.8 tok/s with it and 101.1
+without (1.41×). `qwen` was only measured with MTP on (60.7 to 63.5 tok/s, about
+65% of drafted tokens accepted).
+
+Quality through the new stack, small samples, to confirm nothing broke rather
+than to rank:
+
+- Persona, stacked, 3 attempts: `qwen` 19/21, `lite` 12/21, `gemma` 12/21, with
+  `identity` 3/3 on all three. Ollama-era readings were `qwen` 90 to 95%, `lite`
+  57 to 62% (different weights), `gemma` 43%.
+- JSON, 1 attempt: 21/21 at normal pressure across all three models, and 7/7 on
+  `lite` at `high` pressure (21250 to 27301 prompt tokens).
+- Dead-server abort: stopping the router mid-run under `run-learn.py` and
+  `run-persona.py` produced the connection-failure streak and the abort, with no
+  summary written.
+
+Still open: the `--seed` reproducibility recheck across restarts, a full
+`standard` re-baseline, and preflight in the four runners that lack it.
 
 ### Base-model speed survey (2026-08-11)
 

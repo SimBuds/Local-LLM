@@ -2,10 +2,9 @@
 set -euo pipefail
 
 MODEL_NAME="gemma"
-BASE_MODEL="gemma4:26b-a4b-it-qat"
-
-# Modelfile extras (TEMPLATE/RENDERER/PARSER).
-EXTRAS=()
+# Reused from Ollama's gemma4:26b-a4b-it-qat blob (Q4_0 QAT) — same weights as the
+# Ollama-era benchmarks, so post-switch deltas measure the runtime, not the model.
+BASE_MODEL="gemma4-26b-a4b-it-qat.gguf"
 
 # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
 
@@ -14,13 +13,22 @@ EXTRAS=()
 # values here confound the leaderboard with model quality. Keep them in sync and
 # let a runner override per-suite when a suite needs different decoding.
 PARAMS=(
-  'num_ctx 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
-  'temperature 0.2'       # Low temperature forces strict compliance with code syntax and tool tags
-  'top_p 0.95'
-  'top_k 40'
-  'min_p 0.05'            # Safeguards structural format without restricting code vocabulary
-  'presence_penalty 0.0'  # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat_penalty 1.05'   # Prevents infinite code loops without breaking boilerplate code
+  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
+  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
+  'top-p = 0.95'
+  'top-k = 40'
+  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
+  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
+  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
+)
+
+# Per-model load params. The expert split is pinned rather than left to --fit,
+# which sizes it from whatever VRAM is free at load time — so an open browser
+# would change the offload between benchmark runs. 18 is what --fit chose on
+# 2026-09-14 with ~1 GB of desktop VRAM in use (31 layers, 18 overflowing,
+# 7409 MiB). No MTP head in this GGUF, so no spec-type.
+LOAD=(
+  'n-cpu-moe = 18'
 )
 
 # Shared assembly — see build-common.sh.

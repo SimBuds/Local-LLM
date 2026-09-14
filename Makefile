@@ -6,6 +6,7 @@
 # commit that breaks the identity rule, so it lives here instead.
 #
 #   make build   rebuild only the models whose prompt stack changed
+#   make serve   start the llama-server router over models/models.ini
 #   make check   rebuild those, then run the persona suite over all of them
 #   make persona run the persona suite without rebuilding
 #   make hook    install the pre-commit hook that runs `make check`
@@ -19,24 +20,36 @@
 MODELS  := gemma qwen lite
 STACK   := $(shell find prompts memory knowledge -type f -name '*.md' 2>/dev/null | sort)
 STAMPS  := $(addprefix models/,$(addsuffix /.built,$(MODELS)))
+PRESETS := $(addprefix models/,$(addsuffix /preset.ini,$(MODELS)))
 
 # Attempts per persona task in `make check`. Low by default so the hook stays
 # usable as a gate; the real measurement is ./eval/run-profile.py.
 ATTEMPTS ?= 3
+PORT     ?= 8080
 
-.PHONY: all build check persona hook clean
+.PHONY: all build serve check persona hook clean
 
 all: build
 
-build: $(STAMPS)
+build: models/models.ini
+
+# The router reads one preset file: the shared [*] settings, then one section
+# per model. A running server does not reload it — restart `make serve`.
+models/models.ini: server.ini $(STAMPS)
+	cat server.ini $(PRESETS) > $@
 
 # A model is stale when the shared stack, the shared assembly, or its own
-# builder is newer than its stamp. ollama create is cheap when only the SYSTEM
-# block changed — it relayers on top of the already-pulled base.
+# builder is newer than its stamp. A rebuild only rewrites text files; the GGUF
+# is never touched, so it is cheap.
 models/%/.built: build-% build-common.sh $(STACK)
 	@echo "=== rebuilding $* (prompt stack or builder changed) ==="
 	./build-$*
 	@mkdir -p $(dir $@) && touch $@
+
+# --models-max 1 keeps one model resident at a time, so each gets the whole card
+# and a model's throughput never depends on what else happens to be loaded.
+serve: models/models.ini
+	llama-server --models-preset models/models.ini --models-max 1 --port $(PORT)
 
 check: build
 	@echo "=== persona suite: does the rebuilt stack still hold? ==="

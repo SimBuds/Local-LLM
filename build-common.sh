@@ -2,23 +2,27 @@
 # Shared assembly for build-* scripts.
 #
 # Source this (do not execute) after defining:
-#   MODEL_NAME   model tag to create
-#   BASE_MODEL   base model to FROM
-#   EXTRAS       array of Modelfile directives (TEMPLATE/RENDERER/PARSER)
-#   PARAMS       array of "<name> <value>" sampling params
+#   MODEL_NAME   router model name (the preset section, and what clients request)
+#   BASE_MODEL   GGUF filename under $GGUF_DIR
+#   PARAMS       array of "<llama-server key> = <value>" sampling params
+#   LOAD         array of "<llama-server key> = <value>" per-model load params
+#
+# Writes models/<name>/{system.txt,prompt.txt,preset.ini}. The Makefile joins
+# every preset.ini with server.ini into models/models.ini for `make serve`.
 # ============================================================================
 
 AI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"
+MODEL_FILE="$GGUF_DIR/$BASE_MODEL"
 
-# Preflight: fail loudly if the base model isn't pulled. Without this the script
-# assembles the whole prompt, writes system.txt/Modelfile, and only dies at
-# `ollama create` — leaving stale artifacts that look like a successful build.
-if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qxF "$BASE_MODEL"; then
-  echo "ERROR: base model '$BASE_MODEL' is not pulled." >&2
-  echo "  Pull it:      ollama pull $BASE_MODEL" >&2
-  echo "  Or retarget:  edit BASE_MODEL in $(basename "$0")" >&2
-  echo "  Installed:" >&2
-  ollama list 2>/dev/null | awk 'NR>1 {print "    " $1}' >&2
+# Preflight: fail loudly if the GGUF isn't there. Without this the script writes a
+# preset pointing at nothing, and the failure only surfaces when the router tries
+# to load the model — leaving artifacts that look like a successful build.
+if [ ! -f "$MODEL_FILE" ]; then
+  echo "ERROR: GGUF for '$MODEL_NAME' not found: $MODEL_FILE" >&2
+  echo "  Stage it there, set GGUF_DIR, or edit BASE_MODEL in $(basename "$0")" >&2
+  echo "  Present in $GGUF_DIR:" >&2
+  find "$GGUF_DIR" -maxdepth 1 -name '*.gguf' -printf '    %f\n' >&2
   exit 1
 fi
 
@@ -37,7 +41,8 @@ fi
 
 OUT_DIR="$AI_ROOT/models/$MODEL_NAME"
 SYSTEM_FILE="$OUT_DIR/system.txt"
-MODELFILE="$OUT_DIR/Modelfile"
+PROMPT_FILE="$OUT_DIR/prompt.txt"
+PRESET_FILE="$OUT_DIR/preset.ini"
 mkdir -p "$OUT_DIR"
 
 {
@@ -65,28 +70,22 @@ mkdir -p "$OUT_DIR"
   done
 } > "$SYSTEM_FILE"
 
-if grep -q '"""' "$SYSTEM_FILE"; then
-  echo "ERROR: assembled prompt contains triple-quotes; would break Modelfile parsing." >&2
-  exit 1
-fi
+# llama-server has no baked-in system prompt, so clients send prompt.txt as the
+# system message on every request. Strip per-file provenance markers from what the
+# model receives — it recites them ("Constraints from prompts/..."); they exist
+# only for human debugging in system.txt. Markdown headers in each file preserve
+# section structure.
+grep -vE '^--- (START|END) FILE: .* ---$' "$SYSTEM_FILE" > "$PROMPT_FILE"
 
 {
-  echo "FROM $BASE_MODEL"
-  for line in "${EXTRAS[@]}"; do echo "$line"; done
+  echo "[$MODEL_NAME]"
+  echo "model = $MODEL_FILE"
+  for p in "${PARAMS[@]}"; do echo "$p"; done
+  for l in "${LOAD[@]}"; do echo "$l"; done
   echo
-  echo 'SYSTEM """'
-  # Strip per-file provenance markers from what the model receives — it recites
-  # them ("Constraints from prompts/..."); they exist only for human debugging
-  # in system.txt. Markdown headers in each file preserve section structure.
-  grep -vE '^--- (START|END) FILE: .* ---$' "$SYSTEM_FILE"
-  echo '"""'
-  echo
-  for p in "${PARAMS[@]}"; do echo "PARAMETER $p"; done
-} > "$MODELFILE"
-
-ollama create "$MODEL_NAME" -f "$MODELFILE"
+} > "$PRESET_FILE"
 
 echo
 echo "✓ Built $MODEL_NAME from $BASE_MODEL"
-echo "  System prompt: $(wc -l < "$SYSTEM_FILE") lines, $(wc -w < "$SYSTEM_FILE") words"
-echo "  Modelfile:     $MODELFILE"
+echo "  System prompt: $(wc -l < "$PROMPT_FILE") lines, $(wc -w < "$PROMPT_FILE") words"
+echo "  Preset:        $PRESET_FILE"

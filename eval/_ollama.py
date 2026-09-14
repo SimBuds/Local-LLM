@@ -1,7 +1,8 @@
 """
 Shared plumbing for the eval runners (run-content.py = content, run-code.py = coding).
-Stdlib-only; talks to the local Ollama HTTP API. No task scoring lives here —
-each runner owns its own scorer and summary. This file is the transport plus the
+Stdlib-only; talks to the local llama-server router started by `make serve`.
+No task scoring lives here — each runner owns its own scorer and summary. This
+file is the transport plus the
 helpers the runners share, including the uncertainty-reporting helpers (Wilson
 confidence interval, small-sample caveats, close-result notes, per-task spread)
 that keep small runs from being over-read. Those helpers are scoring-agnostic:
@@ -10,6 +11,7 @@ they format counts/rates a runner already computed, they don't decide pass/fail.
 
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import os
@@ -18,21 +20,45 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+LLM_URL = os.environ.get("LLM_URL", "http://localhost:8080").rstrip("/")
+CHAT_URL = f"{LLM_URL}/v1/chat/completions"
+MODELS_URL = f"{LLM_URL}/models"
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Built by `make build`: models/<name>/prompt.txt is the assembled prompt stack.
+MODELS_DIR = REPO_ROOT / "models"
+# Prompt caching reuses KV from the previous request, and the server docs warn the
+# logits are then not bit-identical to an uncached run. Reproducibility is already
+# the weak spot here (see TESTING.md, Reproducibility), so every call re-processes
+# its whole prompt. Costs the ~3k-token system prompt on each call; flip this to
+# trade determinism for speed.
+CACHE_PROMPT = False
+# Ollama option names the runners use, mapped to llama-server request fields.
+OPTION_FIELDS = {
+    "num_predict": "max_tokens",
+    "seed": "seed",
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "top_k": "top_k",
+    "min_p": "min_p",
+    "repeat_penalty": "repeat_penalty",
+    "presence_penalty": "presence_penalty",
+}
 # A ```lang fenced block (group 1 = body). Greedy-safe, handles missing lang.
 FENCE_RE = re.compile(r"```[ \t]*([a-zA-Z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
 THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
 
 
 def resolve_model(spec: str) -> tuple[str, bool]:
-    """Map a leaderboard spec to (ollama_name, think).
+    """Map a leaderboard spec to (model_name, think).
 
-    A trailing `:think` selects thinking mode while keeping the real Ollama
+    A trailing `:think` selects thinking mode while keeping the real router
     model name intact, so a model and its `:think` variant can be ranked as
     separate entries. Thinking is a runtime flag, not a Modelfile setting. The
     current bases (gemma4, qwen3.6) both support it; runners default it off for
@@ -53,41 +79,101 @@ def get_effective_think(mode: str, model_default: bool) -> bool:
     return model_default
 
 
+def _map_options(options: dict | None) -> dict:
+    """Translate the runners' Ollama-style option names into request fields.
+
+    Raises ValueError rather than dropping what it cannot send. `num_ctx` is the
+    important case: llama.cpp fixes context size when the model loads (it lives
+    in the preset), so a silently ignored per-call `num_ctx` would let a long
+    prompt truncate while the caller believes it asked for room.
+    """
+    fields = {}
+    for key, value in (options or {}).items():
+        if key == "num_ctx":
+            raise ValueError(
+                "num_ctx cannot be set per request on llama-server; context size "
+                "is fixed at load time by ctx-size in the model's preset")
+        if key not in OPTION_FIELDS:
+            raise ValueError(f"unsupported generate option {key!r}; "
+                             f"known: {', '.join(sorted(OPTION_FIELDS))}")
+        fields[OPTION_FIELDS[key]] = value
+    return fields
+
+
+def _normalize_meta(body: dict) -> dict:
+    """Express llama-server `timings` in the Ollama meta keys the runners read.
+
+    Counts are tokens and durations nanoseconds, as Ollama reported them, so
+    tok_per_s() and every runner's `meta.get("eval_count")` work unchanged. A
+    response without `timings` yields zeros. `load_duration` is left out rather
+    than invented: the chat response does not report it. The full body stays
+    available under `raw`.
+    """
+    t = body.get("timings") or {}
+    return {
+        "eval_count": t.get("predicted_n", 0),
+        "eval_duration": t.get("predicted_ms", 0) * 1e6,
+        "prompt_eval_count": t.get("prompt_n", 0),
+        "prompt_eval_duration": t.get("prompt_ms", 0) * 1e6,
+        "raw": body,
+    }
+
+
 def generate(model: str, prompt: str, timeout: int, think: bool = False,
              options: dict | None = None, fmt: dict | str | None = None,
              system: str | None = None) -> tuple[str, dict]:
-    """Single non-streaming call. Returns (response_text, raw_meta).
+    """Single non-streaming call. Returns (response_text, meta).
 
-    `model` is the real Ollama name (resolve a `:think` spec first). `think`
-    toggles Qwen thinking mode; it is ignored by non-Qwen models. `options`, if
-    given, is merged into the request as Ollama generate options (e.g.
-    `{"num_predict": 256}` to cap output length) — used by run-speed.py to bound
-    generation so CPU-spillover models finish quickly. `fmt` sets Ollama's
-    `format` field for structured output: `"json"` for free JSON, or a JSON
-    schema object for schema-constrained decode (mirrors how jobhunt's gateway
-    constrains output) — used by run-json.py. `system` overrides the system
-    prompt for this call.
+    `model` is the router model name (resolve a `:think` spec first). `think`
+    sets the chat template's `enable_thinking`; thoughts come back separately
+    from the answer, so the returned text is the answer only. `options` takes
+    Ollama-style names (e.g. `{"num_predict": 256}` to cap output length), see
+    _map_options(). `fmt` requests structured output: `"json"` for free JSON, or
+    a JSON schema object for schema-constrained decode (mirrors how jobhunt's
+    gateway constrains output) — used by run-json.py. `system` replaces the
+    built prompt stack for this call (persona baseline mode); otherwise the
+    stack is read from models/<model>/prompt.txt, and a missing file raises
+    instead of silently sending no stack.
     """
+    fields = _map_options(options)
+    if system is None:
+        system = (MODELS_DIR / model / "prompt.txt").read_text(encoding="utf-8")
     body_obj = {
         "model": model,
-        "prompt": prompt,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
         "stream": False,
-        "think": think,
+        "cache_prompt": CACHE_PROMPT,
+        "chat_template_kwargs": {"enable_thinking": think},
+        **fields,
     }
-    if options:
-        body_obj["options"] = options
-    if fmt is not None:
-        body_obj["format"] = fmt
-    if system is not None:
-        body_obj["system"] = system
+    if isinstance(fmt, dict):
+        # Nested OpenAI shape. The top-level `"schema"` shape in the server README
+        # was accepted but ignored on build 10968 (decode came back "{}").
+        body_obj["response_format"] = {
+            "type": "json_schema", "json_schema": {"name": "output", "schema": fmt}}
+    elif fmt == "json":
+        body_obj["response_format"] = {"type": "json_object"}
     payload = json.dumps(body_obj).encode("utf-8")
     req = urllib.request.Request(
-        OLLAMA_URL, data=payload,
+        CHAT_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-    return body.get("response", ""), body
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (ConnectionError, http.client.HTTPException) as e:
+        # A server that dies mid-request raises RemoteDisconnected or a reset, not
+        # URLError, and several runners catch only (URLError, TimeoutError): the
+        # run crashed instead of counting a connection failure toward
+        # check_alive(). TimeoutError and HTTPError are neither class, so a slow
+        # model and a rejected request keep their own classification.
+        raise urllib.error.URLError(e) from e
+    choices = body.get("choices") or [{}]
+    text = (choices[0].get("message") or {}).get("content") or ""
+    return text, _normalize_meta(body)
 
 
 # --- server liveness ----------------------------------------------------------
@@ -100,49 +186,134 @@ def generate(model: str, prompt: str, timeout: int, think: bool = False,
 # summary, so the runners now preflight the server and abort once it is clearly
 # gone rather than grinding out a fiction.
 
-TAGS_URL = OLLAMA_URL.replace("/api/generate", "/api/tags")
 # Consecutive connection-level failures before a runner gives up. Above 1 so a
 # single dropped socket or a model reload stall doesn't kill a long run.
 DEAD_SERVER_STREAK = 5
 
 
 def server_up(timeout: int = 5) -> bool:
-    """True if the Ollama HTTP API answers. Used for preflight and abort checks."""
+    """True if the llama-server router answers. Used for preflight and abort checks."""
     try:
-        with urllib.request.urlopen(TAGS_URL, timeout=timeout) as resp:
+        with urllib.request.urlopen(MODELS_URL, timeout=timeout) as resp:
             return resp.status == 200
     except Exception:  # noqa: BLE001
         return False
 
 
 def preflight(models: list[str]) -> None:
-    """Abort before generating if the server is down or a model tag is missing.
+    """Abort before generating if the server is down or a model is not servable.
 
-    Mirrors build-common.sh's base-model preflight: fail loudly and early rather
-    than leaving artifacts that look like a completed run.
+    A model must be in the router's preset and have a built prompt stack.
+    Mirrors build-common.sh's GGUF preflight: fail loudly and early rather than
+    leaving artifacts that look like a completed run.
     """
     if not server_up():
         raise SystemExit(
-            f"ERROR: no Ollama server at {OLLAMA_URL}.\n"
-            f"  Check it:  systemctl status ollama\n"
-            f"  Start it:  sudo systemctl start ollama")
+            f"ERROR: no llama-server router at {LLM_URL}.\n"
+            f"  Start it:  make serve")
     try:
-        with urllib.request.urlopen(TAGS_URL, timeout=10) as resp:
-            have = {m.get("name", "") for m in
-                    json.loads(resp.read().decode("utf-8")).get("models", [])}
+        with urllib.request.urlopen(MODELS_URL, timeout=10) as resp:
+            have = {m.get("id", "") for m in
+                    json.loads(resp.read().decode("utf-8")).get("data", [])}
     except Exception:  # noqa: BLE001
-        return  # server answered once; don't block a run on a flaky tag listing
-    have |= {n.split(":")[0] for n in have}  # `gemma` matches `gemma:latest`
-    missing = [m for m in (resolve_model(s)[0] for s in models) if m not in have]
+        return  # server answered once; don't block a run on a flaky model listing
+    names = [resolve_model(s)[0] for s in models]
+    missing = [m for m in names if m not in have]
     if missing:
         raise SystemExit(
-            f"ERROR: model(s) not found in Ollama: {', '.join(missing)}\n"
-            f"  Build them:  make build\n"
-            f"  Installed:   {', '.join(sorted(have)) or '(none)'}")
+            f"ERROR: model(s) not in the router preset: {', '.join(missing)}\n"
+            f"  Build them:  make build, then restart make serve\n"
+            f"  Available:   {', '.join(sorted(have)) or '(none)'}")
+    unbuilt = [m for m in names if not (MODELS_DIR / m / "prompt.txt").is_file()]
+    if unbuilt:
+        raise SystemExit(
+            f"ERROR: no built prompt stack (models/<name>/prompt.txt) for: "
+            f"{', '.join(unbuilt)}\n"
+            f"  Build them:  make build")
 
 
 class DeadServer(SystemExit):
     """Raised when consecutive connection failures mean the server is gone."""
+
+
+# --- router model control -----------------------------------------------------
+# run-speed.py reports load time. The router loads a model on its first request,
+# so timing that request would read near zero whenever the model was already
+# resident from an earlier run — a fake win. load_model() always unloads first and
+# times an explicit load instead. The router's load call returns immediately; the
+# model's status then moves loading -> loaded, so the time comes from polling.
+
+LOAD_POLL_S = 0.1
+
+
+class LoadFailed(RuntimeError):
+    """The router could not load a model (not in the preset, or the load died)."""
+
+
+def _router_status(model: str) -> dict:
+    with urllib.request.urlopen(MODELS_URL, timeout=10) as resp:
+        listing = json.loads(resp.read().decode("utf-8")).get("data", [])
+    for entry in listing:
+        if entry.get("id") == model:
+            return entry.get("status") or {}
+    raise LoadFailed(f"model {model!r} is not in the router preset; "
+                     f"available: {', '.join(sorted(e.get('id', '') for e in listing))}")
+
+
+def _router_post(path: str, model: str) -> None:
+    req = urllib.request.Request(
+        f"{LLM_URL}{path}", data=json.dumps({"model": model}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read()
+
+
+def _wait_for(model: str, value: str, timeout: int) -> dict:
+    deadline = time.monotonic() + timeout
+    while True:
+        status = _router_status(model)
+        if status.get("failed"):
+            raise LoadFailed(f"router failed to load {model!r} "
+                             f"(exit code {status.get('exit_code')})")
+        if status.get("value") == value:
+            return status
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"{model!r} not {value} after {timeout}s "
+                               f"(last status {status.get('value')!r})")
+        time.sleep(LOAD_POLL_S)
+
+
+def load_model(model: str, timeout: int) -> tuple[float, list[str]]:
+    """Cold-load `model` in the router. Returns (seconds to loaded, server args).
+
+    The model is unloaded first if it is resident, and that wait is not counted.
+    The args are the resolved llama-server command line the router started, which
+    is where the preset's declared offload can be read back from.
+    """
+    if _router_status(model).get("value") != "unloaded":
+        _router_post("/models/unload", model)
+        _wait_for(model, "unloaded", timeout)
+    t0 = time.monotonic()
+    _router_post("/models/load", model)
+    status = _wait_for(model, "loaded", timeout)
+    return time.monotonic() - t0, status.get("args", [])
+
+
+def served_ctx(model: str, timeout: int = 300) -> int:
+    """Context size (n_ctx) the router is actually serving for `model`.
+
+    llama.cpp fixes context at load time, so callers that need a minimum context
+    check it here instead of requesting one per call. The router loads the model
+    to answer, which is why the timeout is a load-sized one.
+    """
+    url = f"{LLM_URL}/props?model={urllib.parse.quote(model)}"
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        props = json.loads(resp.read().decode("utf-8"))
+    n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
+    if not isinstance(n_ctx, int):
+        raise LoadFailed(f"router /props for {model!r} reported no n_ctx")
+    return n_ctx
 
 
 def check_alive(streak: int) -> None:
@@ -155,10 +326,10 @@ def check_alive(streak: int) -> None:
     if streak >= DEAD_SERVER_STREAK and not server_up():
         raise DeadServer(
             f"ERROR: aborting — {streak} consecutive connection failures and the "
-            f"Ollama server at {OLLAMA_URL} is not responding.\n"
+            f"llama-server router at {LLM_URL} is not responding.\n"
             f"  Nothing was written for this run; results so far would have been "
             f"all-zero and misleading.\n"
-            f"  Check it:  systemctl status ollama")
+            f"  Restart it:  make serve")
 
 
 def tok_per_s(meta: dict) -> float:
