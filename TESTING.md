@@ -85,13 +85,14 @@ Common flags:
 panel) and `--judge-repeats N` (score each response N times per judge and take the
 median; default 3).
 
-`run-learn.py`, `run-persona.py`, and `run-tutor.py` preflight the router, the
-model names, and each model's built `prompt.txt` before they create a run
-directory, and abort mid-run if the server stops answering. `run-code.py`,
-`run-content.py`, `run-json.py`, and `run-speed.py` do not preflight yet, so an
-unbuilt model there shows up as failed attempts rather than an early abort.
-`run-json.py` does check each model's served context before its run directory
-exists. See the 2026-07-28 note in **Historical Notes** for why preflight matters:
+Every runner preflights the router, the model names, and each model's built
+`prompt.txt` before it creates a run directory, so a down router or an unbuilt
+model stops the run with a message instead of showing up as failed attempts
+(all seven since 2026-09-15, pinned by `eval/test_preflight.py`). `run-json.py`
+then also checks each model's served context. Only `run-learn.py`,
+`run-persona.py`, and `run-tutor.py` abort mid-run if the server stops answering.
+The other four record those attempts as failures. See the 2026-07-28 note in
+**Historical Notes** for why preflight matters:
 a restart during a run previously produced complete, exit-0 summaries reporting
 that every model scored zero.
 
@@ -205,6 +206,7 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 | `eval/test_gateway.py` | `generate()` request shape (system prompt from `prompt.txt`, thinking flag, JSON schema shape, option mapping, `num_ctx` rejected), metadata normalization, dropped-connection handling, preflight and dead-server abort, `load_model()` cold-load timing, `served_ctx()` |
 | `eval/test_speed.py` | `run-speed.py` offload label, GGUF size, per-process VRAM parsing |
 | `eval/test_json.py` | `run-json.py` served-context check, no `num_ctx` in requests |
+| `eval/test_preflight.py` | every runner preflights before creating a run dir (and `run-json.py` before reading served context), and imports the gateway's `preflight` |
 
 Every test was seen failing before its change landed. Where a test could only
 fail at first because its function did not exist yet, or because it guards
@@ -347,10 +349,14 @@ Run: `eval/runs/20260915T012103Z/speed/summary.md`
 | 2 | `qwen` | 56.4 | 430 | 7.7s | 20.2 GiB | 6.1 GiB | 34 MoE layers on CPU, MTP |
 | 3 | `gemma` | 41.6 | 701 | 5.2s | 13.4 GiB | 6.1 GiB | 21 MoE layers on CPU |
 
-Finding: generation is well ahead of the Ollama era for the two models with
-identical weights (`gemma` 28.3 → 41.6, `qwen` 40.9 → 56.4) even after the
-headroom fix gave some back. `gemma` read 44.8 in the back-to-back headroom test
-the day before, so treat about ±3 tok/s as run-to-run spread at 2 samples.
+Finding: generation reads well ahead of the Ollama-era numbers for the two models
+with identical weights (`gemma` 28.3 → 41.6, `qwen` 40.9 → 56.4), but most of that
+gap is not the runtime. A same-day comparison on the same weights ran Ollama
+0.33.3 at 43.5 tok/s for `gemma` and 44.4 for `qwen`, putting llama.cpp's own gain
+at about 5 to 7% for `gemma` and 32% for `qwen`, about half of it from MTP (see
+**Same-day Ollama and llama.cpp comparison** under Historical Notes). `gemma` read
+44.8 in the back-to-back headroom test the day before, so treat about ±3 tok/s as
+run-to-run spread at 2 samples.
 
 ### Coding (`run-code.py`)
 
@@ -509,6 +515,62 @@ active parameters per token does.
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
 
+### Same-day Ollama and llama.cpp comparison (2026-09-15)
+
+Earlier speed comparisons set llama.cpp against the 2026-07-28 Ollama tags. This
+one ran both runtimes on the same day, on byte-identical weights, with everything
+else held equal, to measure what the runtime itself changes.
+
+**Setup.** `gemma` and `qwen` only (`lite`'s weights differ between runtimes).
+Ollama 0.33.3 ran the base tags `gemma4:26b-a4b-it-qat` and
+`qwen3.6:35b-a3b-mtp-q4_K_M` as the service is configured (q8_0 KV cache, flash
+attention, its own GPU/CPU split). Both runtimes got the model's own `prompt.txt`
+as the system message, the `run-speed.py` prompts, the same samplers, 32768
+context, a 200-token cap, and thinking off. Neither reused a prompt prefix: Ollama
+used `keep_alive: 0` so every request reloaded the model, and llama.cpp sent
+`cache_prompt: false`. Prompt token counts were identical on both runtimes (2990
+for `gemma`, 2964 for `qwen`), which confirms Ollama was not answering from a
+cache. Each configuration ran 2 prompts × 3 attempts. The first Ollama request on
+each model was a cold outlier (`gemma` generated at 16.5 tok/s), so the table
+compares medians. llama.cpp ran first with Ollama stopped, then Ollama ran with
+llama-server stopped.
+
+| Configuration | Gen tok/s (median) | vs Ollama | Prompt tok/s (median) | Model VRAM |
+|---|---:|---:|---:|---:|
+| Ollama `gemma` (35% on GPU) | 43.5 | | 699 | 4.9 GiB |
+| llama.cpp `gemma`, q8_0 KV (matched) | 45.6 | +5% | 729 | 6.3 GiB |
+| llama.cpp `gemma`, q4_0 KV (production) | 46.7 | +7% | 748 | 6.1 GiB |
+| Ollama `qwen` (24% on GPU) | 44.4 | | 459 | 5.0 GiB |
+| llama.cpp `qwen`, q4_0 KV, MTP off | 51.3 | +16% | 466 | 5.2 GiB |
+| llama.cpp `qwen`, q4_0 KV, MTP (production) | 58.4 | +32% | 466 | 6.1 GiB |
+| llama.cpp `qwen`, q8_0 KV, MTP (matched) | 60.6 | +36% | 460 | 6.2 GiB |
+
+Ollama's split was read from `/api/ps` with 32768 context loaded. llama.cpp VRAM is
+the `llama-server` process from `nvidia-smi`.
+
+**Findings.**
+
+- On the same day and the same weights, llama.cpp generates `gemma` only 5 to 7%
+  faster, and `qwen` 16% faster from the runtime alone, 32 to 36% with MTP. MTP is
+  worth about 1.14× on `qwen` (51.3 → 58.4). Prompt ingest is about equal.
+- KV cache type barely matters on llama.cpp (a few percent either way), so
+  Ollama's q8_0 setting did not skew the comparison.
+- llama.cpp keeps more of each model in VRAM (6.1 to 6.3 GiB in the configurations
+  with MTP or the production cache, against Ollama's 4.9 to 5.0 GiB), which may
+  account for part of its edge.
+- Today's Ollama is far faster than the 2026-07-28 Ollama numbers (`gemma` 28.3 →
+  43.5, `qwen` 40.9 → 44.4). The earlier estimate that llama.cpp was 1.4 to 1.6×
+  faster came from comparing against those older numbers and was wrong. What
+  changed on the Ollama side since July was not isolated: the version, the KV
+  cache setting (q4_0 then, q8_0 now), `OLLAMA_VULKAN`, and keep-alive all differ.
+- The case for the switch therefore rests less on raw speed than first stated. It
+  also rests on seeds that reproduce across restarts, pinned and known GPU/CPU
+  splits, MTP, and server errors that fail loudly instead of truncating.
+
+Samples are small (6 per configuration, one day, one box), and Ollama's `qwen`
+samples spread from 35.6 to 53.8 tok/s, so read the `gemma` margin as close to a
+tie and the `qwen` MTP margin as real.
+
 ### Runtime switch: Ollama to llama.cpp (2026-09-14)
 
 The runtime moved from Ollama 0.33.3 to llama.cpp's `llama-server` (build 10968,
@@ -566,6 +628,10 @@ without one. MTP was measured separately on `lite`: 142.8 tok/s with it and 101.
 without (1.41×). `qwen` was only measured with MTP on (60.7 to 63.5 tok/s, about
 65% of drafted tokens accepted).
 
+The Ollama column above is the 2026-07-28 tags, not a same-day measurement, so
+the gap it shows overstates what the runtime switch bought. The 2026-09-15
+same-day comparison below found today's Ollama much closer.
+
 Quality through the new stack, small samples, to confirm nothing broke rather
 than to rank:
 
@@ -581,7 +647,7 @@ than to rank:
 Still open at the time: the `--seed` reproducibility recheck across restarts, a
 full `standard` re-baseline, and preflight in the four runners that lack it. The
 first two were done on 2026-09-15 (see **Reproducibility** and **Current Benchmark
-Snapshot**). Runner preflight is still open.
+Snapshot**). Runner preflight was added the same day.
 
 ### Offload headroom (2026-09-14)
 

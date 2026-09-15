@@ -256,8 +256,10 @@ assembles the same stack.
 
 The runtime is llama.cpp's `llama-server` in router mode: one process on port
 8080 that starts a child server per model on demand and routes each request by
-its `model` field. `make serve` runs it in the foreground over
-`models/models.ini`. The repo ships no service unit.
+its `model` field. Day to day it runs as the `llama-server` user service, reading
+the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
+other apps*). `make serve` runs a router in the foreground over the repo's own
+`models/models.ini`, for trying changes before deploying them.
 
 Benchmarks were run on llama.cpp build 10968 (commit `41abbfd59`), built from
 source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
@@ -283,8 +285,8 @@ systemd override:
 | `OLLAMA_NUM_PARALLEL=1` | `parallel = 1` (the server default is 4 slots) | `server.ini` |
 | `OLLAMA_FLASH_ATTENTION=1` | `flash-attn = on` | `server.ini` |
 | `OLLAMA_KV_CACHE_TYPE=q4_0` | `cache-type-k = q4_0`, `cache-type-v = q4_0` | `server.ini` |
-| `OLLAMA_MAX_LOADED_MODELS=1` | `--models-max 1` | `make serve` |
-| `OLLAMA_KEEP_ALIVE=10m` | not set (in testing a model stayed loaded until another was requested) | none |
+| `OLLAMA_MAX_LOADED_MODELS=1` | `--models-max 1` | service unit, `make serve` |
+| `OLLAMA_KEEP_ALIVE=10m` | `sleep-idle-seconds = 600`: an idle model sleeps and frees its VRAM, and the next request wakes it | `server.ini` |
 | automatic GPU/CPU split | `fit = off` plus each builder's `LOAD` | `server.ini`, `build-*` |
 
 `--models-max 1` matters for the benchmarks, not just for daily use. With two
@@ -301,7 +303,8 @@ message and turns prompt caching off on every call, because the llama-server doc
 warn that cached prefixes make results not bit-identical and reproducibility is
 already the weak spot here (see [`TESTING.md`](TESTING.md)).
 
-**Stopping `make serve` invalidates a run in flight.** `run-learn.py`,
+**Stopping or restarting the router (the service or `make serve`) invalidates a
+run in flight.** `run-learn.py`,
 `run-persona.py`, and `run-tutor.py` preflight the router and abort on a streak
 of connection failures instead of recording every attempt as a model failure. An
 abort still costs the run, so let a `standard` pass finish before restarting.
@@ -309,15 +312,85 @@ abort still costs the run, so let a `standard` pass finish before restarting.
 Common commands:
 
 ```bash
-make build && make serve                               # rebuild presets, start the router
+make build && make deploy && systemctl --user restart llama-server   # ship a preset change
+make serve PORT=8081                                   # try an undeployed change beside the service
 curl -s localhost:8080/models | jq '.data[] | {id, status: .status.value}'
 curl -s -X POST localhost:8080/models/load   -H 'Content-Type: application/json' -d '{"model":"gemma"}'
 curl -s -X POST localhost:8080/models/unload -H 'Content-Type: application/json' -d '{"model":"gemma"}'
 nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
 ```
 
-A running router does not pick up a rebuilt `models/models.ini` on its own, so
-restart `make serve` after `make build`.
+A running router does not pick up a changed preset on its own: restart the service
+after `make deploy`, or restart `make serve` after `make build`.
+
+## Serving other apps
+
+The router is a machine-level service, not part of this repo at runtime. Jobhunt,
+SEO-LLM, this repo's evals, and editors are all just clients of
+`http://localhost:8080`. The pieces live where a standard llama.cpp setup puts
+them:
+
+| Piece | Location |
+|---|---|
+| Binary | `~/.local/bin/llama-server` (built from `~/src/llama.cpp`) |
+| Models | `~/models/gguf/` |
+| Server config | `~/.config/llama.cpp/models.ini`, written by `make deploy` |
+| Service | `~/.config/systemd/user/llama-server.service`, copied from `systemd/llama-server.service` |
+
+This repo stays the tracked source of the config: builders generate
+`models/models.ini`, and `make deploy` copies it into place, so a half-finished
+edit here never reaches the apps until it is deployed. The service runs as you, so
+none of this needs sudo, and it starts at login.
+
+Install once:
+
+```bash
+# Runs in: local terminal, as your user. Safe to re-run.
+cd ~/Apps/Local-LLM && make deploy
+mkdir -p ~/.config/systemd/user
+cp ~/Apps/Local-LLM/systemd/llama-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now llama-server
+systemctl --user is-active llama-server
+curl -s localhost:8080/health
+```
+
+`is-active` must print `active` and the last command `{"status":"ok"}`. If not,
+read `journalctl --user -u llama-server -n 50`. Both files are copies, so after
+changing the tracked unit, copy it again and run `systemctl --user daemon-reload`.
+
+Day to day:
+
+| Task | Command |
+|---|---|
+| Status / logs | `systemctl --user status llama-server`, `journalctl --user -u llama-server -f` |
+| Ship a preset change | `make build && make deploy && systemctl --user restart llama-server` |
+| Try a change without touching the service | `make serve PORT=8081`, and `LLM_URL=http://localhost:8081` for the eval runners |
+| Free the GPU now | `systemctl --user stop llama-server` (idle models also sleep on their own after 10 minutes) |
+| Plain `make serve` on 8080 | Stop the service first. Two routers cannot share a port: the second exits with `couldn't bind HTTP server socket`. |
+
+**Contract for apps.** These are identifiers other repos depend on, so changing
+any of them is a coordinated change across repos, not a local edit:
+
+- Endpoint `POST http://localhost:8080/v1/chat/completions` (OpenAI format). Any
+  non-empty API key is accepted.
+- `model` is one of `gemma`, `qwen`, `lite`.
+- The app sends its own system message. Nothing is baked into the model, so a
+  request without one gets the bare base model.
+- Context is fixed at 32768 tokens by the preset. There is no per-request
+  context size, and a longer prompt returns HTTP 400 `exceed_context_size_error`
+  instead of being truncated.
+- Structured output: `response_format: {"type": "json_schema", "json_schema":
+  {"name": "...", "schema": {...}}}`. The top-level `schema` shape shown in the
+  llama-server README was silently ignored on build 10968.
+- Thinking off: `chat_template_kwargs: {"enable_thinking": false}`. Thoughts, when
+  on, come back in `reasoning_content`, separate from the answer.
+- One model is loaded at a time. An app asking for a different model unloads the
+  current one, so two apps using different models take turns paying the load.
+- After 10 idle minutes a loaded model goes to sleep and frees its VRAM. The next
+  request wakes it without any change on the client side: `lite` answered in
+  about 1 to 2 seconds in testing (gemma and qwen wake times were not measured).
+  While it sleeps, `GET /models` reports `sleeping`.
 
 ## Use In VSCode (Continue / Cline)
 

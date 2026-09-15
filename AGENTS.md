@@ -1179,12 +1179,26 @@ When resetting, the section becomes exactly this and nothing more:
   unload, and `/props` reads. Runners never open their own connection to the
   router. (2026-09-14)
 - **Anything outside the repo is Casey's.** That covers the llama.cpp build in
-  `~/src/llama.cpp`, the GGUFs in `~/models/gguf`, Ollama, and any service unit.
-  The agent hands over commands for these under tier 0. Starting `make serve` to
-  verify a change is repo-local and is the agent's own job, and the router is
-  stopped again before handoff. (2026-09-14)
+  `~/src/llama.cpp`, the GGUFs in `~/models/gguf`, the deployed config in
+  `~/.config/llama.cpp`, Ollama, and any service unit. The agent hands over
+  commands for these under tier 0. Starting `make serve` to verify a change is
+  repo-local and is the agent's own job (on a spare port while the service runs),
+  and that router is stopped again before handoff. (2026-09-14, updated 2026-09-15)
 - **Verification runs write to the scratchpad, not `eval/runs/`.** Pass
   `--out-root` to a scratch directory when a benchmark run is only checking that
   code works. `promote.py` treats the newest run per suite as the leaderboard, so
   a verification run on a half-finished lineup would become the README's current
   numbers. Only real comparison passes write to `eval/runs/`. (2026-09-14)
+- **Locked: the router is a contract for other repos.** Jobhunt and SEO-LLM call
+  `http://localhost:8080/v1/chat/completions` with model `gemma`, `qwen`, or `lite`
+  (README, "Serving other apps"). Changing the port, a model name, the context
+  size, or the structured-output shape breaks those apps, so it needs Casey's
+  approval and a matching change planned in each app's repo. (2026-09-15)
+- **The `llama-server` user service is the live server. Verify beside it, never
+  replace it.** It holds port 8080 and serves the deployed
+  `~/.config/llama.cpp/models.ini`, so `make serve` on 8080 exits with a bind
+  error while it runs. Test undeployed changes with `make serve PORT=8081` and
+  `LLM_URL=http://localhost:8081`. `make deploy` writes outside the repo and
+  restarting or stopping the service is a service action, so both stay Casey's
+  under tier 0: hand over `make deploy && systemctl --user restart llama-server`
+  rather than running it. (2026-09-15)

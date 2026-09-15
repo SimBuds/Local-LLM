@@ -1,0 +1,22 @@
+# systemd user unit: the shared llama.cpp router server on http://localhost:8080.
+#
+# Independent of any repo at runtime. It reads only the deployed preset in
+# ~/.config/llama.cpp/models.ini (written by `make deploy` in ~/Apps/Local-LLM)
+# and the GGUFs that preset names. Installed by copying this file, not symlinking,
+# into ~/.config/systemd/user/. See README.md, "Serving other apps".
+#
+# %h is the user's home directory. The binary path is absolute because user units
+# do not inherit the login shell's PATH.
+
+[Unit]
+Description=llama.cpp router server (http://localhost:8080)
+Documentation=https://github.com/ggml-org/llama.cpp/tree/master/tools/server
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/llama-server --models-preset %h/.config/llama.cpp/models.ini --models-max 1 --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

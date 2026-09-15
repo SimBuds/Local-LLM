@@ -327,6 +327,19 @@ class LoadModelTests(GatewayCase):
         self.assertGreater(self.clock, 0.0)  # time did pass while unloading
         self.assertEqual(seconds, 0.0)       # none of it counted as load time
 
+    def test_sleeping_model_is_unloaded_before_a_timed_load(self):
+        # server.ini sets sleep-idle-seconds, so an idle model reads `sleeping`
+        # (observed 2026-09-15). Timing a wake from sleep would report ~1s as a
+        # "cold load", so it must be unloaded first like a loaded model.
+        self.serve(router_listing("gemma", "sleeping"), SUCCESS,
+                   router_listing("gemma", "unloaded"), SUCCESS,
+                   router_listing("gemma", "loaded", args=LOADED_ARGS))
+        seconds, args = gw.load_model("gemma", timeout=60)
+
+        self.assertEqual(self.url(1), "http://localhost:8080/models/unload")
+        self.assertEqual(self.url(3), "http://localhost:8080/models/load")
+        self.assertEqual(args, LOADED_ARGS)
+
     def test_failed_load_raises_with_exit_code(self):
         self.serve(router_listing("gemma", "unloaded"), SUCCESS,
                    router_listing("gemma", "unloaded", failed=True, exit_code=1))

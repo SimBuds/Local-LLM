@@ -6,7 +6,8 @@
 # commit that breaks the identity rule, so it lives here instead.
 #
 #   make build   rebuild only the models whose prompt stack changed
-#   make serve   start the llama-server router over models/models.ini
+#   make deploy  copy models/models.ini to ~/.config/llama.cpp/ for the llama-server service
+#   make serve   start a router over the repo's models/models.ini (testing undeployed changes)
 #   make check   rebuild those, then run the persona suite over all of them
 #   make persona run the persona suite without rebuilding
 #   make hook    install the pre-commit hook that runs `make check`
@@ -26,8 +27,11 @@ PRESETS := $(addprefix models/,$(addsuffix /preset.ini,$(MODELS)))
 # usable as a gate; the real measurement is ./eval/run-profile.py.
 ATTEMPTS ?= 3
 PORT     ?= 8080
+# The llama-server user service (systemd/llama-server.service) reads its preset
+# from here. Override to deploy somewhere else, e.g. a scratch dir for testing.
+DEPLOY_DIR ?= $(HOME)/.config/llama.cpp
 
-.PHONY: all build serve check persona hook clean
+.PHONY: all build deploy serve check persona hook clean
 
 all: build
 
@@ -46,8 +50,18 @@ models/%/.built: build-% build-common.sh $(STACK)
 	./build-$*
 	@mkdir -p $(dir $@) && touch $@
 
+# The service serves the deployed copy, not the repo's, so a half-finished edit here
+# never reaches the apps that depend on it. Restart the service after deploying:
+# systemctl --user restart llama-server
+deploy: models/models.ini
+	mkdir -p $(DEPLOY_DIR)
+	cp models/models.ini $(DEPLOY_DIR)/models.ini
+	@echo "deployed to $(DEPLOY_DIR)/models.ini, now: systemctl --user restart llama-server"
+
 # --models-max 1 keeps one model resident at a time, so each gets the whole card
 # and a model's throughput never depends on what else happens to be loaded.
+# While the service holds port 8080, try undeployed changes on another port:
+# make serve PORT=8081, with LLM_URL=http://localhost:8081 for the eval runners.
 serve: models/models.ini
 	llama-server --models-preset models/models.ini --models-max 1 --port $(PORT)
 

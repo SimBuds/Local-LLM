@@ -55,7 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
     REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, generate,
-    get_effective_think, new_run_dir, rel_path, resolve_model, sample_caveat,
+    get_effective_think, new_run_dir, preflight, rel_path, resolve_model, sample_caveat,
     seed_opts, served_ctx, spread_note, tok_per_s,
 )
 from json_tasks import TASKS, JsonTask, build_context  # noqa: E402
@@ -262,6 +262,9 @@ def main() -> int:
         print(f"unknown tasks: {unknown}; choose from {list(TASKS)}", file=sys.stderr)
         return 1
     tasks = resolve_tasks([TASKS[t] for t in args.tasks], args.context_pressure, args.position)
+    # Fail before creating a run dir, not after filling it with zeros. Before
+    # require_ctx too, so a down router reports itself instead of a served_ctx error.
+    preflight(list(args.models))
     served = require_ctx(args.models, args.num_ctx)
 
     run_dir = new_run_dir(args.out_root) / "json"

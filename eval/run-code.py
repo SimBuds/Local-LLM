@@ -37,7 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
     REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, extract_code, generate,
-    get_effective_think, new_run_dir, rel_path, resolve_model, run_program,
+    get_effective_think, new_run_dir, preflight, rel_path, resolve_model, run_program,
     sample_caveat, sandbox_note, seed_opts, spread_note, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
@@ -98,6 +98,9 @@ def main() -> int:
     if not tasks:
         print(f"no tasks matched {args.tasks}", file=sys.stderr)
         return 1
+
+    # Fail before creating a run dir, not after filling it with zeros.
+    preflight(list(args.models))
 
     run_dir = new_run_dir(args.out_root) / "code"
     run_dir.mkdir(parents=True)

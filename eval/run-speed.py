@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
     REPO_ROOT, add_seed_arg, generate, get_effective_think, load_model, new_run_dir,
-    prompt_tok_per_s, rel_path, resolve_model, tok_per_s,
+    preflight, prompt_tok_per_s, rel_path, resolve_model, tok_per_s,
 )
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
@@ -196,6 +196,9 @@ def main() -> int:
         extra_opts[k.strip()] = int(v) if v.strip().lstrip("-").isdigit() else v.strip()
     if args.seed is not None:
         extra_opts.setdefault("seed", args.seed)  # explicit --opt seed=N still wins
+
+    # Fail before creating a run dir, not after filling it with zeros.
+    preflight(list(args.models))
 
     run_dir = new_run_dir(args.out_root) / "speed"
     run_dir.mkdir(parents=True)
