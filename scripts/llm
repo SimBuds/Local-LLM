@@ -4,10 +4,13 @@
   llm status                       models, their state, and llama-server VRAM   (ollama ps / list)
   llm load MODEL                   load a model and wait until it is ready     (preload)
   llm unload [MODEL]               unload one model, or every resident one      (ollama stop)
-  llm chat [--think] [--system-file PATH] MODEL [PROMPT...]
-                                   one request, answer printed; the prompt is
+  llm chat [--think] [--verbose] [--system-file PATH] MODEL [PROMPT...]
+                                   one request, answer streamed; thinking and
+                                   --verbose stats go to stderr; the prompt is
                                    read from stdin when not given                (ollama run MODEL "...")
-  llm logs [JOURNALCTL ARGS...]    router log, default `-n 50 -f`                (journalctl -u ollama -f)
+  llm logs [--all] [JOURNALCTL ARGS...]
+                                   router log, default `-n 50 -f`, without the
+                                   per-load argument dump unless --all           (journalctl -u ollama -f)
 
 LLM_URL overrides the router address (default http://localhost:8080).
 
@@ -20,8 +23,10 @@ Tracked at Local-LLM/scripts/llm. Install: install -m 755 scripts/llm ~/.local/b
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -33,6 +38,9 @@ DEFAULT_URL = "http://localhost:8080"
 POLL_S = 0.5
 LOAD_TIMEOUT_S = 600
 UNLOAD_TIMEOUT_S = 60
+# `srv          load:   --host`: one spawn argument. Real messages have one space
+# after `load:` (`load: spawning server instance with args:`).
+SPAWN_ARG = re.compile(r" load:   \S")
 
 
 class CliError(Exception):
@@ -43,18 +51,16 @@ def base_url() -> str:
     return os.environ.get("LLM_URL", DEFAULT_URL).rstrip("/")
 
 
-def request(path: str, body: dict | None = None, timeout: int = 30) -> dict:
+def open_url(path: str, body: dict | None, timeout: int):
+    """GET (no body) or POST JSON. Router and connection failures become CliError."""
     url = base_url() + path
     try:
         if body is None:
-            resp = urllib.request.urlopen(url, timeout=timeout)
-        else:
-            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
-                                         headers={"Content-Type": "application/json"},
-                                         method="POST")
-            resp = urllib.request.urlopen(req, timeout=timeout)
-        with resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return urllib.request.urlopen(url, timeout=timeout)
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        return urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")
         try:
@@ -63,8 +69,73 @@ def request(path: str, body: dict | None = None, timeout: int = 30) -> dict:
             pass
         raise CliError(f"router returned HTTP {e.code} for {path}: {detail}") from e
     except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
-        raise CliError(f"no llama-server router at {base_url()} ({e})\n"
+        reason = getattr(e, "reason", e)  # URLError wraps the socket error in `reason`
+        raise CliError(f"no llama-server router at {base_url()} ({reason})\n"
                        f"  Start it:  systemctl --user start llama-server") from e
+
+
+def request(path: str, body: dict | None = None, timeout: int = 30) -> dict:
+    with open_url(path, body, timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def stream_chat(body: dict) -> dict:
+    """POST a streamed chat request and print it as it arrives.
+
+    Answer text goes to stdout. Thinking goes to stderr, so redirecting stdout keeps
+    only the answer. Returns {"content": full answer, "timings": dict or None}."""
+    dim, reset = ("\033[2m", "\033[0m") if sys.stderr.isatty() else ("", "")
+    content: list[str] = []
+    timings = None
+    thinking = False
+    try:
+        with open_url("/v1/chat/completions", {**body, "stream": True}, LOAD_TIMEOUT_S) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue  # blank separators and `: keepalive` comments
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                if "error" in chunk:
+                    err = chunk["error"]
+                    raise CliError(f"router error mid-answer: {err.get('message', err)}")
+                timings = chunk.get("timings") or timings
+                delta = ((chunk.get("choices") or [{}])[0].get("delta")) or {}
+                if delta.get("reasoning_content"):
+                    if not thinking:
+                        sys.stderr.write(f"{dim}Thinking...\n")
+                        thinking = True
+                    sys.stderr.write(delta["reasoning_content"])
+                    sys.stderr.flush()
+                if delta.get("content"):
+                    if thinking:
+                        sys.stderr.write(f"\n...done thinking.{reset}\n\n")
+                        sys.stderr.flush()
+                        thinking = False
+                    content.append(delta["content"])
+                    sys.stdout.write(delta["content"])
+                    sys.stdout.flush()
+    except (ConnectionError, TimeoutError, http.client.HTTPException) as e:
+        raise CliError(f"connection to the router dropped mid-answer ({e})") from e
+    finally:
+        if thinking:
+            sys.stderr.write(f"\n...done thinking.{reset}\n")
+        if content:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+    return {"content": "".join(content), "timings": timings}
+
+
+def stats_line(t: dict) -> str:
+    parts = [f"prompt {t.get('prompt_n', 0)} tok, {t.get('prompt_per_second', 0):.1f} tok/s",
+             f"answer {t.get('predicted_n', 0)} tok, {t.get('predicted_per_second', 0):.1f} tok/s"]
+    if t.get("cache_n"):
+        parts[0] += f" ({t['cache_n']} cached)"
+    if t.get("draft_n"):
+        parts.append(f"MTP {t.get('draft_n_accepted', 0)}/{t['draft_n']} accepted")
+    return " | ".join(parts)
 
 
 def models() -> dict[str, dict]:
@@ -156,6 +227,8 @@ def cmd_unload(args) -> int:
 
 
 def cmd_chat(args) -> int:
+    # Checked first so an unknown model lists the names, as `load` does.
+    require(args.model, models())
     prompt = " ".join(args.prompt) if args.prompt else sys.stdin.read().strip()
     if not prompt:
         raise CliError("no prompt given (pass it as arguments or on stdin)")
@@ -164,20 +237,36 @@ def cmd_chat(args) -> int:
         messages.append({"role": "system",
                          "content": Path(args.system_file).read_text(encoding="utf-8")})
     messages.append({"role": "user", "content": prompt})
-    reply = request("/v1/chat/completions", {
+    reply = stream_chat({
         "model": args.model,
         "messages": messages,
         "chat_template_kwargs": {"enable_thinking": args.think},
-    }, timeout=LOAD_TIMEOUT_S)
-    choices = reply.get("choices") or [{}]
-    print((choices[0].get("message") or {}).get("content") or "")
+    })
+    if args.verbose and reply["timings"]:
+        print(stats_line(reply["timings"]), file=sys.stderr)
     return 0
 
 
 def cmd_logs(extra: list[str]) -> int:
+    show_all = extra[:1] == ["--all"]
+    extra = extra[1:] if show_all else extra
     argv = ["journalctl", "--user", "-u", "llama-server", *(extra or ["-n", "50", "-f"])]
-    os.execvp("journalctl", argv)
-    return 0  # not reached unless execvp is patched out in tests
+    if show_all:
+        os.execvp("journalctl", argv)
+        return 0  # not reached unless execvp is patched out in tests
+    # Each model load logs its full argument list one argument per line (about 50
+    # lines), which buries everything else. Those lines are dropped here.
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+    try:
+        for line in proc.stdout:
+            if not SPAWN_ARG.search(line):
+                sys.stdout.write(line)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+        return 0
+    return proc.wait()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -199,11 +288,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("chat", help="one request, answer printed")
     p.add_argument("--think", action="store_true", help="let the model think first")
     p.add_argument("--system-file", help="send this file as the system message")
+    p.add_argument("--verbose", action="store_true",
+                   help="print prompt and answer token counts and speed to stderr")
     p.add_argument("model")
     p.add_argument("prompt", nargs="*")
     p.set_defaults(func=cmd_chat)
     sub.add_parser("logs", help="router log via journalctl (default -n 50 -f), "
-                                "extra arguments pass straight to journalctl")
+                                "--all keeps the per-load argument dump, "
+                                "other arguments pass straight to journalctl")
 
     args = ap.parse_args(argv)
     try:

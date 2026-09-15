@@ -393,8 +393,8 @@ llm status
 | `ollama ps`, `ollama list` | `llm status` | Router up or down, each model's state (`loaded`, `sleeping`, `unloaded`), VRAM held by llama-server |
 | (preload) | `llm load MODEL` | Loads and waits until ready. Reports `already loaded` or `sleeping` instead of reloading. |
 | `ollama stop MODEL` | `llm unload [MODEL]` | Unloads one model, or every resident one, and waits until the router confirms it stopped |
-| `ollama run MODEL "..."` | `llm chat MODEL "..."` | One request, answer printed. Thinking off unless `--think`. `--system-file PATH` sends a system message (for example `models/qwen/prompt.txt`). Reads the prompt from stdin when none is given. |
-| `journalctl -u ollama -f` | `llm logs` | Router log, last 50 lines then follow. Extra arguments go straight to journalctl, e.g. `llm logs -n 20 --no-pager`. |
+| `ollama run MODEL "..."` | `llm chat MODEL "..."` | One request, answer streamed as it is written. Thinking off unless `--think`, which shows the reasoning on stderr, so `> file` keeps only the answer. `--verbose` adds prompt and answer token counts and speed on stderr. `--system-file PATH` sends a system message (for example `models/qwen/prompt.txt`). Reads the prompt from stdin when none is given. An unknown model lists the available names. |
+| `journalctl -u ollama -f` | `llm logs` | Router log, last 50 lines then follow. Hides the one-argument-per-line dump each model load writes. `llm logs --all` shows every line. Extra arguments go straight to journalctl, e.g. `llm logs -n 20 --no-pager`. |
 
 `LLM_URL` points it at another router, such as a test one on port 8081. Unlike
 `ollama run`, `llm chat` sends no system prompt unless you pass one, so the reply
