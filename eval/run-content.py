@@ -30,7 +30,7 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _ollama import (  # noqa: E402
+from _gateway import (  # noqa: E402
     REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, generate,
     get_effective_think, new_run_dir, rel_path, resolve_model, sample_caveat,
     seed_opts, spread_note, tok_per_s,

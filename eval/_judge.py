@@ -30,7 +30,7 @@ import json
 import re
 import statistics
 
-from _ollama import generate, resolve_model
+from _gateway import generate, resolve_model
 
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 

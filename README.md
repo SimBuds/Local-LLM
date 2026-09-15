@@ -278,7 +278,7 @@ model gets the whole card in turn. `run-learn.py` and `run-tutor.py` are built f
 this: they generate every response first, then loop by judge, so each model loads
 once per phase instead of thrashing on every call.
 
-The eval runners reach the router through `eval/_ollama.py`, which reads
+The eval runners reach the router through `eval/_gateway.py`, which reads
 `LLM_URL` (default `http://localhost:8080`). It sends `prompt.txt` as the system
 message and turns prompt caching off on every call, because the llama-server docs
 warn that cached prefixes make results not bit-identical and reproducibility is

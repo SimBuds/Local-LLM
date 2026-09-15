@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _ollama import (  # noqa: E402
+from _gateway import (  # noqa: E402
     REPO_ROOT, add_seed_arg, generate, get_effective_think, load_model, new_run_dir,
     prompt_tok_per_s, rel_path, resolve_model, tok_per_s,
 )

@@ -192,7 +192,7 @@ Every test was seen failing before its change landed. Where a test could only
 fail at first because its function did not exist yet, or because it guards
 behavior the change kept, the code was also broken on purpose to confirm the test
 catches a wrong implementation (24 such checks on 2026-09-14, all caught). Run
-them after any change to `eval/_ollama.py` or the runner helpers.
+them after any change to `eval/_gateway.py` or the runner helpers.
 
 ## Interpreting Results
 
@@ -533,7 +533,7 @@ path. What changed, and what each change was checked against:
 - **Offload.** Pinned per model from what `--fit` chose (gemma 18 and qwen 32 MoE
   layers on CPU, lite all GPU) with `fit = off`, so free desktop VRAM cannot
   change a run's split.
-- **Gateway (`eval/_ollama.py`).** `/v1/chat/completions` with thinking set
+- **Gateway (`eval/_gateway.py`, named `_ollama.py` until the same day).** `/v1/chat/completions` with thinking set
   through `chat_template_kwargs.enable_thinking` and `cache_prompt: false` on
   every call. JSON schemas use the nested OpenAI `response_format` shape: the
   top-level `schema` shape shown in the server README was accepted and ignored on

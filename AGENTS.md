@@ -1154,7 +1154,7 @@ When resetting, the section becomes exactly this and nothing more:
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with the README recipe after a model or
   hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: `CACHE_PROMPT = False` in `eval/_ollama.py`.** The llama-server docs
+- **Locked: `CACHE_PROMPT = False` in `eval/_gateway.py`.** The llama-server docs
   state that cached prompt prefixes make logits not bit-identical, and `--seed`
   reproducibility is already unresolved. Turning caching on for speed needs
   Casey's approval and a reproducibility measurement. (2026-09-14)
@@ -1167,7 +1167,7 @@ When resetting, the section becomes exactly this and nothing more:
   learning, and tutor tables compared models at different samplers and had to be
   thrown out. A model that needs its own decoding gets its own preset, not a
   different baseline.
-- **Every router call goes through `eval/_ollama.py`**, including model load,
+- **Every router call goes through `eval/_gateway.py`**, including model load,
   unload, and `/props` reads. Runners never open their own connection to the
   router. (2026-09-14)
 - **Anything outside the repo is Casey's.** That covers the llama.cpp build in

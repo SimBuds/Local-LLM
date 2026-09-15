@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for the model-call gateway in _ollama.py.
+Unit tests for the model-call gateway in _gateway.py.
 
 No live server: urlopen is patched, and the response bodies below are trimmed
 captures from the llama-server router (build 10968, commit 41abbfd59) taken on
@@ -23,7 +23,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import _ollama as gw  # noqa: E402
+import _gateway as gw  # noqa: E402
 
 # POST /v1/chat/completions, model "lite", thinking off, max_tokens 16.
 CHAT_RESPONSE = {

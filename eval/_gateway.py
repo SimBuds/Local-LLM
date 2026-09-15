@@ -369,12 +369,12 @@ def rel_path(p: Path) -> str:
 
 
 def seed_opts(seed: int | None, base: dict | None = None) -> dict | None:
-    """Merge `seed` into Ollama generate options, or return `base` unchanged.
+    """Merge `seed` into generate options, or return `base` unchanged.
 
-    Ollama treats `seed` as a decode seed: with a fixed seed and temperature the
-    same prompt yields the same completion, which is what makes a run repeatable.
-    Returns None when there is nothing to send, so callers can pass the result
-    straight through to `generate(options=...)`.
+    llama-server uses `seed` as the sampling seed, which is what lets a run be
+    replayed; how far that holds across server restarts is tracked in TESTING.md
+    under Reproducibility. Returns None when there is nothing to send, so callers
+    can pass the result straight through to `generate(options=...)`.
     """
     opts = dict(base or {})
     if seed is not None:
@@ -398,7 +398,7 @@ def add_seed_arg(ap) -> None:
     """Register the shared --seed flag on a runner's ArgumentParser."""
     ap.add_argument("--seed", type=int, default=None,
                     help="fix the decode seed so the run is reproducible "
-                         "(default: unset, so Ollama samples freshly each call)")
+                         "(default: unset, so the server samples freshly each call)")
 
 
 def extract_code(text: str, prefer_lang: str = "python") -> str:
