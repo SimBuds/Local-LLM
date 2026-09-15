@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""llm: Ollama-style terminal commands for the local llama-server router.
+
+  llm status                       models, their state, and llama-server VRAM   (ollama ps / list)
+  llm load MODEL                   load a model and wait until it is ready     (preload)
+  llm unload [MODEL]               unload one model, or every resident one      (ollama stop)
+  llm chat [--think] [--system-file PATH] MODEL [PROMPT...]
+                                   one request, answer printed; the prompt is
+                                   read from stdin when not given                (ollama run MODEL "...")
+  llm logs [JOURNALCTL ARGS...]    router log, default `-n 50 -f`                (journalctl -u ollama -f)
+
+LLM_URL overrides the router address (default http://localhost:8080).
+
+Standalone on purpose: the installed copy in ~/.local/bin must work without the
+Local-LLM repo, so it uses only the standard library and imports nothing from the
+repo. The request shapes match eval/_gateway.py and are pinned by eval/test_llm.py.
+Tracked at Local-LLM/scripts/llm. Install: install -m 755 scripts/llm ~/.local/bin/llm
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+DEFAULT_URL = "http://localhost:8080"
+POLL_S = 0.5
+LOAD_TIMEOUT_S = 600
+UNLOAD_TIMEOUT_S = 60
+
+
+class CliError(Exception):
+    """A user-facing failure: printed to stderr, exit code 1, no traceback."""
+
+
+def base_url() -> str:
+    return os.environ.get("LLM_URL", DEFAULT_URL).rstrip("/")
+
+
+def request(path: str, body: dict | None = None, timeout: int = 30) -> dict:
+    url = base_url() + path
+    try:
+        if body is None:
+            resp = urllib.request.urlopen(url, timeout=timeout)
+        else:
+            req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                         headers={"Content-Type": "application/json"},
+                                         method="POST")
+            resp = urllib.request.urlopen(req, timeout=timeout)
+        with resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")
+        try:
+            detail = json.loads(detail)["error"]["message"]
+        except (ValueError, KeyError, TypeError):
+            pass
+        raise CliError(f"router returned HTTP {e.code} for {path}: {detail}") from e
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+        raise CliError(f"no llama-server router at {base_url()} ({e})\n"
+                       f"  Start it:  systemctl --user start llama-server") from e
+
+
+def models() -> dict[str, dict]:
+    """Model id -> status dict, in the router's order."""
+    return {m["id"]: m.get("status") or {} for m in request("/models").get("data", [])}
+
+
+def require(model: str, listing: dict[str, dict]) -> dict:
+    if model not in listing:
+        raise CliError(f"unknown model {model!r}; available: {', '.join(listing)}")
+    return listing[model]
+
+
+def gpu_mib() -> int | None:
+    """VRAM held by llama-server processes, or None when nvidia-smi cannot say."""
+    try:
+        proc = subprocess.run(["nvidia-smi", "--query-compute-apps=process_name,used_memory",
+                               "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    used = []
+    for line in proc.stdout.splitlines():
+        cols = line.split(", ")
+        if len(cols) >= 2 and Path(cols[-2]).name == "llama-server":
+            used.append(int(cols[-1]))
+    return sum(used)
+
+
+def cmd_status(_args) -> int:
+    listing = models()
+    print(f"router  {base_url()}  up")
+    for model_id, status in listing.items():
+        print(f"  {model_id:<8} {status.get('value', '?')}")
+    vram = gpu_mib()
+    print(f"llama-server VRAM: {'unknown' if vram is None else f'{vram} MiB'}")
+    return 0
+
+
+def cmd_load(args) -> int:
+    status = require(args.model, models())
+    state = status.get("value")
+    if state == "loaded":
+        print(f"{args.model} is already loaded")
+        return 0
+    if state == "sleeping":
+        print(f"{args.model} is sleeping (loaded, VRAM freed); the next request wakes it")
+        return 0
+    started = time.monotonic()
+    request("/models/load", {"model": args.model})
+    while True:
+        status = require(args.model, models())
+        if status.get("failed"):
+            raise CliError(f"router failed to load {args.model} (exit code {status.get('exit_code')})\n"
+                           f"  See:  journalctl --user -u llama-server -n 50")
+        if status.get("value") == "loaded":
+            print(f"{args.model} loaded in {time.monotonic() - started:.1f}s")
+            return 0
+        if time.monotonic() - started > LOAD_TIMEOUT_S:
+            raise CliError(f"{args.model} not loaded after {LOAD_TIMEOUT_S}s "
+                           f"(last status {status.get('value')!r})")
+        time.sleep(POLL_S)
+
+
+def cmd_unload(args) -> int:
+    listing = models()
+    if args.model:
+        require(args.model, listing)
+        targets = [args.model]
+    else:
+        targets = [m for m, s in listing.items() if s.get("value") != "unloaded"]
+    if not targets:
+        print("nothing loaded")
+        return 0
+    for model_id in targets:
+        started = time.monotonic()
+        request("/models/unload", {"model": model_id})
+        # The router answers before the model has stopped. Until it reports
+        # `unloaded`, requests routed to that model fail with HTTP 500.
+        while require(model_id, models()).get("value") != "unloaded":
+            if time.monotonic() - started > UNLOAD_TIMEOUT_S:
+                raise CliError(f"{model_id} still not unloaded after {UNLOAD_TIMEOUT_S}s\n"
+                               f"  See:  journalctl --user -u llama-server -n 50")
+            time.sleep(POLL_S)
+        print(f"unloaded {model_id} in {time.monotonic() - started:.1f}s")
+    return 0
+
+
+def cmd_chat(args) -> int:
+    prompt = " ".join(args.prompt) if args.prompt else sys.stdin.read().strip()
+    if not prompt:
+        raise CliError("no prompt given (pass it as arguments or on stdin)")
+    messages = []
+    if args.system_file:
+        messages.append({"role": "system",
+                         "content": Path(args.system_file).read_text(encoding="utf-8")})
+    messages.append({"role": "user", "content": prompt})
+    reply = request("/v1/chat/completions", {
+        "model": args.model,
+        "messages": messages,
+        "chat_template_kwargs": {"enable_thinking": args.think},
+    }, timeout=LOAD_TIMEOUT_S)
+    choices = reply.get("choices") or [{}]
+    print((choices[0].get("message") or {}).get("content") or "")
+    return 0
+
+
+def cmd_logs(extra: list[str]) -> int:
+    argv = ["journalctl", "--user", "-u", "llama-server", *(extra or ["-n", "50", "-f"])]
+    os.execvp("journalctl", argv)
+    return 0  # not reached unless execvp is patched out in tests
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    # Everything after `logs` belongs to journalctl. argparse would reject options
+    # such as `-n 3` as its own unknown flags, so they bypass it.
+    if argv[:1] == ["logs"]:
+        return cmd_logs(argv[1:])
+    ap = argparse.ArgumentParser(prog="llm", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="command", required=True)
+    sub.add_parser("status", help="models, their state, and VRAM").set_defaults(func=cmd_status)
+    p = sub.add_parser("load", help="load a model and wait until it is ready")
+    p.add_argument("model")
+    p.set_defaults(func=cmd_load)
+    p = sub.add_parser("unload", help="unload one model, or every resident one")
+    p.add_argument("model", nargs="?")
+    p.set_defaults(func=cmd_unload)
+    p = sub.add_parser("chat", help="one request, answer printed")
+    p.add_argument("--think", action="store_true", help="let the model think first")
+    p.add_argument("--system-file", help="send this file as the system message")
+    p.add_argument("model")
+    p.add_argument("prompt", nargs="*")
+    p.set_defaults(func=cmd_chat)
+    sub.add_parser("logs", help="router log via journalctl (default -n 50 -f), "
+                                "extra arguments pass straight to journalctl")
+
+    args = ap.parse_args(argv)
+    try:
+        return args.func(args)
+    except CliError as e:
+        print(f"llm: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -369,6 +369,30 @@ Day to day:
 | Free the GPU now | `systemctl --user stop llama-server` (idle models also sleep on their own after 10 minutes) |
 | Plain `make serve` on 8080 | Stop the service first. Two routers cannot share a port: the second exits with `couldn't bind HTTP server socket`. |
 
+### Terminal helper: `llm`
+
+`scripts/llm` gives Ollama-style commands for the router. It is standalone
+Python with no repo imports, so the installed copy keeps working without this
+repo. Install or update it with:
+
+```bash
+# Runs in: local terminal, as your user. Safe to re-run.
+install -m 755 ~/Apps/Local-LLM/scripts/llm ~/.local/bin/llm
+llm status
+```
+
+| Ollama | `llm` | What it does |
+|---|---|---|
+| `ollama ps`, `ollama list` | `llm status` | Router up or down, each model's state (`loaded`, `sleeping`, `unloaded`), VRAM held by llama-server |
+| (preload) | `llm load MODEL` | Loads and waits until ready. Reports `already loaded` or `sleeping` instead of reloading. |
+| `ollama stop MODEL` | `llm unload [MODEL]` | Unloads one model, or every resident one, and waits until the router confirms it stopped |
+| `ollama run MODEL "..."` | `llm chat MODEL "..."` | One request, answer printed. Thinking off unless `--think`. `--system-file PATH` sends a system message (for example `models/qwen/prompt.txt`). Reads the prompt from stdin when none is given. |
+| `journalctl -u ollama -f` | `llm logs` | Router log, last 50 lines then follow. Extra arguments go straight to journalctl, e.g. `llm logs -n 20 --no-pager`. |
+
+`LLM_URL` points it at another router, such as a test one on port 8081. Unlike
+`ollama run`, `llm chat` sends no system prompt unless you pass one, so the reply
+comes from the bare model.
+
 **Contract for apps.** These are identifiers other repos depend on, so changing
 any of them is a coordinated change across repos, not a local edit:
 

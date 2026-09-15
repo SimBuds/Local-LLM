@@ -1175,9 +1175,16 @@ When resetting, the section becomes exactly this and nothing more:
   learning, and tutor tables compared models at different samplers and had to be
   thrown out. A model that needs its own decoding gets its own preset, not a
   different baseline.
-- **Every router call goes through `eval/_gateway.py`**, including model load,
-  unload, and `/props` reads. Runners never open their own connection to the
-  router. (2026-09-14)
+- **Every router call from the eval code goes through `eval/_gateway.py`**,
+  including model load, unload, and `/props` reads. Runners never open their own
+  connection to the router. (2026-09-14)
+- **Recorded exception: `scripts/llm` talks to the router directly.** It is
+  installed into `~/.local/bin` and must work without this repo, per the
+  2026-09-15 decision that nothing using the server depends on the repo at
+  runtime, so it cannot import the gateway. It re-expresses the request shapes,
+  and `eval/test_llm.py` pins them. When the gateway's request shapes change
+  (structured output, thinking flag, load and unload handling), update
+  `scripts/llm` and its tests in the same change. (2026-09-15)
 - **Anything outside the repo is Casey's.** That covers the llama.cpp build in
   `~/src/llama.cpp`, the GGUFs in `~/models/gguf`, the deployed config in
   `~/.config/llama.cpp`, Ollama, and any service unit. The agent hands over
