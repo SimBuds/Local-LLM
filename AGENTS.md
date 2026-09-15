@@ -1187,10 +1187,11 @@ When resetting, the section becomes exactly this and nothing more:
   `scripts/llm` and its tests in the same change. (2026-09-15)
 - **Anything outside the repo is Casey's.** That covers the llama.cpp build in
   `~/src/llama.cpp`, the GGUFs in `~/models/gguf`, the deployed config in
-  `~/.config/llama.cpp`, Ollama, and any service unit. The agent hands over
+  `~/.config/llama.cpp`, and any service unit. The agent hands over
   commands for these under tier 0. Starting `make serve` to verify a change is
   repo-local and is the agent's own job (on a spare port while the service runs),
-  and that router is stopped again before handoff. (2026-09-14, updated 2026-09-15)
+  and that router is stopped again before handoff. Ollama was removed from the box
+  on 2026-09-15, so nothing here may assume port 11434. (2026-09-14, updated 2026-09-15)
 - **Verification runs write to the scratchpad, not `eval/runs/`.** Pass
   `--out-root` to a scratch directory when a benchmark run is only checking that
   code works. `promote.py` treats the newest run per suite as the leaderboard, so

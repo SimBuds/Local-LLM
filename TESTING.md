@@ -602,6 +602,11 @@ path. What changed, and what each change was checked against:
 - **Runners.** `run-speed.py` cold-loads each model through the router (unloading
   first), reads VRAM per `llama-server` process, and reports the declared split.
   `run-json.py` checks each model's served context before the run.
+- **Ollama removed (2026-09-15).** Packages, service, `/var/lib/ollama`, configs
+  and the `ollama` user were removed once Jobhunt, SEO-LLM and Continue were on
+  the router. The four Ollama-only models were copied to `~/models/gguf` first and
+  checked against their blob digests. The Ollama-era numbers in this file can no
+  longer be re-measured on this box.
 
 Behavior observed while probing:
 

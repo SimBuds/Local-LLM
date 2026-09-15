@@ -108,11 +108,18 @@ EOF
 
 Each line must print `OK`. `lite` can be downloaded again with
 `curl -L --fail -C - -o ~/models/gguf/qwen3.5-9b-mtp-q4_K_M.gguf https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf`.
-The `gemma` and `qwen` copies have no public byte-identical source once Ollama's
-store is gone. The closest downloads are `google/gemma-4-26B-A4B-it-qat-q4_0-gguf`
+The `gemma` and `qwen` copies have no public byte-identical source, because
+Ollama and its store were removed from this box on 2026-09-15. The closest downloads are `google/gemma-4-26B-A4B-it-qat-q4_0-gguf`
 (`gemma-4-26B_q4_0-it.gguf`) and `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`
 (`Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`). Neither has been tested on this box, both are
 different files, and switching to one starts a new baseline for that model.
+
+`~/models/gguf` also holds four models copied out of Ollama before it was removed,
+checked against their blob digests: `granite4.2-8b-q4_K_M.gguf`, `ornith.gguf`,
+`qwen3.8-27b-mtp-q4_K_M.gguf` and `gemma4-12b-it-qat.gguf`, the last two with a
+`.mmproj.gguf` vision projector. Ollama's params, licenses, and ornith's built-in
+system prompt are in `ollama-extras/`. None is in the lineup or has been loaded in
+llama.cpp.
 
 ## Structure
 
