@@ -25,8 +25,8 @@ Current lineup (moved to llama.cpp 2026-09-14):
 
 | Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
 |---|---|---:|---|---|
-| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 32K | 18 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
-| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 32K | 32 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
+| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 32K | 21 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 32K | 34 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 32K | all GPU, MTP | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
 
 `gemma` and `qwen` are the same weights the Ollama-era benchmarks used, copied
@@ -154,7 +154,7 @@ PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
   'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
 )
 LOAD=(
-  'n-cpu-moe = 32'           # expert layers kept in system RAM, pinned (see below)
+  'n-cpu-moe = 34'           # expert layers kept in system RAM, pinned (see below)
   'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
 )
 ```
@@ -177,26 +177,43 @@ separate preset rather than skewing the shared baseline.
 and CPU, which has to differ by model size. `server.ini` sets `fit = off`, so the
 split is exactly what the builder declares rather than whatever llama.cpp's
 automatic fitting picks from the VRAM free at load time (an open browser would
-otherwise change a benchmark's offload between runs). The current values are what
-`--fit` chose on 2026-09-14 with about 1 GB of desktop VRAM in use. To re-derive
-one after a model or hardware change, load the GGUF with fitting on, with the
-same `spec-type` its builder uses, and read the fit line. Leaving MTP off gives a
-wrong answer, because the MTP layer needs VRAM of its own: without it the recipe
-reported `41 layers (30 overflowing)` for `qwen` in testing.
+otherwise change a benchmark's offload between runs).
+
+**The values leave about 2 GB of VRAM free, because 1 GB was not enough.** The
+first pinned values (gemma 18, qwen 32) came from llama.cpp's default 1 GB fit
+margin and crashed with CUDA out of memory once other GPU use passed somewhere
+between 2.1 and 2.5 GB for `gemma` and between 2.5 and 3.0 GB for `qwen`. Desktop apps alone use 1.2 to 1.5 GB
+on this box. The current values (gemma 21, qwen 34) were fit with a 2 GB margin
+and then checked with 5 load-and-request cycles each while 3.0 GB of the card was
+held by other processes: all passed. The cost against the old values was about
+13% generation speed for `gemma` and 9% for `qwen` (details in
+[`TESTING.md`](TESTING.md) under *Offload headroom*).
+
+To re-derive a value after a model or hardware change, load the GGUF with a 2 GB
+fit margin and the same `spec-type` its builder uses, and read the fit line.
+Leaving MTP off gives a wrong answer, because the MTP layer needs VRAM of its
+own. The log goes to a file because llama-server buffers it: stopping a piped
+probe as soon as it answered lost the fit line twice in testing.
 
 ```bash
-# Runs in: local terminal, with nothing else holding the GPU. Stop it with Ctrl-C once the line prints.
+# Runs in: local terminal, with nothing else holding the GPU. Safe to re-run.
+LOG="$(mktemp)"
 llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 32768 -np 1 -fa on \
-  -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --port 8081 -lv 4 2>&1 \
-  | grep 'layers (.* overflowing)'
+  -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --fit-target 2048 \
+  --port 8081 -lv 4 > "$LOG" 2>&1 &
+PID=$!
+echo "probe pid: $PID, log: $LOG"
+until grep -q 'layers (.* overflowing)' "$LOG" || ! kill -0 "$PID"; do sleep 1; done
+grep 'layers (.* overflowing)' "$LOG" || echo "no fit line: read $LOG"
+kill "$PID"
 ```
 
-A line ending `42 layers (32 overflowing), 7226 MiB used` means `n-cpu-moe = 32`.
-Drop `--spec-type draft-mtp` for `gemma`, which has no MTP layer. A model that
-fits entirely prints no overflow and needs no `n-cpu-moe`. The answer moves with
-free VRAM, which is why it is pinned rather than re-fitted per run: the same
-command read `33 overflowing` with 1.5 GB of desktop use instead of 1 GB. Close
-apps that hold VRAM before deriving a value.
+The `echo` must print a numeric pid. A line ending
+`42 layers (34 overflowing), 6071 MiB used, 2157 MiB free` means
+`n-cpu-moe = 34`. Drop `--spec-type draft-mtp` for `gemma`, which has no MTP
+layer. A model that fits entirely prints no overflow and needs no `n-cpu-moe`.
+The count moves with the VRAM free at that moment, which is why it is pinned
+rather than re-fitted per run, so close apps that hold VRAM before deriving one.
 
 Where changes belong:
 

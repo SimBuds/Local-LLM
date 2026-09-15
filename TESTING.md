@@ -490,8 +490,8 @@ active parameters per token does.
 
 | Model | Status | Notes |
 |---|---|---|
-| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14 with 18 MoE layers on CPU. |
-| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with 32 MoE layers on CPU and MTP on. |
+| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU since the headroom fix the same day. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU since the headroom fix the same day. |
 | `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
 | `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
@@ -582,6 +582,46 @@ than to rank:
 
 Still open: the `--seed` reproducibility recheck across restarts, a full
 `standard` re-baseline, and preflight in the four runners that lack it.
+
+### Offload headroom (2026-09-14)
+
+The first pinned offload (gemma 18, qwen 32 MoE layers on CPU, fit at llama.cpp's
+default 1 GB margin) failed during a smoke run the same day: gemma's first two
+loads died with CUDA out of memory while desktop apps held about 1.5 GB. The
+coding runner then scored that server failure as a failed gemma attempt, which is
+why this was fixed before any re-baseline.
+
+**Method.** A scratch process held a fixed block of GPU memory to stand in for
+desktop growth. With it held, each model ran load, one real request with the full
+prompt stack, and unload through `eval/_gateway.py`, and the router log was
+checked for `out of memory` lines. Numbers below are GPU memory in use by
+everything except the model (desktop plus the held block).
+
+| Other GPU use | gemma 18 | qwen 32 | gemma 21 | qwen 34 | lite |
+|---:|---|---|---|---|---|
+| 2131 MiB | 5/5 | 5/5 | not run | not run | 5/5 |
+| 2472 to 2487 MiB | **0/3** | 3/3 | not run | not run | 3/3 |
+| 2958 to 2993 MiB | **0/3** | **0/3** | **5/5** | **5/5** | 3/3 and 5/5 |
+
+Every failure was a load-time CUDA out-of-memory with one router log line, and the
+passing runs had none. The new values came from `--fit-target 2048` (a 2 GB
+margin) at about 1.2 GB of desktop use: gemma `31 layers (21 overflowing),
+6184 MiB used`, qwen with MTP `42 layers (34 overflowing), 6071 MiB used`.
+
+| Model | Model VRAM | Gen tok/s | Prompt tok/s |
+|---|---|---|---|
+| `gemma` 18 → 21 | 7430 → 6204 MiB | 51.7 → 44.8 (−13%) | 789 to 849 → 645 to 736 |
+| `qwen` 32 → 34 | 7058 → 6196 MiB | 63.8 → 58.2 (−9%) | 458 to 495 → 400 to 454 |
+| `lite` (unchanged) | 6254 MiB | not re-measured | not re-measured |
+
+Speed is `run-speed.py --attempts 2` over the two standard prompts with no spike
+held, old and new run back to back on the same boot. The speed and VRAM figures in
+the runtime switch note above are from the old values. Casey accepted the speed
+cost in exchange for runs that survive normal desktop use.
+
+While deriving the values, stopping a probe as soon as it answered lost the fit
+line from its piped output twice, because llama-server buffers its log. The README
+recipe now writes the log to a file and waits for the fit line before stopping.
 
 ### Base-model speed survey (2026-08-11)
 

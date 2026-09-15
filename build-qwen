@@ -26,10 +26,12 @@ PARAMS=(
 )
 
 # Per-model load params. Expert split pinned for the reason given in build-gemma;
-# 32 is what --fit chose on 2026-09-14 (42 layers, 32 overflowing, 7226 MiB).
-# MTP measured 2026-09-14: 60.7 tok/s thinking off, ~65% draft acceptance.
+# 34 is what --fit chose with --fit-target 2048 and MTP on, 2026-09-14 (42
+# layers, 34 overflowing, 6071 MiB). The earlier 32 (default 1024 MiB margin)
+# ran out of VRAM under a ~3.0 GB desktop-plus-spike test that 34 was checked
+# against. MTP measured 2026-09-14: 60.7 tok/s thinking off, ~65% draft acceptance.
 LOAD=(
-  'n-cpu-moe = 32'
+  'n-cpu-moe = 34'
   'spec-type = draft-mtp'
 )
 
