@@ -5,5 +5,4 @@ models/
 memory/*.md
 !memory/*.example.md
 
-docs/
 IMPLEMENT.md
