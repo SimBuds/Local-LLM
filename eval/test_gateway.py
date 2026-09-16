@@ -363,8 +363,10 @@ class ServedCtxTests(GatewayCase):
     """served_ctx() reads the context the router actually serves, not a declared value."""
 
     # GET /props?model=lite, trimmed (captured 2026-09-14; the call autoloads).
+    # n_ctx is the served 65536 since 2026-09-16. A global replace had left it
+    # as 3276553668, which failed against the 65536 the assertion expects.
     PROPS = {"build_info": "b10968-41abbfd59", "is_sleeping": False,
-             "default_generation_settings": {"n_ctx": 3276553668, "params": {"temperature": 0.2}}}
+             "default_generation_settings": {"n_ctx": 65536, "params": {"temperature": 0.2}}}
 
     def test_reads_n_ctx_from_props(self):
         self.serve(self.PROPS)

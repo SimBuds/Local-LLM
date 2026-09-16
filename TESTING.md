@@ -183,8 +183,9 @@ thinking mode for content runs unless explicitly testing it.
 
 `run-json.py --context-pressure` scales document length to probe true
 long-context degradation: `normal` (default) is the standard ~6-7k-token
-prompts, `medium` lands ~15-19k, and `high` ~21-27k, as close to the 32k served
-context as fits. On 2026-09-14 `high` measured 21250 to 27301 prompt tokens on
+prompts, `medium` lands ~15-19k, and `high` ~21-27k. `high` was sized to sit as
+close to the 32k context served until 2026-09-16 as fits. At the 64k served now
+it uses under half the window, so it no longer probes the limit. On 2026-09-14 `high` measured 21250 to 27301 prompt tokens on
 `lite` with no context error. A prompt that does overflow gets an HTTP 400 from
 llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
 moves the buried needle to measure position bias. Both are manual sweeps, not

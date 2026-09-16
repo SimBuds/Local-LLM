@@ -33,23 +33,23 @@ class RequireCtxTests(unittest.TestCase):
 
     def test_served_above_required_passes(self):
         with serving(lite=65536):
-            self.assertEqual(rj.require_ctx(["lite"], 65536), {"lite": 65536})
+            self.assertEqual(rj.require_ctx(["lite"], 32768), {"lite": 65536})
 
     def test_served_below_required_aborts_with_both_numbers_and_the_fix(self):
-        with serving(lite=65536):
+        with serving(lite=32768):
             with self.assertRaises(SystemExit) as cm:
                 rj.require_ctx(["lite"], 65536)
         msg = str(cm.exception)
-        self.assertIn("lite (65536)", msg)
+        self.assertIn("lite (32768)", msg)
         self.assertIn("65536", msg)
         self.assertIn("ctx-size", msg)
 
     def test_only_the_short_model_is_named(self):
-        with serving(lite=65536, qwen=65536, gemma=65536):
+        with serving(lite=65536, qwen=32768, gemma=65536):
             with self.assertRaises(SystemExit) as cm:
                 rj.require_ctx(["gemma", "qwen", "lite"], 65536)
         msg = str(cm.exception)
-        self.assertIn("qwen (65536)", msg)
+        self.assertIn("qwen (32768)", msg)
         self.assertNotIn("lite (", msg)
         self.assertNotIn("gemma (", msg)
 

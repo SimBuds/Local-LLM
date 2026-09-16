@@ -3,8 +3,7 @@
 Layered Markdown prompts served with local GGUF models through a llama.cpp
 `llama-server` router, plus an eval suite to pick the best model for each job.
 There is no fine-tuning here. Behavior comes from `prompts/`, durable memory,
-reusable knowledge files, and each model builder's sampler, context and offload
-settings.
+and each model builder's sampler, context and offload settings.
 
 **What this is for:** running a small, opinionated set of local models on one
 workstation, wiring them into editor assistants (Continue / Cline), and keeping
@@ -25,9 +24,10 @@ Current lineup (moved to llama.cpp 2026-09-14):
 
 | Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
 |---|---|---:|---|---|
-| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 32K | 21 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
-| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 32K | 34 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
-| `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 32K | all GPU, MTP | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
+| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 64K | 22 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 64K | 35 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
+| `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 64K | all GPU, MTP | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
+| `neoqwen` | `Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf` | 64K | 9 of 66 layers on GPU (`n-gpu-layers`), MTP | Dense 27B, local only and not part of the contract. About 5 to 9 tok/s in the 2026-09-16 persona run. |
 
 `gemma` and `qwen` are the same weights the Ollama-era benchmarks used, copied
 byte for byte out of Ollama's blob store. `lite` is not: Ollama's `qwen3.5:9b`
@@ -94,6 +94,7 @@ Builders abort naming the missing path if a file is not there.
 | `gemma` | `gemma4-26b-a4b-it-qat.gguf` | Copied from Ollama's `gemma4:26b-a4b-it-qat` blob. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Copied from Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
+| `neoqwen` | `Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf` | `DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF`, the MTP-Q4_K_M quant, 18498573856 bytes. Verified 2026-09-16 against the sha256 HuggingFace publishes as its LFS oid. |
 
 Check the staged files against the checksums the benchmarks were run with:
 
@@ -103,6 +104,7 @@ cd ~/models/gguf && sha256sum -c <<'EOF'
 4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5  gemma4-26b-a4b-it-qat.gguf
 d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
+bc7a6cf2bcc78d1190aaf04d1ab1c5cb845b6ff23aa0e7d24fe0d2ea6d3a7c7c  Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf
 EOF
 ```
 
@@ -168,8 +170,13 @@ split.
 Given a HuggingFace repo, as `Org/Repo` or any URL for it, it lists that repo's
 GGUFs with their sizes, groups a sharded set into one entry, flags any `mmproj`
 vision projector instead of offering it as a model, and prints the `curl` for the
-quant you pick. It prints rather than downloads: `$GGUF_DIR` is outside the repo,
-so the transfer is yours to run and to interrupt. Re-run `add-model` once the
+quant you pick, followed by a `sha256sum -c` line per file. HuggingFace publishes
+each file's sha256 as its LFS oid, so the check compares against the real value
+and exits non-zero on a truncated or wrong download. A file with no published
+checksum is named as unverifiable instead. The block sets `GGUF_DIR` itself, so
+it pastes into a shell that has never heard of it. It prints rather than
+downloads: `$GGUF_DIR` is outside the repo, so the transfer is yours to run and
+to interrupt. Re-run `add-model` once the
 file is staged and it carries on into the scaffold. A gated repo, a missing one,
 and one with no GGUF each stop with the reason rather than a menu.
 
@@ -224,7 +231,7 @@ measure model × sampler instead of model. That mistake invalidated the
 ```bash
 # build-common.sh, used by every builder that does not define its own PARAMS
 PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-  'ctx-size = 65536'         # 32k: sweet spot for multi-file local tasks
+  'ctx-size = 65536'         # raised from 32768 on 2026-09-16
   'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
   'top-p = 0.95'
   'top-k = 40'

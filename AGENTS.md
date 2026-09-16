@@ -1251,14 +1251,21 @@ repos, and one ended in a colon with no template after it.)
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with the README recipe after a model or
   hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: pinned splits keep a 2 GB fit margin (gemma 21, qwen 34).** Values
-  fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32) crashed with CUDA
-  out of memory under normal desktop use plus a spike, and the coding runner
-  scored that crash as a model failure. A new value is derived with
+- **Locked: pinned splits keep a 2 GB fit margin (gemma 22, qwen 35 at 65536
+  context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
+  crashed with CUDA out of memory under normal desktop use plus a spike, and the
+  coding runner scored that crash as a model failure. A new value is derived with
   `--fit-target 2048` and must pass load-and-request cycles while about 3.0 GB of
   the card is held by other processes. Lowering a value for speed needs Casey's
   approval, which he gave for the roughly 13% (gemma) and 9% (qwen) cost of this
   margin. (2026-09-14)
+  The values were 21 and 34 at 32768 context, which passed that spike test. The
+  context rose to 65536 on 2026-09-16, the KV cache roughly doubled, and the
+  fitter then chose 22 and 35. Casey approved the new values without the spike
+  test, which is still owed: 22 and 35 were checked only with one
+  load-and-request each at about 1.1 GB held (7.1 GB used, no out-of-memory).
+  The values live in the tracked `build-gemma` and `build-qwen`, whose comments
+  carry the fit lines. (2026-09-16)
 - **Locked: `CACHE_PROMPT = False` in `eval/_gateway.py`.** The llama-server docs
   state that cached prompt prefixes make logits not bit-identical, and `--seed`
   reproducibility is already unresolved. Turning caching on for speed needs

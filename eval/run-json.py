@@ -31,8 +31,9 @@ truncated. Temperature is forced to 0 for deterministic extraction.
 
 --context-pressure scales document length to test true long-context degradation:
 normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high
-lengthen them (~15-19k and ~21-27k tok). high sits as close to the 32k served
-context as fits and is a manual stress sweep, kept out of the
+lengthen them (~15-19k and ~21-27k tok). high was sized to sit near the 32k
+context served until 2026-09-16, and uses under half of the 64k served since.
+It is a manual stress sweep, kept out of the
 default full comparison. --position moves the buried needle to the
 start/middle/end so position bias can be measured.
 
@@ -247,9 +248,9 @@ def main() -> int:
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",
                     help="document length preset: normal (default, current docs), "
-                         "medium (~15-19k prompt tok), high (~21-27k, near the 32k "
-                         "served context). high is a manual stress sweep, not part of "
-                         "the default run.")
+                         "medium (~15-19k prompt tok), high (~21-27k, sized for the "
+                         "former 32k context, under half of 64k). high is a manual "
+                         "stress sweep, not part of the default run.")
     ap.add_argument("--position", choices=["default", *POSITIONS, "all"], default="default",
                     help="single-needle placement: default (task's own), early/middle/late, "
                          "or all (run each as a separate variant). Multi-needle tasks ignore it.")

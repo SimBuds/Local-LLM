@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODEL_NAME="gemma"
+# Reused from Ollama's gemma4:26b-a4b-it-qat blob (Q4_0 QAT) — same weights as the
+# Ollama-era benchmarks, so post-switch deltas measure the runtime, not the model.
+BASE_MODEL="gemma4-26b-a4b-it-qat.gguf"
+
+# Per-model load params. The expert split is pinned rather than left to --fit,
+# which sizes it from whatever VRAM is free at load time — so an open browser
+# would change the offload between benchmark runs. 21 is what --fit chose with
+# --fit-target 2048 on 2026-09-14 at ~1.2 GB desktop VRAM (31 layers, 21
+# overflowing, 6184 MiB). The earlier 18 (fit at the default 1024 MiB margin)
+# crashed with CUDA out of memory once desktop use plus a spike passed ~2.4 GB;
+# 21 was spike-tested at ~3.0 GB. No MTP head in this GGUF, so no spec-type.
+#
+# 22 since 2026-09-16: the context went from 32768 to 65536, which roughly
+# doubles the q4_0 KV cache, and 21 no longer leaves the 2 GB margin. 22 is what
+# --fit chose at 65536 with --fit-target 2048 and ~1.3 GB desktop VRAM:
+# 31 layers (22 overflowing), 6272 MiB used, 2175 MiB free. Not spike-tested at
+# ~3.0 GB the way 21 was; the fitter's own 2048 MiB target is the evidence.
+LOAD=(
+  'n-cpu-moe = 22'
+)
+
+# Shared assembly — see build-common.sh.
+source "$(dirname "${BASH_SOURCE[0]}")/build-common.sh"

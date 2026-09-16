@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODEL_NAME="lite"
+# Dense ~9B, ~6.6 GB — the only model in the lineup that fits entirely in the
+# 3080's 10 GB alongside a 32k KV cache, so it anchors the leaderboard with a
+# no-CPU-spillover speed baseline. It is also the third judge: with only two
+# models, leave-one-out grading leaves exactly one judge per response and
+# inter-judge disagreement can never be computed.
+# unsloth/Qwen3.5-9B-MTP-GGUF Q4_K_M (sha256 e8dd9481...841fe). Ollama's
+# qwen3.5:9b blob does not load in llama.cpp (rope.dimension_sections has 3
+# entries, llama.cpp expects 4), so these are different weights from the
+# Ollama-era `lite` and its scores are not comparable to that history.
+BASE_MODEL="qwen3.5-9b-mtp-q4_K_M.gguf"
+
+# Per-model load params. Fully on GPU, so no expert split to pin. MTP measured
+# 2026-09-14: 142.8 tok/s vs 101.1 without it.
+LOAD=(
+  'spec-type = draft-mtp'
+)
+
+# Shared assembly — see build-common.sh.
+source "$(dirname "${BASH_SOURCE[0]}")/build-common.sh"

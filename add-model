@@ -128,22 +128,23 @@ hf_pick() {
         size:   (map(.size) | add),
         shards: length,
         files:  (map(.path) | sort | join(" ")),
+        pairs:  (sort_by(.path) | map("\(.path)|\(.lfs.oid // "")") | join(" ")),
         proj:   (.[0].base | test("mmproj"))
       })
     | sort_by(.size)[]
-    | [.name, .size, .shards, .proj, .files] | @tsv
+    | [.name, .size, .shards, .proj, .files, .pairs] | @tsv
   ' "$json")"
   rm -f "$json"
   [ -n "$rows" ] || die "no GGUF files in $slug"
 
-  local -a names sizes shards files
+  local -a names sizes shards files pairs
   local projectors=""
-  while IFS=$'\t' read -r name size nshard proj flist; do
+  while IFS=$'\t' read -r name size nshard proj flist plist; do
     if [ "$proj" = true ]; then
       projectors="$projectors $name"
       continue
     fi
-    names+=("$name"); sizes+=("$size"); shards+=("$nshard"); files+=("$flist")
+    names+=("$name"); sizes+=("$size"); shards+=("$nshard"); files+=("$flist"); pairs+=("$plist")
   done <<<"$rows"
   [ "${#names[@]}" -gt 0 ] || die "no GGUF files in $slug (only projectors)"
 
@@ -167,18 +168,29 @@ hf_pick() {
     echo "  not one of 1 to ${#names[@]}"
   done
 
-  local idx=$((choice - 1)) f
+  local idx=$((choice - 1)) f pair oid
   echo
   echo "Download it yourself, then re-run add-model. Resumable, safe to repeat:"
   echo
+  # Set before use: a shell without GGUF_DIR would otherwise expand the target to
+  # /<file>. That happened on the 2026-09-16 neoqwen download.
+  echo "  GGUF_DIR=\"\${GGUF_DIR:-\$HOME/models/gguf}\""
   for f in ${files[$idx]}; do
     echo "  curl -L --fail -C - -o \"\$GGUF_DIR/$f\" \\"
     echo "    \"$HF_HOST/$slug/resolve/main/$f\""
   done
   echo
-  echo "Then record what you got, so a later staging can be checked against it:"
-  for f in ${files[$idx]}; do
-    echo "  sha256sum \"\$GGUF_DIR/$f\""
+  # HuggingFace stores an LFS object's sha256 as its oid, so the expected value
+  # is already in the listing. `sha256sum -c` exits non-zero on a mismatch, which
+  # is the check a human skips when asked to compare 64 hex characters by eye.
+  echo "Then verify it against HuggingFace's checksum. Each line must print OK:"
+  for pair in ${pairs[$idx]}; do
+    f="${pair%%|*}"; oid="${pair#*|}"
+    if [ -n "$oid" ]; then
+      echo "  echo \"$oid  \$GGUF_DIR/$f\" | sha256sum -c -"
+    else
+      echo "  (no checksum published for $f, so it cannot be verified)"
+    fi
   done
   echo
   echo "--fail matters: without it a 404 or a gated redirect is saved as a valid"
@@ -262,9 +274,15 @@ probe_fit() {
   # treated its absence as a perfect fit, which wrote a dense 18.5 GB model out
   # with no split and would have failed at load under `fit = off`.
   #
-  #   offloaded Y/Y            everything on the GPU, nothing to pin
-  #   offloaded X/Y + overflow MoE: experts go to the CPU, pin n-cpu-moe = M
-  #   offloaded X/Y no overflow dense: the fitter cut GPU layers, pin n-gpu-layers = X
+  #   overflow clause present  MoE: experts go to the CPU, pin n-cpu-moe = M
+  #   offloaded X/Y, X below Y dense: the fitter cut GPU layers, pin n-gpu-layers = X
+  #   offloaded Y/Y, no overflow everything on the GPU, nothing to pin
+  #
+  # The overflow check must come first. MoE spills experts, not layers, so a
+  # spilling MoE model still reports every layer on the GPU: gemma4-26b prints
+  # `offloaded 31/31 layers to GPU` beside `31 layers (20 overflowing)`. Testing
+  # the layer count first reads that as a perfect fit, which is what the first
+  # version of this block did.
   #
   # `|| true` throughout: a missing match is an answer here, and under
   # `set -o pipefail` a failing grep would otherwise kill the script.
@@ -274,14 +292,18 @@ probe_fit() {
   on="$(echo "$offload" | sed -E 's|offloaded ([0-9]+)/.*|\1|')"
   total="$(echo "$offload" | sed -E 's|offloaded [0-9]+/([0-9]+).*|\1|')"
 
-  FIT_LINE="$(grep -m1 -E 'CUDA[0-9]+ .*MiB used' "$log" | sed 's/^.*CUDA/CUDA/' || true)"
+  # The last report is the decision. The fitter prints intermediate stages first
+  # that match the same pattern: a 64k gemma load reports `31 layers, 2861 MiB
+  # used, 5586 MiB free` before `31 layers (22 overflowing), 6272 MiB used,
+  # 2175 MiB free`, and recording the first one misstated the margin by 3.4 GB.
+  FIT_LINE="$(grep -E 'CUDA[0-9]+ .*MiB used' "$log" | tail -n1 | sed 's/^.*CUDA/CUDA/' || true)"
   local overflow
   overflow="$(sed -n 's/.*[^0-9]\([0-9]\{1,\}\) overflowing.*/\1/p' "$log" | head -1 || true)"
 
-  if [ "$on" = "$total" ]; then
-    FIT_KEY=""; FIT_N=""
-  elif [ -n "$overflow" ]; then
+  if [ -n "$overflow" ]; then
     FIT_KEY="n-cpu-moe"; FIT_N="$overflow"
+  elif [ "$on" = "$total" ]; then
+    FIT_KEY=""; FIT_N=""
   else
     FIT_KEY="n-gpu-layers"; FIT_N="$on"
     FIT_NOTE="dense model: the fitter kept $on of $total layers on the GPU rather than offloading experts"

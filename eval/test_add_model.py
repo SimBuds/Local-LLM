@@ -266,13 +266,22 @@ printf '%s\n' "$@" > "$FAKE_ARGS"
 case "$FAKE_MODE" in
   spill)
     echo "I llama_model_loader: loading model"
+    # The fitter reports an intermediate stage before its decision. Both lines
+    # are verbatim from a real gemma4-26b load at 65536 context, 2026-09-16.
+    echo "I common_params_fit_impl:   - CUDA0 (NVIDIA GeForce RTX 3080): 31 layers,   2861 MiB used,   5586 MiB free"
     echo "I common_params_fit_impl:   - CUDA0 (NVIDIA GeForce RTX 3080): 31 layers (21 overflowing),   6461 MiB used,   2082 MiB free"
     # The real server prints the fit decision during fitting and the offload
     # count later, during load_tensors. The gap is why the probe waits for the
     # offload line: breaking on the fit line alone reads a log that has no
     # offload count in it yet.
     sleep 3
-    echo "I load_tensors: offloaded 10/31 layers to GPU"
+    # MoE keeps every layer on the GPU and spills experts, so the layer count is
+    # full even though the model does not fit. Captured 2026-09-16 from a real
+    # gemma4-26b load: `offloaded 31/31 layers to GPU` beside `(20 overflowing)`.
+    # An earlier version of this fixture said 10/31, which is not what llama.cpp
+    # prints, and it let a probe that checked the layer count first pass while
+    # scaffolding every real MoE model as a perfect fit.
+    echo "I load_tensors: offloaded 31/31 layers to GPU"
     echo "I srv  llama_server: model loaded"
     ;;
   dense)
@@ -391,16 +400,24 @@ class ProbeFitTests(AddModelTestCase):
 # set and an mmproj added so those paths are covered. Entry shape is verbatim:
 # the tree endpoint carries `path` and `size`, while /api/models/<repo> siblings
 # carry only `rfilename` and no size, which is why the tree endpoint is used.
-HF_TREE = """[
- {"type":"file","size":1519,"path":".gitattributes"},
- {"type":"file","size":11673303648,"path":"Model-IQ2_M.gguf"},
- {"type":"file","size":16582359648,"path":"Model-IQ4_XS.gguf"},
- {"type":"file","size":22431000096,"path":"Model-Q6_K.gguf"},
- {"type":"file","size":900000000,"path":"Model.mmproj.gguf"},
- {"type":"file","size":15000000000,"path":"Big-Q8_0-00001-of-00003.gguf"},
- {"type":"file","size":15000000000,"path":"Big-Q8_0-00002-of-00003.gguf"},
- {"type":"file","size":12000000000,"path":"Big-Q8_0-00003-of-00003.gguf"},
- {"type":"file","size":7100,"path":"README.md"}
+OID_IQ2 = "1" * 64
+OID_IQ4 = "2" * 64
+OID_BIG = ["a" * 64, "b" * 64, "c" * 64]
+
+# Menu order is by size: 1) IQ2_M, 2) IQ4_XS, 3) Q6_K, 4) Big-Q8_0 (3 shards).
+# Q6_K deliberately has no `lfs` object, the case where HuggingFace publishes no
+# checksum. The `lfs.oid` of an LFS file is its sha256, confirmed 2026-09-16 by
+# checking a real 18.5 GB download against it.
+HF_TREE = f"""[
+ {{"type":"file","size":1519,"path":".gitattributes"}},
+ {{"type":"file","size":11673303648,"path":"Model-IQ2_M.gguf","lfs":{{"oid":"{OID_IQ2}","size":11673303648}}}},
+ {{"type":"file","size":16582359648,"path":"Model-IQ4_XS.gguf","lfs":{{"oid":"{OID_IQ4}","size":16582359648}}}},
+ {{"type":"file","size":22431000096,"path":"Model-Q6_K.gguf"}},
+ {{"type":"file","size":900000000,"path":"Model.mmproj.gguf","lfs":{{"oid":"{"d" * 64}","size":900000000}}}},
+ {{"type":"file","size":15000000000,"path":"Big-Q8_0-00001-of-00003.gguf","lfs":{{"oid":"{OID_BIG[0]}","size":15000000000}}}},
+ {{"type":"file","size":15000000000,"path":"Big-Q8_0-00002-of-00003.gguf","lfs":{{"oid":"{OID_BIG[1]}","size":15000000000}}}},
+ {{"type":"file","size":12000000000,"path":"Big-Q8_0-00003-of-00003.gguf","lfs":{{"oid":"{OID_BIG[2]}","size":12000000000}}}},
+ {{"type":"file","size":7100,"path":"README.md"}}
 ]"""
 
 HF_NO_GGUF = """[
@@ -582,3 +599,103 @@ class DenseOffloadTests(AddModelTestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertRegex(r.stderr, r"/\S+\.log")
         self.assertFalse((self.repo / "build-nothing").exists())
+
+
+class FitProvenanceTests(AddModelTestCase):
+    """The fit line recorded beside the pinned value must be the decision.
+
+    llama.cpp's fitter prints an intermediate stage before its final report, and
+    both match a `CUDA0 ... MiB used` pattern. Recording the first one on
+    2026-09-16 wrote `31 layers, 2861 MiB used, 5586 MiB free` beside
+    `n-cpu-moe = 22`, which is not the split that was pinned and shows a margin
+    more than twice the real one.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "llama-server"
+        fake.write_text(FAKE_SERVER)
+        fake.chmod(0o755)
+
+    def fit_comment(self, mode: str, name: str) -> str:
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": mode,
+               "FAKE_ARGS": str(Path(self.tmp.name) / "argv.txt"), "FIT_TIMEOUT": "10"}
+        r = self.run_add_model(stdin=f"{name}\n", args=["free-plain.gguf"], probe=True, env_extra=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [ln for ln in self.builder(name).splitlines() if ln.startswith("# Fit line:")]
+        self.assertEqual(len(lines), 1, self.builder(name))
+        return lines[0]
+
+    def test_moe_records_the_decision_not_the_intermediate_stage(self):
+        line = self.fit_comment("spill", "prov")
+        self.assertIn("(21 overflowing)", line)
+        self.assertIn("2082 MiB free", line)
+        self.assertNotIn("5586 MiB free", line)
+
+    def test_dense_records_its_final_line(self):
+        line = self.fit_comment("dense", "provd")
+        self.assertIn("12 layers", line)
+        self.assertIn("2150 MiB free", line)
+
+
+class ChecksumHandoffTests(HuggingFaceLookupTests):
+    """The download block verifies against HuggingFace's checksum, not by eye."""
+
+    def check_lines(self, out: str) -> list[str]:
+        return [ln.strip() for ln in out.splitlines() if "sha256sum -c" in ln]
+
+    def test_block_sets_gguf_dir_before_using_it(self):
+        r = self.lookup("DavidAU/Some-GGUF", stdin="2\n")
+        lines = r.stdout.splitlines()
+        setter = [i for i, ln in enumerate(lines) if 'GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"' in ln]
+        user = [i for i, ln in enumerate(lines) if "$GGUF_DIR/" in ln]
+        self.assertTrue(setter, r.stdout)
+        self.assertLess(setter[0], user[0], "GGUF_DIR is used before it is set")
+
+    def test_lfs_file_prints_its_oid_as_a_sha256_check(self):
+        r = self.lookup("DavidAU/Some-GGUF", stdin="2\n")
+        checks = self.check_lines(r.stdout)
+        self.assertEqual(len(checks), 1, r.stdout)
+        self.assertIn(OID_IQ4, checks[0])
+        self.assertIn("Model-IQ4_XS.gguf", checks[0])
+
+    def test_file_without_lfs_prints_no_checksum_and_says_so(self):
+        r = self.lookup("DavidAU/Some-GGUF", stdin="3\n")
+        self.assertEqual(self.check_lines(r.stdout), [], r.stdout)
+        self.assertRegex(r.stdout.lower(), r"no checksum")
+
+    def test_each_shard_gets_its_own_check(self):
+        r = self.lookup("DavidAU/Some-GGUF", stdin="4\n")
+        checks = self.check_lines(r.stdout)
+        self.assertEqual(len(checks), 3, r.stdout)
+        for i, oid in enumerate(OID_BIG, start=1):
+            match = [c for c in checks if f"-0000{i}-of-00003.gguf" in c]
+            self.assertEqual(len(match), 1, checks)
+            self.assertIn(oid, match[0])
+
+    def test_printed_check_really_passes_on_a_match_and_fails_on_a_mismatch(self):
+        """Run the emitted command itself, against real files."""
+        import hashlib, json
+        content = b"not really a gguf, but the bytes are what get hashed"
+        good = hashlib.sha256(content).hexdigest()
+        body = json.dumps([
+            {"type": "file", "size": len(content), "path": "Tiny-Q4.gguf",
+             "lfs": {"oid": good, "size": len(content)}},
+        ])
+        r = self.lookup("Org/Tiny-GGUF", body=body, stdin="1\n")
+        checks = self.check_lines(r.stdout)
+        self.assertEqual(len(checks), 1, r.stdout)
+
+        target = Path(self.tmp.name) / "dl"
+        target.mkdir()
+        env = dict(os.environ, GGUF_DIR=str(target))
+
+        (target / "Tiny-Q4.gguf").write_bytes(content)
+        ok = subprocess.run(["bash", "-c", checks[0]], capture_output=True, text=True, env=env)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+
+        (target / "Tiny-Q4.gguf").write_bytes(content + b"truncated or tampered")
+        bad = subprocess.run(["bash", "-c", checks[0]], capture_output=True, text=True, env=env)
+        self.assertNotEqual(bad.returncode, 0, "the check passed on a file that does not match")

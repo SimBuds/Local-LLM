@@ -4,10 +4,10 @@ eval/runs/
 
 models/
 
+# The assembled prompt carries a real user profile, so only the templates are
+# published. memory/user.md was tracked until f107230 and older versions of it
+# remain in history.
 memory/*.md
 !memory/*.example.md
-
-build-*
-!build-common.sh
 
 IMPLEMENT.md
