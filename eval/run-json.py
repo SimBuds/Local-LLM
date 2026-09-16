@@ -18,11 +18,11 @@ count — that's the failure mode that silently ships bad data in the real apps.
 Usage:
   ./eval/run-json.py --models gemma qwen lite
   ./eval/run-json.py --models gemma --tasks jd_extract needle_recall
-  ./eval/run-json.py --models gemma qwen lite --num-ctx 16384 --attempts 5
+  ./eval/run-json.py --models gemma qwen lite --num-ctx 65536 --attempts 5
   ./eval/run-json.py --models gemma qwen lite --context-pressure medium   # longer docs
   ./eval/run-json.py --models gemma --tasks needle_recall --position all  # early/mid/late
 
---num-ctx is the minimum context each model must be serving (default 32768, the
+--num-ctx is the minimum context each model must be serving (default 65536, the
 context jobhunt's gateway was built around). llama.cpp fixes context size when a
 model loads (ctx-size in its build-* preset), so it is checked against the router
 before the run starts rather than sent per request; a model below it aborts the
@@ -240,9 +240,9 @@ def main() -> int:
     ap.add_argument("--tasks", nargs="+", default=list(TASKS),
                     help=f"Subset of: {', '.join(TASKS)}")
     ap.add_argument("--attempts", type=int, default=3)
-    ap.add_argument("--num-ctx", type=int, default=32768,
+    ap.add_argument("--num-ctx", type=int, default=65536,
                     help="minimum context each model must serve (checked against the "
-                         "router before the run; default 32768)")
+                         "router before the run; default 65536)")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",

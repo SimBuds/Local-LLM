@@ -178,7 +178,7 @@ class GenerateTests(GatewayCase):
     def test_num_ctx_is_rejected_before_any_request(self):
         self.serve(CHAT_RESPONSE)
         with self.assertRaisesRegex(ValueError, "num_ctx"):
-            gw.generate("lite", "hi", timeout=30, options={"num_ctx": 32768})
+            gw.generate("lite", "hi", timeout=30, options={"num_ctx": 65536})
         self.assertEqual(self.requests, [])
 
     def test_unknown_option_is_rejected_before_any_request(self):
@@ -364,11 +364,11 @@ class ServedCtxTests(GatewayCase):
 
     # GET /props?model=lite, trimmed (captured 2026-09-14; the call autoloads).
     PROPS = {"build_info": "b10968-41abbfd59", "is_sleeping": False,
-             "default_generation_settings": {"n_ctx": 32768, "params": {"temperature": 0.2}}}
+             "default_generation_settings": {"n_ctx": 3276553668, "params": {"temperature": 0.2}}}
 
     def test_reads_n_ctx_from_props(self):
         self.serve(self.PROPS)
-        self.assertEqual(gw.served_ctx("lite"), 32768)
+        self.assertEqual(gw.served_ctx("lite"), 65536)
         self.assertEqual(self.url(0), "http://localhost:8080/props?model=lite")
 
     def test_model_name_is_url_encoded(self):

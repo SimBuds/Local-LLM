@@ -21,7 +21,7 @@ speed = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(speed)
 
 BASE_ARGS = ["/home/casey/src/llama.cpp/build/bin/llama-server", "--host", "127.0.0.1",
-             "--ctx-size", "32768", "--n-gpu-layers", "99", "--parallel", "1"]
+             "--ctx-size", "65536", "--n-gpu-layers", "99", "--parallel", "1"]
 
 # `nvidia-smi --query-compute-apps=pid,process_name,used_memory
 #  --format=csv,noheader,nounits` with gemma loaded and a browser open.

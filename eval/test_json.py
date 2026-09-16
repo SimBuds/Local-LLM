@@ -28,34 +28,34 @@ def serving(**ctx_by_model):
 
 class RequireCtxTests(unittest.TestCase):
     def test_served_equal_to_required_passes(self):
-        with serving(lite=32768):
-            self.assertEqual(rj.require_ctx(["lite"], 32768), {"lite": 32768})
+        with serving(lite=65536):
+            self.assertEqual(rj.require_ctx(["lite"], 65536), {"lite": 65536})
 
     def test_served_above_required_passes(self):
-        with serving(lite=32768):
-            self.assertEqual(rj.require_ctx(["lite"], 16384), {"lite": 32768})
+        with serving(lite=65536):
+            self.assertEqual(rj.require_ctx(["lite"], 65536), {"lite": 65536})
 
     def test_served_below_required_aborts_with_both_numbers_and_the_fix(self):
-        with serving(lite=32768):
+        with serving(lite=65536):
             with self.assertRaises(SystemExit) as cm:
                 rj.require_ctx(["lite"], 65536)
         msg = str(cm.exception)
-        self.assertIn("lite (32768)", msg)
+        self.assertIn("lite (65536)", msg)
         self.assertIn("65536", msg)
         self.assertIn("ctx-size", msg)
 
     def test_only_the_short_model_is_named(self):
-        with serving(lite=32768, qwen=16384, gemma=32768):
+        with serving(lite=65536, qwen=65536, gemma=65536):
             with self.assertRaises(SystemExit) as cm:
-                rj.require_ctx(["gemma", "qwen", "lite"], 32768)
+                rj.require_ctx(["gemma", "qwen", "lite"], 65536)
         msg = str(cm.exception)
-        self.assertIn("qwen (16384)", msg)
+        self.assertIn("qwen (65536)", msg)
         self.assertNotIn("lite (", msg)
         self.assertNotIn("gemma (", msg)
 
     def test_think_spec_is_looked_up_by_model_name(self):
-        with serving(qwen=32768):
-            self.assertEqual(rj.require_ctx(["qwen:think"], 32768), {"qwen:think": 32768})
+        with serving(qwen=65536):
+            self.assertEqual(rj.require_ctx(["qwen:think"], 65536), {"qwen:think": 65536})
 
 
 class RunAttemptTests(unittest.TestCase):

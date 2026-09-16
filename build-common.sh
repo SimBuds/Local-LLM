@@ -58,7 +58,7 @@ fi
 # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
 if [ -z "${PARAMS+x}" ]; then
   PARAMS=(
-    'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
+    'ctx-size = 65536'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
     'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
     'top-p = 0.95'
     'top-k = 40'

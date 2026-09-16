@@ -225,7 +225,7 @@ measure model × sampler instead of model. That mistake invalidated the
 ```bash
 # build-common.sh, used by every builder that does not define its own PARAMS
 PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks
+  'ctx-size = 65536'         # 32k: sweet spot for multi-file local tasks
   'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
   'top-p = 0.95'
   'top-k = 40'
@@ -274,7 +274,7 @@ report `model loaded`, whichever comes first.
 ```bash
 # Runs in: local terminal, with nothing else holding the GPU. Safe to re-run.
 LOG="$(mktemp)"
-llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 32768 -np 1 -fa on \
+llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 65536 -np 1 -fa on \
   -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --fit-target 2048 \
   --port 8081 -lv 4 > "$LOG" 2>&1 &
 PID=$!
@@ -497,7 +497,7 @@ any of them is a coordinated change across repos, not a local edit:
 - `model` is one of `gemma`, `qwen`, `lite`.
 - The app sends its own system message. Nothing is baked into the model, so a
   request without one gets the bare base model.
-- Context is fixed at 32768 tokens by the preset. There is no per-request
+- Context is fixed at 65536 tokens by the preset. There is no per-request
   context size, and a longer prompt returns HTTP 400 `exceed_context_size_error`
   instead of being truncated.
 - Structured output: `response_format: {"type": "json_schema", "json_schema":
@@ -555,7 +555,7 @@ is what the benchmark exists to replace.
 
 In Cline's settings, set **API Provider** to `OpenAI Compatible`, **Base URL** to
 `http://localhost:8080/v1`, **API Key** to any value, **Model ID** to `qwen`,
-`gemma`, or `lite`, and the context window to `32768`. Cline sends its own system
+`gemma`, or `lite`, and the context window to `65536`. Cline sends its own system
 prompt, and its docs describe no way to replace it, so Cline runs without this
 repo's prompt stack. Cline ingests large prompts, so prompt-eval throughput
 matters more here than generation speed. `run-speed.py` reports both, and the
@@ -604,7 +604,7 @@ Scoring is deterministic regex, no judge.
 SEO-LLM) depend on: it constrains decode with a JSON schema, buries facts in a
 multi-thousand-token document, and scores schema conformance plus long-context
 fact recall. Before the run it checks that every model serves at least
-`--num-ctx` context (default 32768, what those apps were built around) and
+`--num-ctx` context (default 65536, what those apps were built around) and
 aborts if one does not. llama.cpp fixes context at load time, and a prompt that
 still overflows gets an HTTP 400 from the server rather than being truncated.
 

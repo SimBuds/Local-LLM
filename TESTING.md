@@ -174,7 +174,7 @@ Runner-specific flags:
 | `run-content.py` | `--tasks ...`, `--prompt-file PATH` (ad-hoc SEO prompt), `--keyword TEXT`, `--thinking auto|on|off` |
 | `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 32768), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
+| `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
@@ -550,7 +550,7 @@ else held equal, to measure what the runtime itself changes.
 Ollama 0.33.3 ran the base tags `gemma4:26b-a4b-it-qat` and
 `qwen3.6:35b-a3b-mtp-q4_K_M` as the service is configured (q8_0 KV cache, flash
 attention, its own GPU/CPU split). Both runtimes got the model's own `prompt.txt`
-as the system message, the `run-speed.py` prompts, the same samplers, 32768
+as the system message, the `run-speed.py` prompts, the same samplers, 65536
 context, a 200-token cap, and thinking off. Neither reused a prompt prefix: Ollama
 used `keep_alive: 0` so every request reloaded the model, and llama.cpp sent
 `cache_prompt: false`. Prompt token counts were identical on both runtimes (2990
@@ -639,7 +639,7 @@ Behavior observed while probing:
   `gemma` and `qwen`. `reasoning_budget: 0` does not turn it off on `gemma`, and
   `reasoning_format: none` leaks `<|channel>thought` tags into the answer.
 - A prompt over the context gets HTTP 400 `exceed_context_size_error` (44016
-  tokens against 32768). Nothing is truncated.
+  tokens against 65536). Nothing is truncated.
 - `POST /models/load` returns at once and the model moves `loading` to `loaded`
   (gemma 4.5s cold). `GET /props?model=` loads the model to answer.
 
@@ -1106,11 +1106,11 @@ Changes:
   `hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`. Both are
   MoE, so neither fitting in 10 GB of VRAM is tolerable.
 - **`PARAMS` made identical across both builders**, removing the sampler confound
-  described in the snapshot warning. Both now run `num_ctx 32768`, `temperature
+  described in the snapshot warning. Both now run `num_ctx 65536`, `temperature
   0.2`, `top_p 0.95`, `top_k 40`, `min_p 0.05`, `presence_penalty 0.0`,
   `repeat_penalty 1.05`.
 - `num_ctx` raised 16384 → 32768, resolving a drift where the docs claimed 32K
-  while the builders shipped 16K and `run-json.py` pinned 32768 per call.
+  while the builders shipped 16K and `run-json.py` pinned 65536 per call.
 - `build-common.sh` gained a base-model preflight: builders now abort with the
   installed-model list if `BASE_MODEL` is not pulled, instead of writing a
   half-complete `system.txt` and dying later.

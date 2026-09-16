@@ -119,7 +119,7 @@ repos, not a local edit.
 - `POST http://localhost:8080/v1/chat/completions`, OpenAI format.
 - `model` is one of `gemma`, `qwen`, `lite`.
 - The caller sends its own system message.
-- Context is fixed at 32768 tokens by the preset. There is no per-request
+- Context is fixed at 65536 tokens by the preset. There is no per-request
   context size, and an oversized prompt returns HTTP 400 rather than being
   silently truncated.
 
