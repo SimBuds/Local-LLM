@@ -267,6 +267,24 @@ case "$FAKE_MODE" in
   spill)
     echo "I llama_model_loader: loading model"
     echo "I common_params_fit_impl:   - CUDA0 (NVIDIA GeForce RTX 3080): 31 layers (21 overflowing),   6461 MiB used,   2082 MiB free"
+    # The real server prints the fit decision during fitting and the offload
+    # count later, during load_tensors. The gap is why the probe waits for the
+    # offload line: breaking on the fit line alone reads a log that has no
+    # offload count in it yet.
+    sleep 3
+    echo "I load_tensors: offloaded 10/31 layers to GPU"
+    echo "I srv  llama_server: model loaded"
+    ;;
+  dense)
+    # A dense model: the fitter cuts GPU layers instead of offloading experts,
+    # and prints no overflow clause. Captured 2026-09-16 from a real 27B load.
+    echo "I common_params_fit_impl: projected to use 18621 MiB of device memory vs 8091 MiB of free device memory"
+    echo "I common_params_fit_impl:   - CUDA0 (NVIDIA GeForce RTX 3080): 12 layers,   5940 MiB used,   2150 MiB free"
+    sleep 3
+    echo "I load_tensors: offloaded 12/66 layers to GPU"
+    echo "I srv  llama_server: model loaded"
+    ;;
+  noinfo)
     echo "I srv  llama_server: model loaded"
     ;;
   fits)
@@ -501,3 +519,66 @@ class HuggingFaceLookupTests(AddModelTestCase):
         r = self.run_add_model(stdin="localname\n", args=["free-plain.gguf"], env_extra=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.urls().strip(), "")
+
+
+class DenseOffloadTests(AddModelTestCase):
+    """llama.cpp reports three different outcomes. The probe must tell them apart.
+
+    Until 2026-09-16 it recognised only the MoE wording, `N layers (M
+    overflowing)`, and read its absence as a perfect fit. A dense model spills by
+    reducing GPU layers instead, prints no overflow clause, and was therefore
+    written out with no split at all. With `fit = off` and `n-gpu-layers = 99` in
+    server.ini, that builder tries to put every layer on the card and fails at
+    load, and the discovered lineup picks it up on the next `make build`.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "llama-server"
+        fake.write_text(FAKE_SERVER)
+        fake.chmod(0o755)
+        self.args_file = Path(self.tmp.name) / "argv.txt"
+
+    def probe(self, mode: str, name: str, gguf: str = "free-plain.gguf"):
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": mode,
+               "FAKE_ARGS": str(self.args_file), "FIT_TIMEOUT": "10"}
+        return self.run_add_model(stdin=f"{name}\n", args=[gguf], probe=True, env_extra=env)
+
+    def active(self, name: str) -> list[str]:
+        return [ln for ln in self.builder(name).splitlines()
+                if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def test_dense_spill_pins_n_gpu_layers(self):
+        r = self.probe("dense", "densey")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("'n-gpu-layers = 12'", self.builder("densey"))
+
+    def test_dense_spill_does_not_pin_n_cpu_moe(self):
+        """There are no experts to offload, so n-cpu-moe would be meaningless."""
+        self.probe("dense", "densey2")
+        self.assertFalse([ln for ln in self.active("densey2") if "n-cpu-moe" in ln])
+
+    def test_dense_spill_is_not_reported_as_a_full_fit(self):
+        r = self.probe("dense", "densey3")
+        self.assertNotIn("fits entirely", r.stdout)
+
+    def test_moe_spill_still_pins_n_cpu_moe_and_not_gpu_layers(self):
+        r = self.probe("spill", "moey")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("'n-cpu-moe = 21'", self.builder("moey"))
+        self.assertFalse([ln for ln in self.active("moey") if "n-gpu-layers" in ln])
+
+    def test_true_full_fit_pins_neither(self):
+        r = self.probe("fits", "fitty2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        act = self.active("fitty2")
+        self.assertFalse([ln for ln in act if "n-cpu-moe" in ln or "n-gpu-layers" in ln])
+        self.assertIn("fits entirely", r.stdout)
+
+    def test_missing_offload_line_is_an_error_not_a_guess(self):
+        r = self.probe("noinfo", "nothing")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertRegex(r.stderr, r"/\S+\.log")
+        self.assertFalse((self.repo / "build-nothing").exists())

@@ -228,20 +228,35 @@ on the headline rate, a small-sample flag below 10 attempts, the weakest task
 per model, and a close-result warning when the winner's margin is within the tie
 threshold (5 points for rates, 0.5/10 for judge scores). Learn/tutor summaries
 add a judge-reliability section (parse rate, inter-judge disagreement, and a
-warning when a response was scored by fewer than two judges — with the current
-2-model lineup, leave-one-out always leaves a single judge, so those /10 scores
-are soft signal until a third model joins the panel). Tutor ranking breaks
+warning when a response was scored by fewer than two judges). With the current
+three-model lineup, leave-one-out leaves two judges per response, so
+disagreement is a real number rather than the `n/a` a two-model lineup could
+only ever print. That is what `lite` was added for. Tutor ranking breaks
 teach-score ties on leak rate: the model that leaks less wins.
 
-**Measured noise floor for `run-persona.py` at 3 attempts: at least plus or minus
-2 of 21.** On 2026-09-15 the suite was run twice over byte-identical inputs (the
-change between runs was proved to leave every `prompt.txt` and every preset
-byte-identical). `gemma` held at 12/21 both times, while `qwen` moved 20/21 to
-19/21 and `lite` moved 12/21 to 10/21. Nothing about the models or the stack had
-changed, so that spread is sampling variation. Do not read a one or two attempt
-move at 3 attempts as a result. Raise `--attempts` before believing a small
-difference, and note that the same run confirms a clean pass is cheap to get by
-accident at this sample size.
+**Measured noise floor for `run-persona.py` at 3 attempts: up to 3 of 21 on a
+single model.** The suite was run three times on 2026-09-15 and 2026-09-16 over
+byte-identical inputs. `prompts/`, `memory/` and `knowledge/` had no commits
+across that window, and the one change to the builders in between was proved to
+leave every `prompt.txt` and every preset byte for byte identical.
+
+| Model | Run 1 | Run 2 | Run 3 | Spread |
+|---|---:|---:|---:|---:|
+| `gemma` | 12/21 | 12/21 | 11/21 | 1 |
+| `qwen` | 20/21 | 19/21 | 19/21 | 1 |
+| `lite` | 12/21 | 10/21 | 13/21 | **3** |
+
+Nothing about the models or the stack changed, so the whole spread is sampling
+variation. `lite` alone moves 10/21 to 13/21, which is 14 points of clean rate,
+wider than the 5-point tie threshold the summaries use. At 3 attempts a per-task
+score is 0/3 or 3/3 on a coin flip: in run 3 `gemma` scored 0/3 on
+`model_origin`, a task the 2026-07-28 stacked measurement had at 7/9 across the
+lineup.
+
+Do not read a small move at 3 attempts as a result, and do not rank `gemma`
+against `lite` at this sample size at all. Three attempts is a gate, not a
+measurement. Raise `--attempts` before believing a difference, and use
+`./eval/run-profile.py` for anything that will be published.
 
 Confidence by signal:
 

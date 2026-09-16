@@ -634,7 +634,10 @@ them by hand:
 ## Benchmark Leaderboard
 
 **Measured on llama.cpp, 2026-09-15** (`standard` pass, pinned offload gemma 21
-and qwen 34, prompt caching off). The router log showed no out-of-memory errors
+and qwen 34, prompt caching off). Read close rows as ties: the persona suite's
+run-to-run spread at low attempt counts is measured in
+[`TESTING.md`](TESTING.md) under *Interpreting Results*, and it is wider than
+the gap between neighbouring models here. The router log showed no out-of-memory errors
 or crashed model processes during the pass. Timing columns (Avg s, prompt tok/s)
 include re-processing the full prompt on every call, so they run slower than the
 Ollama-era figures even where generation is faster. The Ollama-era numbers and
@@ -704,6 +707,10 @@ guarantee, so compare prompt or scorer changes by re-scoring saved responses.
 
 What each rule actually buys, measured 2026-07-28: `run-persona.py` stacked vs
 `--system-mode baseline`, 3 attempts × 3 models, so each rule scores out of 9.
+Nine attempts is a small sample, and the same suite's measured run-to-run spread
+(see *Interpreting Results* in [`TESTING.md`](TESTING.md)) covers several of the
+smaller gaps below. Treat a large delta as signal and a one or two point delta
+as unresolved.
 
 | Rule | Stacked | Baseline | Buys | Read |
 |---|---:|---:|---:|---|

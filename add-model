@@ -244,8 +244,11 @@ probe_fit() {
   PROBE_PID=$!
   trap probe_cleanup EXIT INT TERM
 
+  # Wait for `offloaded X/Y layers to GPU`, which every load prints regardless of
+  # how the fitter decided, rather than for the overflow line, which only the MoE
+  # path prints. `model loaded` is the backstop for a build that prints neither.
   while true; do
-    grep -q 'overflowing' "$log" && break
+    grep -qE 'offloaded [0-9]+/[0-9]+ layers to GPU' "$log" && break
     grep -q 'model loaded' "$log" && break
     kill -0 "$PROBE_PID" 2>/dev/null \
       || die "the fit probe exited before reporting a split. Read the log: $log"
@@ -255,12 +258,34 @@ probe_fit() {
     elapsed=$((elapsed + 1))
   done
 
-  # `|| true` on both: a model that fits entirely has no overflow line, so grep
-  # exits 1, and under `set -o pipefail` that failure propagates out of the
-  # command substitution and kills the script. An empty FIT_N is the answer here,
-  # not an error. `head -1` can also close the pipe early and raise SIGPIPE.
-  FIT_N="$(sed -n 's/.*[^0-9]\([0-9]\{1,\}\) overflowing.*/\1/p' "$log" | head -1 || true)"
-  FIT_LINE="$(grep -m1 'overflowing' "$log" | sed 's/^.*CUDA/CUDA/' || true)"
+  # Three outcomes, not two. Until 2026-09-16 this read only the MoE wording and
+  # treated its absence as a perfect fit, which wrote a dense 18.5 GB model out
+  # with no split and would have failed at load under `fit = off`.
+  #
+  #   offloaded Y/Y            everything on the GPU, nothing to pin
+  #   offloaded X/Y + overflow MoE: experts go to the CPU, pin n-cpu-moe = M
+  #   offloaded X/Y no overflow dense: the fitter cut GPU layers, pin n-gpu-layers = X
+  #
+  # `|| true` throughout: a missing match is an answer here, and under
+  # `set -o pipefail` a failing grep would otherwise kill the script.
+  local offload on total
+  offload="$(grep -m1 -oE 'offloaded [0-9]+/[0-9]+ layers to GPU' "$log" || true)"
+  [ -n "$offload" ] || die "the probe never reported how many layers it offloaded. Read the log: $log"
+  on="$(echo "$offload" | sed -E 's|offloaded ([0-9]+)/.*|\1|')"
+  total="$(echo "$offload" | sed -E 's|offloaded [0-9]+/([0-9]+).*|\1|')"
+
+  FIT_LINE="$(grep -m1 -E 'CUDA[0-9]+ .*MiB used' "$log" | sed 's/^.*CUDA/CUDA/' || true)"
+  local overflow
+  overflow="$(sed -n 's/.*[^0-9]\([0-9]\{1,\}\) overflowing.*/\1/p' "$log" | head -1 || true)"
+
+  if [ "$on" = "$total" ]; then
+    FIT_KEY=""; FIT_N=""
+  elif [ -n "$overflow" ]; then
+    FIT_KEY="n-cpu-moe"; FIT_N="$overflow"
+  else
+    FIT_KEY="n-gpu-layers"; FIT_N="$on"
+    FIT_NOTE="dense model: the fitter kept $on of $total layers on the GPU rather than offloading experts"
+  fi
   probe_cleanup
   rm -f "$log"
 }
@@ -367,6 +392,7 @@ write_builder() {
       echo "# Split pinned from --fit-target 2048 on $(date -u +%Y-%m-%d), with"
       echo "# $(nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null || echo 'unknown') held by other processes at probe time."
       echo "# Fit line: $FIT_LINE"
+      [ -n "$FIT_NOTE" ] && echo "# $FIT_NOTE."
       echo '# server.ini pins fit = off, so this is the split every load uses. Re-derive it'
       echo '# with ./add-model on a fresh builder, or the recipe in README.md, after a'
       echo '# model or hardware change. Do not turn automatic fitting back on: it would'
@@ -381,7 +407,7 @@ write_builder() {
       echo "#   'n-cpu-moe = N'"
     fi
     echo 'LOAD=('
-    [ -n "$FIT_N" ] && echo "  'n-cpu-moe = $FIT_N'"
+    [ -n "$FIT_N" ] && echo "  '$FIT_KEY = $FIT_N'"
     [ "$HAS_MTP" = yes ] && echo "  'spec-type = draft-mtp'"
     echo ')'
     echo
@@ -395,7 +421,9 @@ write_builder() {
 
 PROBE=yes
 FIT_N=""
+FIT_KEY=""
 FIT_LINE=""
+FIT_NOTE=""
 positional=()
 for arg in "$@"; do
   case "$arg" in
@@ -453,7 +481,7 @@ echo "  base:      $GGUF_NAME"
 echo "  MTP:       $HAS_MTP$([ "$HAS_MTP" = yes ] && echo ' (spec-type = draft-mtp)')"
 echo "  samplers:  shared baseline from build-common.sh"
 if [ -n "$FIT_N" ]; then
-  echo "  split:     n-cpu-moe = $FIT_N  ($FIT_LINE)"
+  echo "  split:     $FIT_KEY = $FIT_N  ($FIT_LINE)"
   echo
   echo "Then: make build"
 elif [ "$PROBE" = yes ]; then
