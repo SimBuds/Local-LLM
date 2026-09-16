@@ -1299,6 +1299,22 @@ repos, and one ended in a colon with no template after it.)
   (README, "Serving other apps"). Changing the port, a model name, the context
   size, or the structured-output shape breaks those apps, so it needs Casey's
   approval and a matching change planned in each app's repo. (2026-09-15)
+- **A new model is added with `./add-model`, not by copying a builder.** It
+  refuses a router name that collides with the `gemma` / `qwen` / `lite` contract,
+  reads MTP support from the GGUF header rather than the filename (gemma4-26b
+  contains 4 literal "mtp" byte sequences and has no MTP), and derives the pinned
+  split by loading the model once at `--fit-target 2048`. A builder declares only
+  `MODEL_NAME`, `BASE_MODEL` and `LOAD`: `PARAMS` is the shared baseline in
+  `build-common.sh` and a builder that declares its own is opting out of every
+  head-to-head comparison. The lineup is discovered from the `build-*` files, so
+  no list is edited by hand. (2026-09-15)
+- **A mutation harness runs against a scratch copy, never the tracked file.**
+  `eval/test_add_model.py` takes its script from `ADD_MODEL_SRC` for this reason.
+  On 2026-09-15 a harness that rewrote the tracked `add-model` in place was caught
+  mid-run by a commit, and the injected bug (a `probe_cleanup` that never killed
+  the probe server) landed in `b9638cb` and had to be repaired in the next commit.
+  Casey edits and commits between turns, so any in-place rewrite of a tracked file
+  is a race the agent will eventually lose. (2026-09-15)
 - **The `llama-server` user service is the live server. Verify beside it, never
   replace it.** It holds port 8080 and serves the deployed
   `~/.config/llama.cpp/models.ini`, so `make serve` on 8080 exits with a bind

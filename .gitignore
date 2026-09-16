@@ -1,7 +1,9 @@
-eval/__pycache__/
+__pycache__/
+
 eval/runs/
 
 models/
+
 memory/*.md
 !memory/*.example.md
 

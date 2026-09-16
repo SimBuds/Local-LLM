@@ -127,15 +127,22 @@ llama.cpp.
 
 ```text
 .
-├── prompts/              # behavior controls; runs every turn
-├── memory/user.md        # durable user profile (gitignored; see *.example.md)
+├── prompts/              # behavior controls, run every turn
+├── memory/user.md        # durable user profile (gitignored, see *.example.md)
 ├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # benchmark runners, tasks, and offline unit tests
-├── models/<name>/        # generated system.txt, prompt.txt, preset.ini
+├── scripts/llm           # terminal client for the router, installed to ~/.local/bin
+├── systemd/              # the llama-server user service unit
+├── models/<name>/        # generated system.txt, prompt.txt, preset.ini (gitignored)
 ├── models/models.ini     # generated router preset: server.ini + every preset.ini
 ├── server.ini            # llama-server settings shared by every model
-├── Makefile              # make build / serve / check
-└── build-{gemma,qwen,lite}
+├── build-common.sh       # shared assembly, and the shared PARAMS baseline
+├── build-{gemma,qwen,lite}   # one per model, discovered by make
+├── add-model             # scaffolds a new build-* from a staged or remote GGUF
+├── apply-universal.py    # ports the portable half of AGENTS.md between repos
+├── Makefile              # see the target table below
+├── AGENTS.md             # working rules for AI agents in this repo
+└── TESTING.md            # testing source of truth and benchmark history
 ```
 
 Prompt assembly order is `knowledge/`, then `memory/`, then `prompts/`; files
@@ -315,11 +322,25 @@ make check   # rebuild only the models whose stack changed, then run run-persona
 make hook    # install a pre-commit hook that does the same on staged prompt edits
 ```
 
-`make build` rebuilds without verifying, `make persona` verifies without
-rebuilding, and `make clean` drops the stamps to force a full rebuild. Editing a
-single `build-*` script rebuilds only that model; editing anything under
-`prompts/`, `memory/`, or `knowledge/` rebuilds all three, because every builder
-assembles the same stack.
+Every target:
+
+| Target | What it does | When |
+|---|---|---|
+| `make build` | Rebuild the models whose prompt stack changed, then join `models/models.ini` | After editing a builder or the prompt stack |
+| `make check` | `build`, then the persona suite over every model | Before committing a prompt change |
+| `make persona` | The persona suite without rebuilding | Checking the stack without touching files |
+| `make deploy` | Copy `models/models.ini` to `~/.config/llama.cpp/` | Shipping a preset change to the service |
+| `make serve` | Run a router in the foreground over the repo's own preset | Trying an undeployed change, with `PORT=8081` |
+| `make hook` | Install the pre-commit hook that runs `make check` | Once per clone |
+| `make clean` | Drop the build stamps | Forcing a full rebuild |
+
+`make deploy` writes outside the repo and the service needs restarting
+afterwards, so both are yours to run (see *Serving other apps*).
+
+Editing a single `build-*` script rebuilds only that model. Editing anything
+under `prompts/`, `memory/`, or `knowledge/` rebuilds every model, because they
+all assemble the same stack. The lineup itself is discovered from the `build-*`
+files, so `MODELS` is never edited by hand.
 
 ## llama-server
 
@@ -332,19 +353,25 @@ other apps*). `make serve` runs a router in the foreground over the repo's own
 
 Benchmarks were run on llama.cpp build 10968 (commit `41abbfd59`), built from
 source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
-pins `g++-15` as the CUDA host compiler for CUDA 13.4. Building with the system
-GCC 16 was not tried.
+used to pin `g++-15` as the CUDA host compiler. That is corrected as of
+2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
+the configure step, and `llama-server --version` reports the installed binary was
+in fact built with GNU 16.2.1. Nothing needs pinning. Verified by configuring in
+a scratch directory: cmake reports `CUDA host compiler is GNU 16.2.1` against
+CUDA 13.4.59.
 
 ```bash
 # Runs in: local terminal, as your user (no sudo). Safe to re-run.
 SRC="$HOME/src/llama.cpp"
 [ -d "$SRC/.git" ] || git clone https://github.com/ggml-org/llama.cpp "$SRC"
 cmake -S "$SRC" -B "$SRC/build" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
-  -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-15 -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
   && cmake --build "$SRC/build" -j 20 --target llama-server \
   && ln -sfn "$SRC/build/bin/llama-server" "$HOME/.local/bin/llama-server" \
   && llama-server --version
 ```
+
+`-DCMAKE_CUDA_ARCHITECTURES=86` is the RTX 3080. Change it for another card.
 
 `server.ini` holds the settings every model shares, and replaces the old Ollama
 systemd override:
@@ -729,5 +756,21 @@ model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 10968
 
 ## Docs
 
+- [`PLAN.md`](PLAN.md): the blueprint. What this repo is and is not, the
+  architecture decisions and the reasoning behind them, the locked decisions with
+  their dates, and the open questions. Read it before changing anything
+  structural.
 - [`TESTING.md`](TESTING.md): testing source of truth, runner docs, safety notes,
   benchmark history, and detailed results.
+- [`AGENTS.md`](AGENTS.md): the working rules an AI coding agent follows in this
+  repo. Everything above its `## Project-specific rules` section is portable
+  across repos, and the section at the end is this project's own.
+  `apply-universal.py` copies that portable half into another repo's `AGENTS.md`
+  while keeping that repo's project rules byte for byte:
+
+  ```bash
+  # Runs in: local terminal. Names every file it touches, writes nothing else.
+  ./apply-universal.py AGENTS.md ../other-repo/AGENTS.md
+  ```
+
+  It is safe to re-run, and it never commits.

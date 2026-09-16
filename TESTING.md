@@ -233,6 +233,16 @@ warning when a response was scored by fewer than two judges — with the current
 are soft signal until a third model joins the panel). Tutor ranking breaks
 teach-score ties on leak rate: the model that leaks less wins.
 
+**Measured noise floor for `run-persona.py` at 3 attempts: at least plus or minus
+2 of 21.** On 2026-09-15 the suite was run twice over byte-identical inputs (the
+change between runs was proved to leave every `prompt.txt` and every preset
+byte-identical). `gemma` held at 12/21 both times, while `qwen` moved 20/21 to
+19/21 and `lite` moved 12/21 to 10/21. Nothing about the models or the stack had
+changed, so that spread is sampling variation. Do not read a one or two attempt
+move at 3 attempts as a result. Raise `--attempts` before believing a small
+difference, and note that the same run confirms a clean pass is cheap to get by
+accident at this sample size.
+
 Confidence by signal:
 
 | Signal | Confidence | How to use it |
