@@ -4,6 +4,8 @@
 #
 #   ./add-model                  pick from the staged GGUFs no builder claims
 #   ./add-model FILENAME.gguf    skip the menu
+#   ./add-model ORG/REPO         list a HuggingFace repo's GGUFs and print the
+#                                download command for the one you pick
 #   ./add-model --no-probe ...   scaffold only, do not touch the GPU
 #
 # It writes build-<name> and derives the GPU/CPU split by loading the model once
@@ -71,6 +73,124 @@ sys.exit(1)                      # parsed fine, no MTP marker
 PY
 }
 
+# --- looking up a HuggingFace repo ------------------------------------------
+
+# Overridable so tests can point at a fake, and so a mirror can be used.
+HF_API="${HF_API:-https://huggingface.co/api/models}"
+HF_HOST="${HF_HOST:-https://huggingface.co}"
+
+# An argument is a repo when it is a URL or contains a slash. A staged GGUF is
+# always a bare filename in $GGUF_DIR, so the two never collide.
+looks_like_repo() {
+  case "$1" in
+    http://*|https://*|*/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# "https://huggingface.co/Org/Repo?clone=true" and "Org/Repo" both give "Org/Repo".
+repo_slug() {
+  local s="$1"
+  s="${s%%\?*}"
+  s="${s#http://}"; s="${s#https://}"
+  s="${s#huggingface.co/}"
+  s="${s%/}"
+  s="${s%/tree/main}"
+  printf '%s' "$s"
+}
+
+# List the repo's GGUFs, let the user choose, and print the download command.
+# It prints rather than downloads: the target is $GGUF_DIR, which lives outside
+# the repo, so the transfer is the human's to run and to interrupt.
+hf_pick() {
+  local slug json code
+  slug="$(repo_slug "$1")"
+  json="$(mktemp "${TMPDIR:-/tmp}/add-model-hf-XXXXXX.json")"
+
+  code="$(curl -sS -o "$json" -w '%{http_code}' --max-time 30 "$HF_API/$slug/tree/main" || echo 000)"
+  case "$code" in
+    200) ;;
+    401|403) rm -f "$json"; die "$slug is gated or private (HTTP $code). Accept the model's terms on its HuggingFace page first, then retry." ;;
+    404) rm -f "$json"; die "no such model repo: $slug (HTTP 404)" ;;
+    000) rm -f "$json"; die "could not reach $HF_API (no network, or the request timed out)" ;;
+    *)   rm -f "$json"; die "HuggingFace returned HTTP $code for $slug" ;;
+  esac
+
+  # One row per model: sharded sets (NAME-00001-of-00003.gguf) collapse to one
+  # entry carrying every shard, because they are downloaded and loaded together.
+  local rows
+  rows="$(jq -r '
+    [ .[] | select(.type == "file") | select(.path | endswith(".gguf")) ]
+    | map(. + {base: (.path | sub("-[0-9]{5}-of-[0-9]{5}\\.gguf$"; ".gguf"))})
+    | group_by(.base)
+    | map({
+        name:   .[0].base,
+        size:   (map(.size) | add),
+        shards: length,
+        files:  (map(.path) | sort | join(" ")),
+        proj:   (.[0].base | test("mmproj"))
+      })
+    | sort_by(.size)[]
+    | [.name, .size, .shards, .proj, .files] | @tsv
+  ' "$json")"
+  rm -f "$json"
+  [ -n "$rows" ] || die "no GGUF files in $slug"
+
+  local -a names sizes shards files
+  local projectors=""
+  while IFS=$'\t' read -r name size nshard proj flist; do
+    if [ "$proj" = true ]; then
+      projectors="$projectors $name"
+      continue
+    fi
+    names+=("$name"); sizes+=("$size"); shards+=("$nshard"); files+=("$flist")
+  done <<<"$rows"
+  [ "${#names[@]}" -gt 0 ] || die "no GGUF files in $slug (only projectors)"
+
+  echo "GGUF files in $slug:"
+  local i=1
+  for i in $(seq 1 "${#names[@]}"); do
+    local idx=$((i - 1)) label=""
+    [ "${shards[$idx]}" -gt 1 ] && label="  [${shards[$idx]} shards]"
+    printf '  %d) %-52s %6.1f GB%s\n' "$i" "${names[$idx]}" \
+      "$(awk -v b="${sizes[$idx]}" 'BEGIN{printf "%.1f", b/1000000000}')" "$label"
+  done
+  [ -n "$projectors" ] && echo "  (vision projector in this repo, download alongside if you need vision:$projectors)"
+
+  local choice
+  while true; do
+    printf 'Pick a number: '
+    read -r choice || die "no choice given"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
+      break
+    fi
+    echo "  not one of 1 to ${#names[@]}"
+  done
+
+  local idx=$((choice - 1)) f
+  echo
+  echo "Download it yourself, then re-run add-model. Resumable, safe to repeat:"
+  echo
+  for f in ${files[$idx]}; do
+    echo "  curl -L --fail -C - -o \"\$GGUF_DIR/$f\" \\"
+    echo "    \"$HF_HOST/$slug/resolve/main/$f\""
+  done
+  echo
+  echo "Then record what you got, so a later staging can be checked against it:"
+  for f in ${files[$idx]}; do
+    echo "  sha256sum \"\$GGUF_DIR/$f\""
+  done
+  echo
+  echo "--fail matters: without it a 404 or a gated redirect is saved as a valid"
+  echo "looking .gguf full of HTML, and you find out at load time."
+
+  # If it is already staged, carry straight on into the scaffold.
+  HF_TARGET="${names[$idx]}"
+  if [ "${shards[$idx]}" -gt 1 ]; then
+    HF_TARGET="$(echo "${files[$idx]}" | awk '{print $1}')"
+  fi
+}
+
 # --- probing the fit --------------------------------------------------------
 
 # Seconds to wait for the server to report. A 21 GB model off a cold page cache
@@ -82,7 +202,7 @@ PROBE_PID=""
 
 probe_cleanup() {
   if [ -n "$PROBE_PID" ] && kill -0 "$PROBE_PID" 2>/dev/null; then
-    true
+    kill "$PROBE_PID" 2>/dev/null || true
     wait "$PROBE_PID" 2>/dev/null || true
   fi
   PROBE_PID=""
@@ -289,7 +409,16 @@ set -- ${positional[@]+"${positional[@]}"}
 
 [ -d "$GGUF_DIR" ] || die "GGUF_DIR does not exist: $GGUF_DIR"
 
-if [ $# -gt 0 ]; then
+if [ $# -gt 0 ] && looks_like_repo "$1"; then
+  hf_pick "$1"
+  if [ -f "$GGUF_DIR/$HF_TARGET" ]; then
+    echo
+    echo "$HF_TARGET is already staged, carrying on."
+    GGUF_NAME="$HF_TARGET"
+  else
+    exit 0
+  fi
+elif [ $# -gt 0 ]; then
   GGUF_NAME="$1"
   [ -f "$GGUF_DIR/$GGUF_NAME" ] || die "no such GGUF: $GGUF_DIR/$GGUF_NAME"
 else

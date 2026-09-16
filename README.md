@@ -106,7 +106,9 @@ e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp
 EOF
 ```
 
-Each line must print `OK`. `lite` can be downloaded again with
+Each line must print `OK`. `./add-model Org/Repo-GGUF` prints a correctly formed
+download command for any HuggingFace repo (see *Adding A Model*). `lite` can be
+downloaded again with
 `curl -L --fail -C - -o ~/models/gguf/qwen3.5-9b-mtp-q4_K_M.gguf https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf`.
 The `gemma` and `qwen` copies have no public byte-identical source, because
 Ollama and its store were removed from this box on 2026-09-15. The closest downloads are `google/gemma-4-26B-A4B-it-qat-q4_0-gguf`
@@ -154,7 +156,16 @@ split.
 # Runs in: local terminal, repo root. Writes one build-* file, nothing else.
 ./add-model                            # pick from staged GGUFs with no builder
 ./add-model qwen3.8-27b-mtp-q4_K_M.gguf   # or name the file and skip the menu
+./add-model Org/Repo-GGUF              # or look a HuggingFace repo up first
 ```
+
+Given a HuggingFace repo, as `Org/Repo` or any URL for it, it lists that repo's
+GGUFs with their sizes, groups a sharded set into one entry, flags any `mmproj`
+vision projector instead of offering it as a model, and prints the `curl` for the
+quant you pick. It prints rather than downloads: `$GGUF_DIR` is outside the repo,
+so the transfer is yours to run and to interrupt. Re-run `add-model` once the
+file is staged and it carries on into the scaffold. A gated repo, a missing one,
+and one with no GGUF each stop with the reason rather than a menu.
 
 It asks for the router name, refusing one that is malformed, already taken, or
 part of the `gemma` / `qwen` / `lite` contract other repos depend on. It reads

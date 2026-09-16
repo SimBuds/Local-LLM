@@ -27,7 +27,12 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-ADD_MODEL = REPO / "add-model"
+
+# Which add-model to exercise. Overridable so a mutation harness can point the
+# suite at a scratch copy instead of rewriting the tracked file in the working
+# tree. On 2026-09-15 a harness that mutated the tracked file in place was caught
+# mid-run by a commit, and the injected bug landed in history.
+ADD_MODEL = Path(os.environ.get("ADD_MODEL_SRC", REPO / "add-model"))
 
 # GGUF value type ids, from the format spec.
 T_UINT32 = 4
@@ -79,8 +84,7 @@ class AddModelTestCase(unittest.TestCase):
 
         # A working tree that looks like the real one: the script under test,
         # the shared assembly it references, and one builder that claims a GGUF.
-        for name in ("add-model", "build-common.sh"):
-            src = REPO / name
+        for name, src in (("add-model", ADD_MODEL), ("build-common.sh", REPO / "build-common.sh")):
             if src.exists():
                 dst = self.repo / name
                 dst.write_bytes(src.read_bytes())
@@ -362,3 +366,138 @@ class ProbeFitTests(AddModelTestCase):
                                probe=True, env_extra=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(self.args_file.exists(), "llama-server was started despite --no-probe")
+
+
+# Trimmed from the real response for
+# DavidAU/Qwen3.8-27B-...-MTP-GGUF/tree/main, fetched 2026-09-15, with a sharded
+# set and an mmproj added so those paths are covered. Entry shape is verbatim:
+# the tree endpoint carries `path` and `size`, while /api/models/<repo> siblings
+# carry only `rfilename` and no size, which is why the tree endpoint is used.
+HF_TREE = """[
+ {"type":"file","size":1519,"path":".gitattributes"},
+ {"type":"file","size":11673303648,"path":"Model-IQ2_M.gguf"},
+ {"type":"file","size":16582359648,"path":"Model-IQ4_XS.gguf"},
+ {"type":"file","size":22431000096,"path":"Model-Q6_K.gguf"},
+ {"type":"file","size":900000000,"path":"Model.mmproj.gguf"},
+ {"type":"file","size":15000000000,"path":"Big-Q8_0-00001-of-00003.gguf"},
+ {"type":"file","size":15000000000,"path":"Big-Q8_0-00002-of-00003.gguf"},
+ {"type":"file","size":12000000000,"path":"Big-Q8_0-00003-of-00003.gguf"},
+ {"type":"file","size":7100,"path":"README.md"}
+]"""
+
+HF_NO_GGUF = """[
+ {"type":"file","size":1519,"path":".gitattributes"},
+ {"type":"file","size":7100,"path":"README.md"}
+]"""
+
+FAKE_CURL = r"""#!/usr/bin/env bash
+# Stands in for curl during HF lookup tests. Records the URL it was asked for,
+# then writes $FAKE_BODY to the -o target and prints $FAKE_CODE for -w.
+url=""; out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s
+' "$url" >> "$FAKE_URLS"
+[ -n "$out" ] && printf '%s' "$FAKE_BODY" > "$out"
+printf '%s' "${FAKE_CODE:-200}"
+exit 0
+"""
+
+
+class HuggingFaceLookupTests(AddModelTestCase):
+    """The repo lookup. No live network: a fake curl serves a captured fixture."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        curl = self.bin / "curl"
+        curl.write_text(FAKE_CURL)
+        curl.chmod(0o755)
+        self.urls_file = Path(self.tmp.name) / "urls.txt"
+        self.urls_file.touch()
+
+    def lookup(self, target: str, body: str = HF_TREE, code: str = "200", stdin: str = ""):
+        env = {
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FAKE_BODY": body,
+            "FAKE_CODE": code,
+            "FAKE_URLS": str(self.urls_file),
+        }
+        return self.run_add_model(stdin=stdin, args=[target], env_extra=env)
+
+    def urls(self) -> str:
+        return self.urls_file.read_text()
+
+    def test_bare_org_repo_hits_the_tree_endpoint(self):
+        self.lookup("DavidAU/Some-GGUF")
+        self.assertIn("huggingface.co/api/models/DavidAU/Some-GGUF/tree/main", self.urls())
+
+    def test_full_url_resolves_to_the_same_repo(self):
+        self.lookup("https://huggingface.co/DavidAU/Some-GGUF")
+        self.assertIn("huggingface.co/api/models/DavidAU/Some-GGUF/tree/main", self.urls())
+
+    def test_url_with_query_string_resolves_to_the_same_repo(self):
+        self.lookup("https://huggingface.co/DavidAU/Some-GGUF?clone=true")
+        self.assertIn("/api/models/DavidAU/Some-GGUF/tree/main", self.urls())
+        self.assertNotIn("clone=true", self.urls())
+
+    def test_menu_lists_gguf_files_with_human_sizes(self):
+        r = self.lookup("DavidAU/Some-GGUF")
+        self.assertIn("Model-IQ4_XS.gguf", r.stdout)
+        self.assertIn("GB", r.stdout)
+        self.assertNotIn("README.md", r.stdout)
+        self.assertNotIn(".gitattributes", r.stdout)
+
+    def test_sharded_set_appears_once_not_per_shard(self):
+        r = self.lookup("DavidAU/Some-GGUF")
+        self.assertEqual(r.stdout.count("Big-Q8_0"), 1, r.stdout)
+        self.assertIn("3 shards", r.stdout)
+
+    def test_mmproj_is_flagged_not_offered_as_a_model(self):
+        r = self.lookup("DavidAU/Some-GGUF")
+        listed = [ln for ln in r.stdout.splitlines() if ln.strip().startswith(tuple("123456789"))]
+        self.assertFalse([ln for ln in listed if "mmproj" in ln],
+                         f"mmproj offered as a model: {listed}")
+        self.assertIn("mmproj", r.stdout)  # still mentioned, since it may be needed
+
+    def test_missing_repo_exits_with_the_reason_and_no_menu(self):
+        r = self.lookup("DavidAU/Nope", body="", code="404")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("404", r.stderr + r.stdout)
+        self.assertNotIn("1)", r.stdout)
+
+    def test_gated_repo_exits_saying_so(self):
+        r = self.lookup("meta/Gated", body="", code="401")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertRegex(r.stderr.lower(), r"gated|access|terms")
+
+    def test_repo_with_no_gguf_exits_with_the_reason(self):
+        r = self.lookup("DavidAU/Empty", body=HF_NO_GGUF)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertRegex(r.stderr.lower(), r"no gguf")
+
+    def test_printed_download_uses_the_resumable_failing_curl_form(self):
+        r = self.lookup("DavidAU/Some-GGUF", stdin="2\n")
+        self.assertIn("curl -L --fail -C -", r.stdout)
+        self.assertIn("/resolve/main/", r.stdout)
+        self.assertIn("sha256sum", r.stdout)
+
+    def test_download_is_printed_not_run(self):
+        """The target is ~/models/gguf, outside the repo, so it stays Casey's."""
+        r = self.lookup("DavidAU/Some-GGUF", stdin="2\n")
+        downloads = [u for u in self.urls().splitlines() if "/resolve/main/" in u]
+        self.assertFalse(downloads, f"add-model fetched the weights itself: {downloads}")
+
+    def test_local_filename_makes_no_network_call(self):
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_BODY": HF_TREE,
+               "FAKE_URLS": str(self.urls_file)}
+        r = self.run_add_model(stdin="localname\n", args=["free-plain.gguf"], env_extra=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.urls().strip(), "")
