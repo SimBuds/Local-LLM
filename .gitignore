@@ -7,4 +7,7 @@ models/
 memory/*.md
 !memory/*.example.md
 
+build-*
+!build-common.sh
+
 IMPLEMENT.md

@@ -4,7 +4,7 @@ Prompt-stack benchmark: does the assembled system prompt actually get obeyed?
 
 Every other runner measures the base model *through* the stack. This one measures
 the stack itself. Each task in eval/persona_tasks.py targets a specific rule from
-`prompts/`, `memory/`, or `knowledge/` and fails when the response breaks it —
+`prompts/`, or `memory/` and fails when the response breaks it —
 identity leaks, Familiar skills upgraded to Core, invented figures, missing
 `Unverified:` marks, missing `Fields:` echoes, `$`-prefixed shell commands.
 
@@ -187,8 +187,8 @@ def write_summary(run_dir: Path, summary: dict[str, list[dict]],
             if args.system_mode == "baseline" else " — the model's built prompt stack"),
          "- **Clean** = the response obeys every stack rule its task checks. "
          "Deterministic regex, no judge.",
-         "- This suite measures the prompt stack in `prompts/`, `memory/`, and "
-         "`knowledge/` — not base-model capability. A failure names the file to fix.", ""]
+         "- This suite measures the prompt stack in `prompts/` and `memory/` "
+         " — not base-model capability. A failure names the file to fix.", ""]
     best = next((r for r in ranked if r["clean_rate"] >= 0), None)
     if best:
         L += [f"## 🏆 Most compliant: `{best['model']}` — "

@@ -16,7 +16,7 @@ The suite answers four practical questions:
 3. **Can the model teach without leaking?** Explanation quality, code gate, and
    solution-leak checks for tutor use.
 4. **Does the prompt stack actually hold?** Whether the rules in `prompts/`,
-   `memory/`, and `knowledge/` are obeyed — identity, honesty about Casey's skill
+   `memory/` is obeyed — identity, honesty about Casey's skill
    buckets, `Unverified:` marking, output shape.
 
 Question 4 is the odd one out and the reason `run-persona.py` exists: suites 1–3
@@ -236,7 +236,7 @@ teach-score ties on leak rate: the model that leaks less wins.
 
 **Measured noise floor for `run-persona.py` at 3 attempts: up to 3 of 21 on a
 single model.** The suite was run three times on 2026-09-15 and 2026-09-16 over
-byte-identical inputs. `prompts/`, `memory/` and `knowledge/` had no commits
+byte-identical inputs. `prompts/` and `memory/` had no commits
 across that window, and the one change to the builders in between was proved to
 leave every `prompt.txt` and every preset byte for byte identical.
 

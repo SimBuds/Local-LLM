@@ -129,7 +129,6 @@ llama.cpp.
 .
 ├── prompts/              # behavior controls, run every turn
 ├── memory/user.md        # durable user profile (gitignored, see *.example.md)
-├── knowledge/**/*.md     # reusable reference context
 ├── eval/                 # benchmark runners, tasks, and offline unit tests
 ├── scripts/llm           # terminal client for the router, installed to ~/.local/bin
 ├── systemd/              # the llama-server user service unit
@@ -145,7 +144,7 @@ llama.cpp.
 └── TESTING.md            # testing source of truth and benchmark history
 ```
 
-Prompt assembly order is `knowledge/`, then `memory/`, then `prompts/`; files
+Prompt assembly order is `memory/`, then `prompts/`; files
 within each directory are sorted. That keeps reference context first and behavior
 rules last. Each Markdown file is wrapped in `--- START/END FILE ---`. Files over
 100k are skipped, as are `*.example.md` templates — injecting a template beside
@@ -297,7 +296,6 @@ Where changes belong:
 |---|---|
 | Behavior rule for all models | `prompts/` |
 | Stable user preference/fact | `memory/user.md` |
-| Reusable technical reference | `knowledge/` |
 | New coding eval task | `eval/coding_tasks.py` |
 | New content eval task | `eval/content_tasks.py` |
 | New JSON/long-context eval task | `eval/json_tasks.py` |
@@ -312,7 +310,7 @@ compare against a stacked run: a rule the base model already obeys unprompted is
 costing tokens for nothing. See *Prompt Stack Value* below for the current
 measured answer.
 
-**After editing anything in `prompts/`, `memory/`, or `knowledge/`, rebuild and
+**After editing anything in `prompts/` or `memory/`, rebuild and
 run the persona suite** — it is the only suite that tests the stack itself rather
 than the base model behind it. That used to be manual discipline; it is now a
 target:
@@ -338,7 +336,7 @@ Every target:
 afterwards, so both are yours to run (see *Serving other apps*).
 
 Editing a single `build-*` script rebuilds only that model. Editing anything
-under `prompts/`, `memory/`, or `knowledge/` rebuilds every model, because they
+under `prompts/`, or `memory/` rebuilds every model, because they
 all assemble the same stack. The lineup itself is discovered from the `build-*`
 files, so `MODELS` is never edited by hand.
 
@@ -594,7 +592,7 @@ Individual runners remain available for targeted sweeps:
 ```
 
 `run-persona.py` is the prompt-stack regression suite: it checks that the rules in
-`prompts/`, `memory/`, and `knowledge/` are actually obeyed — the identity rule,
+`prompts/`, and `memory/` are actually obeyed — the identity rule,
 the `memory/user.md` honesty rules about Casey's skill buckets, `Unverified:`
 marking, and output shape. Every other runner measures the base model *through*
 the stack, so this is the only one that notices when a prompt edit breaks a rule.

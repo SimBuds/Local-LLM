@@ -85,7 +85,7 @@ mkdir -p "$OUT_DIR"
   # `*.example.md` are tracked templates for people cloning the repo; the real
   # files sit beside them untracked. Injecting both would hand the model two
   # conflicting User Profile sections, so the templates are skipped here.
-  for dir in "$AI_ROOT/knowledge" "$AI_ROOT/memory" "$AI_ROOT/prompts"; do
+  for dir in "$AI_ROOT/memory" "$AI_ROOT/prompts"; do
     find "$dir" -type f -name '*.md' ! -name '*.example.md' -size -100k -print0 2>/dev/null \
       | sort -z \
       | while IFS= read -r -d '' f; do

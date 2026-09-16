@@ -1,11 +1,11 @@
 # Rebuild-then-verify automation.
 #
 # The rule this enforces used to be manual discipline in README.md: "after
-# editing anything in prompts/, memory/, or knowledge/, rebuild and run
+# editing anything in prompts/ and memory/, rebuild and run
 # run-persona.py". Manual discipline is the kind that gets skipped on the one
 # commit that breaks the identity rule, so it lives here instead.
 #
-#   make build   rebuild only the models whose prompt stack changed
+#   make build   rebuild only the models whose prompt stack changed10
 #   make deploy  copy models/models.ini to ~/.config/llama.cpp/ for the llama-server service
 #   make serve   start a router over the repo's models/models.ini (testing undeployed changes)
 #   make check   rebuild those, then run the persona suite over all of them
@@ -13,8 +13,8 @@
 #   make hook    install the pre-commit hook that runs `make check`
 #   make clean   drop the build stamps, forcing a full rebuild next time
 #
-# Every builder assembles the SAME prompt stack, so any edit under prompts/,
-# memory/, or knowledge/ invalidates every model. The per-model stamp still
+# Every builder assembles the SAME prompt stack, so any edit under prompts/ or
+# memory/ invalidates every model. The per-model stamp still
 # matters: it means editing one builder's PARAMS rebuilds only that model, and a
 # no-op `make check` costs nothing but the persona run.
 
@@ -26,7 +26,7 @@
 # gemma lite qwen rather than the hand-written gemma qwen lite. llama-server
 # sorts /models itself and does not depend on file order.
 MODELS  := $(filter-out common.sh,$(patsubst build-%,%,$(wildcard build-*)))
-STACK   := $(shell find prompts memory knowledge -type f -name '*.md' 2>/dev/null | sort)
+STACK   := $(shell find prompts memory -type f -name '*.md' 2>/dev/null | sort)
 STAMPS  := $(addprefix models/,$(addsuffix /.built,$(MODELS)))
 PRESETS := $(addprefix models/,$(addsuffix /preset.ini,$(MODELS)))
 
@@ -94,7 +94,7 @@ hook:
 	  '# and runs the persona suite before the commit lands.' \
 	  '# Skip a known-bad-but-intentional commit with: git commit --no-verify' \
 	  'set -euo pipefail' \
-	  'if git diff --cached --name-only | grep -qE "^(prompts|memory|knowledge)/|^build-"; then' \
+	  'if git diff --cached --name-only | grep -qE "^(prompts|memory)/|^build-"; then' \
 	  '  echo "pre-commit: prompt stack touched — running make check"' \
 	  '  exec make -C "$$(git rev-parse --show-toplevel)" check' \
 	  'fi' \

@@ -5,7 +5,7 @@ actually get obeyed?
 Every other suite measures the *base model* through the stack — coding ability,
 content format, long-context recall. None of them test the thing this repo
 actually builds. These tasks do: each one targets a specific rule written in
-`prompts/`, `memory/`, or `knowledge/` and fails when the response violates it.
+`prompts/`, or `memory/` and fails when the response violates it.
 
 That makes this the regression suite for prompt edits. If you compress
 `prompts/system.md` and the identity rule stops holding, only this suite tells

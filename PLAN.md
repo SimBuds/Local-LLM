@@ -20,7 +20,7 @@ one llama.cpp router that other applications on the same box call over HTTP.
 
 The repo builds two things and owns nothing else:
 
-1. **A prompt stack.** `knowledge/`, then `memory/`, then `prompts/`, assembled
+1. **A prompt stack.** `memory/`, then `prompts/`, assembled
    in that order into `models/<name>/prompt.txt`.
 2. **A router preset.** `server.ini` plus one section per model, joined into
    `models/models.ini`, which llama-server reads.
