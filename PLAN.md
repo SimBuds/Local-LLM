@@ -104,12 +104,6 @@ with a leave-one-out judge panel. With two models that leaves exactly one judge
 per response and inter-judge disagreement can never be computed. Three models
 means two judges per response and a real disagreement number.
 
-`neoqwen` is a local extra, not part of the lineup other repos call. It is a
-dense 27B, so it spills by cutting GPU layers rather than offloading experts, and
-only 9 of 66 layers fit on the card at 64K. That is the dense-spillover case
-this box handles badly, and it measured about 5 to 9 tok/s in the 2026-09-16
-persona run. It is kept for occasional use, not as a daily default.
-
 `lite`'s weights are not the Ollama-era ones: that build does not load in
 llama.cpp, so it was replaced with unsloth's MTP build at the same quant, and its
 scores are not comparable with its Ollama history.
@@ -173,7 +167,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 21, `qwen` 34) | 2026-09-14 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. |
+| 2 GB fit margin (`gemma` 22, `qwen` 35 at 65536 context) | 2026-09-14, values updated 2026-09-16 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |

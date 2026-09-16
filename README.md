@@ -27,7 +27,6 @@ Current lineup (moved to llama.cpp 2026-09-14):
 | `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 64K | 22 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 64K | 35 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 64K | all GPU, MTP | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
-| `neoqwen` | `Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf` | 64K | 9 of 66 layers on GPU (`n-gpu-layers`), MTP | Dense 27B, local only and not part of the contract. About 5 to 9 tok/s in the 2026-09-16 persona run. |
 
 `gemma` and `qwen` are the same weights the Ollama-era benchmarks used, copied
 byte for byte out of Ollama's blob store. `lite` is not: Ollama's `qwen3.5:9b`
@@ -94,7 +93,6 @@ Builders abort naming the missing path if a file is not there.
 | `gemma` | `gemma4-26b-a4b-it-qat.gguf` | Copied from Ollama's `gemma4:26b-a4b-it-qat` blob. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Copied from Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
-| `neoqwen` | `Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf` | `DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF`, the MTP-Q4_K_M quant, 18498573856 bytes. Verified 2026-09-16 against the sha256 HuggingFace publishes as its LFS oid. |
 
 Check the staged files against the checksums the benchmarks were run with:
 
@@ -104,7 +102,6 @@ cd ~/models/gguf && sha256sum -c <<'EOF'
 4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5  gemma4-26b-a4b-it-qat.gguf
 d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
-bc7a6cf2bcc78d1190aaf04d1ab1c5cb845b6ff23aa0e7d24fe0d2ea6d3a7c7c  Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf
 EOF
 ```
 
@@ -205,7 +202,7 @@ The only model-specific part of a builder is the top config block:
 MODEL_NAME="qwen"
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"   # filename under $GGUF_DIR
 LOAD=(
-  'n-cpu-moe = 34'           # expert layers kept in system RAM, pinned (see below)
+  'n-cpu-moe = 35'           # expert layers kept in system RAM, pinned (see below)
   'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
 )
 ```
@@ -257,11 +254,14 @@ otherwise change a benchmark's offload between runs).
 first pinned values (gemma 18, qwen 32) came from llama.cpp's default 1 GB fit
 margin and crashed with CUDA out of memory once other GPU use passed somewhere
 between 2.1 and 2.5 GB for `gemma` and between 2.5 and 3.0 GB for `qwen`. Desktop apps alone use 1.2 to 1.5 GB
-on this box. The current values (gemma 21, qwen 34) were fit with a 2 GB margin
-and then checked with 5 load-and-request cycles each while 3.0 GB of the card was
+on this box. The 2 GB-margin values at 32768 context (gemma 21, qwen 34) were
+then checked with 5 load-and-request cycles each while 3.0 GB of the card was
 held by other processes: all passed. The cost against the old values was about
 13% generation speed for `gemma` and 9% for `qwen` (details in
-[`TESTING.md`](TESTING.md) under *Offload headroom*).
+[`TESTING.md`](TESTING.md) under *Offload headroom*). The current values (gemma
+22, qwen 35) are what the fitter chose at the same 2 GB margin after context rose
+to 65536 on 2026-09-16, which roughly doubled the KV cache. They have not yet had
+the 3.0 GB spike test.
 
 To re-derive a value after a model or hardware change, use `./add-model` on a
 fresh builder, which runs this for you. The manual recipe below is the fallback,

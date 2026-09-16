@@ -5,7 +5,7 @@
 # run-persona.py". Manual discipline is the kind that gets skipped on the one
 # commit that breaks the identity rule, so it lives here instead.
 #
-#   make build   rebuild only the models whose prompt stack changed10
+#   make build   rebuild only the models whose prompt stack changed
 #   make deploy  copy models/models.ini to ~/.config/llama.cpp/ for the llama-server service
 #   make serve   start a router over the repo's models/models.ini (testing undeployed changes)
 #   make check   rebuild those, then run the persona suite over all of them
