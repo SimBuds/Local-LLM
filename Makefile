@@ -18,7 +18,14 @@
 # matters: it means editing one builder's PARAMS rebuilds only that model, and a
 # no-op `make check` costs nothing but the persona run.
 
-MODELS  := gemma qwen lite
+# Every build-* script is a model. Discovered rather than listed, so dropping in
+# a new builder (see ./add-model) is enough; before 2026-09-15 this was a hand-
+# maintained list and a new builder was silently ignored until someone edited it.
+# build-common.sh is shared assembly, not a builder, so it is filtered out.
+# The order here is the section order in models.ini. wildcard sorts, so it is
+# gemma lite qwen rather than the hand-written gemma qwen lite. llama-server
+# sorts /models itself and does not depend on file order.
+MODELS  := $(filter-out common.sh,$(patsubst build-%,%,$(wildcard build-*)))
 STACK   := $(shell find prompts memory knowledge -type f -name '*.md' 2>/dev/null | sort)
 STAMPS  := $(addprefix models/,$(addsuffix /.built,$(MODELS)))
 PRESETS := $(addprefix models/,$(addsuffix /preset.ini,$(MODELS)))
@@ -31,7 +38,7 @@ PORT     ?= 8080
 # from here. Override to deploy somewhere else, e.g. a scratch dir for testing.
 DEPLOY_DIR ?= $(HOME)/.config/llama.cpp
 
-.PHONY: all build deploy serve check persona hook clean
+.PHONY: all build deploy serve check persona hook clean FORCE
 
 all: build
 
@@ -39,8 +46,16 @@ build: models/models.ini
 
 # The router reads one preset file: the shared [*] settings, then one section
 # per model. A running server does not reload it — restart `make serve`.
-models/models.ini: server.ini $(STAMPS)
+#
+# FORCE because make cannot see a prerequisite that no longer exists: deleting a
+# builder shrinks $(STAMPS), which never makes models.ini out of date, so the
+# removed model kept its section in the router config and went on being served.
+# Rebuilding the file every time costs one cat of four small files; the builders
+# themselves are still guarded by their stamps.
+models/models.ini: server.ini $(STAMPS) FORCE
 	cat server.ini $(PRESETS) > $@
+
+FORCE:
 
 # A model is stale when the shared stack, the shared assembly, or its own
 # builder is newer than its stamp. A rebuild only rewrites text files; the GGUF

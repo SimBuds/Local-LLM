@@ -11,20 +11,6 @@ MODEL_NAME="qwen"
 # Ollama-era benchmarks. It carries llama.cpp-compatible MTP (nextn) tensors.
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"
 
-# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-
-# Shared baseline params — deliberately IDENTICAL to build-gemma. See the note
-# there: differing samplers across builders confound the head-to-head.
-PARAMS=(
-  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
-  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
-  'top-p = 0.95'
-  'top-k = 40'
-  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
-  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
-)
-
 # Per-model load params. Expert split pinned for the reason given in build-gemma;
 # 34 is what --fit chose with --fit-target 2048 and MTP on, 2026-09-14 (42
 # layers, 34 overflowing, 6071 MiB). The earlier 32 (default 1024 MiB margin)

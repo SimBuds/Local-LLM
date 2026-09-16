@@ -144,6 +144,35 @@ the real file would hand the model two conflicting profiles. The markers stay in
 `system.txt` for debugging and are stripped from `prompt.txt`, because models
 recite them.
 
+## Adding A Model
+
+`./add-model` writes the builder for a GGUF you have already staged in
+`$GGUF_DIR`. It does not download anything and it does not decide the GPU/CPU
+split.
+
+```bash
+# Runs in: local terminal, repo root. Writes one build-* file, nothing else.
+./add-model                            # pick from staged GGUFs with no builder
+./add-model qwen3.8-27b-mtp-q4_K_M.gguf   # or name the file and skip the menu
+```
+
+It asks for the router name, refusing one that is malformed, already taken, or
+part of the `gemma` / `qwen` / `lite` contract other repos depend on. It reads
+the GGUF header to decide whether the model carries MTP heads, and emits
+`spec-type = draft-mtp` only when it does. It writes no `PARAMS`, because the
+sampler baseline is shared (see *Build And Tune*).
+
+Then it derives the GPU/CPU split, by loading the model once with
+`--fit-target 2048` on a spare port and reading what llama.cpp's fitter chose.
+That number goes into `LOAD` as `n-cpu-moe`, with the fit line and the date
+recorded beside it. **Close anything holding VRAM first.** The split is sized
+from what is free at that moment, which is exactly why it is then pinned. A model
+that fits entirely gets no `n-cpu-moe` and says so. `--no-probe` skips the probe
+and leaves the split for you to fill in.
+
+The lineup is discovered from the `build-*` files, so nothing else needs editing:
+`make build` picks the new model up.
+
 ## Build And Tune
 
 The only model-specific part of a builder is the top config block:
@@ -151,15 +180,6 @@ The only model-specific part of a builder is the top config block:
 ```bash
 MODEL_NAME="qwen"
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"   # filename under $GGUF_DIR
-PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks
-  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
-  'top-p = 0.95'
-  'top-k = 40'
-  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
-  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
-)
 LOAD=(
   'n-cpu-moe = 34'           # expert layers kept in system RAM, pinned (see below)
   'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
@@ -172,13 +192,36 @@ source the shared `build-common.sh`, which aborts up front if the GGUF is not in
 `GGUF_DIR`, so a stale or retargeted base fails loudly instead of leaving a
 half-written preset behind.
 
-**Keep `PARAMS` identical across builders.** Only `run-json.py` sends sampler
-options. Every other suite inherits whatever the preset sets, so differing values
-across builders make the leaderboard measure model × sampler instead of model.
-That mistake invalidated the 2026-06-14 coding, learning, and tutor tables, which
-compared `gemma` at `temperature 0.75` / `presence_penalty 0.2` against `qwen` at
-`0.2` / `0.0`. If a model needs its own decoding for daily use, make that a
-separate preset rather than skewing the shared baseline.
+**The lineup is whatever `build-*` scripts exist.** `make` discovers them, so a
+new builder needs no edit anywhere else, and deleting one drops its section from
+`models/models.ini` on the next `make build`. Section order follows the sorted
+filenames. The router sorts `/models` itself, so file order carries no meaning.
+
+**The sampler baseline is shared, and lives in `build-common.sh`.** Only
+`run-json.py` sends sampler options. Every other suite inherits whatever the
+preset sets, so a value that differs between builders makes the leaderboard
+measure model × sampler instead of model. That mistake invalidated the
+2026-06-14 coding, learning, and tutor tables, which compared `gemma` at
+`temperature 0.75` / `presence_penalty 0.2` against `qwen` at `0.2` / `0.0`.
+
+```bash
+# build-common.sh, used by every builder that does not define its own PARAMS
+PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
+  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks
+  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
+  'top-p = 0.95'
+  'top-k = 40'
+  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
+  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
+  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
+)
+```
+
+Until 2026-09-15 this array was copy-pasted into all three builders and keeping
+them in sync was manual discipline. A builder that defines its own `PARAMS`
+still overrides the default, which is how a model that needs different decoding
+for daily use gets a separate preset rather than skewing the shared baseline.
+Keep such a preset out of head-to-head benchmark runs.
 
 **`LOAD` is per model and pinned.** It holds how the model is split between GPU
 and CPU, which has to differ by model size. `server.ini` sets `fit = off`, so the
@@ -196,11 +239,19 @@ held by other processes: all passed. The cost against the old values was about
 13% generation speed for `gemma` and 9% for `qwen` (details in
 [`TESTING.md`](TESTING.md) under *Offload headroom*).
 
-To re-derive a value after a model or hardware change, load the GGUF with a 2 GB
-fit margin and the same `spec-type` its builder uses, and read the fit line.
-Leaving MTP off gives a wrong answer, because the MTP layer needs VRAM of its
-own. The log goes to a file because llama-server buffers it: stopping a piped
-probe as soon as it answered lost the fit line twice in testing.
+To re-derive a value after a model or hardware change, use `./add-model` on a
+fresh builder, which runs this for you. The manual recipe below is the fallback,
+and it is what `add-model` automates: load the GGUF with a 2 GB fit margin and
+the same `spec-type` its builder uses, and read the fit line. Leaving MTP off
+gives a wrong answer, because the MTP layer needs VRAM of its own. The log goes
+to a file because llama-server buffers it: stopping a piped probe as soon as it
+answered lost the fit line twice in testing.
+
+Note the loop below only terminates for a model that spills. A model that fits
+entirely never prints an overflow line (`lite` loads with
+`offloaded 34/34 layers to GPU` and no fit line, measured 2026-09-15), so the
+loop waits forever. `add-model` waits for the fit line or for the server to
+report `model loaded`, whichever comes first.
 
 ```bash
 # Runs in: local terminal, with nothing else holding the GPU. Safe to re-run.

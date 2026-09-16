@@ -4,8 +4,9 @@
 # Source this (do not execute) after defining:
 #   MODEL_NAME   router model name (the preset section, and what clients request)
 #   BASE_MODEL   GGUF filename under $GGUF_DIR
-#   PARAMS       array of "<llama-server key> = <value>" sampling params
 #   LOAD         array of "<llama-server key> = <value>" per-model load params
+#   PARAMS       optional. The shared sampler baseline below is used when a
+#                builder does not define one, which is the normal case.
 #
 # Writes models/<name>/{system.txt,prompt.txt,preset.ini}. The Makefile joins
 # every preset.ini with server.ini into models/models.ini for `make serve`.
@@ -37,6 +38,34 @@ if ! compgen -G "$AI_ROOT/memory/*.md" >/dev/null \
   echo "            cp memory/learning-profile.example.md memory/learning-profile.md" >&2
   echo "  Then edit both with your own details (they stay gitignored)." >&2
   exit 1
+fi
+
+# The shared sampler baseline, deliberately the SAME for every model. Only
+# run-json.py sends sampler options; every other suite inherits whatever the
+# preset sets, so a value that differs between builders makes the leaderboard
+# measure model x sampler instead of model. That mistake invalidated the
+# 2026-06-14 coding, learning, and tutor tables, which compared `gemma` at
+# temperature 0.75 / presence_penalty 0.2 against `qwen` at 0.2 / 0.0.
+#
+# It lives here rather than once per builder so the values cannot drift: before
+# 2026-09-15 this array was copy-pasted identically into all three build-*
+# scripts and staying in sync was manual discipline.
+#
+# A model that genuinely needs its own decoding for daily use defines PARAMS in
+# its own builder, which wins over this default. That is a separate preset, not
+# a tweak to the shared baseline: keep it out of head-to-head benchmark runs.
+#
+# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
+if [ -z "${PARAMS+x}" ]; then
+  PARAMS=(
+    'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
+    'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
+    'top-p = 0.95'
+    'top-k = 40'
+    'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
+    'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
+    'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
+  )
 fi
 
 OUT_DIR="$AI_ROOT/models/$MODEL_NAME"

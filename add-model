@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+#
+# Scaffold a build-* script for a GGUF that is already staged in $GGUF_DIR.
+#
+#   ./add-model                  pick from the staged GGUFs no builder claims
+#   ./add-model FILENAME.gguf    skip the menu
+#   ./add-model --no-probe ...   scaffold only, do not touch the GPU
+#
+# It writes build-<name> and derives the GPU/CPU split by loading the model once
+# with llama.cpp's fitter. Downloading the GGUF is yours.
+#
+# Why this exists rather than "copy build-lite and edit three lines": the router
+# name and the MTP flag are the two fields that are silently wrong when hand
+# edited. A wrong name yields a preset section no client can address, and a wrong
+# spec-type makes the fit probe size the card for a different model.
+
+set -euo pipefail
+
+AI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"
+
+# Names other repos address the router by. Reusing one would point an existing
+# app at a different model without that app changing, so they are refused here
+# rather than left to review. README.md, "Serving other apps", is the contract.
+CONTRACT_NAMES=(gemma qwen lite)
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+# --- reading the GGUF -------------------------------------------------------
+
+# True when the GGUF carries multi-token-prediction heads, which llama.cpp drives
+# with `--spec-type draft-mtp`. The marker is a `<arch>.nextn_predict_layers`
+# metadata key, checked 2026-09-15 against the four staged GGUFs: both Qwen MTP
+# builds carry it, gemma4-26b and granite4.2 do not. Do not be tempted to grep
+# the file for "mtp": gemma4-26b contains 4 such byte sequences and granite 9.
+# Quoted heredoc, so the shell expands nothing inside it.
+detect_mtp() {
+  python3 - "$1" <<'PY'
+import struct, sys
+
+def u32(f): return struct.unpack("<I", f.read(4))[0]
+def u64(f): return struct.unpack("<Q", f.read(8))[0]
+def gstr(f): return f.read(u64(f)).decode("utf-8", "replace")
+
+SIMPLE = {0:"<B",1:"<b",2:"<H",3:"<h",4:"<I",5:"<i",6:"<f",7:"<?",10:"<Q",11:"<q",12:"<d"}
+
+def value(f, t):
+    if t in SIMPLE:
+        fmt = SIMPLE[t]
+        return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
+    if t == 8:
+        return gstr(f)
+    if t == 9:
+        et, n = u32(f), u64(f)
+        return [value(f, et) for _ in range(n)]
+    raise ValueError(f"unknown GGUF value type {t}")
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        if f.read(4) != b"GGUF":
+            sys.exit(2)          # not a GGUF at all
+        u32(f); u64(f)           # version, tensor count
+        for _ in range(u64(f)):  # metadata key/value pairs
+            key = gstr(f)
+            val = value(f, u32(f))
+            if key.endswith(".nextn_predict_layers") and isinstance(val, int) and val > 0:
+                sys.exit(0)      # MTP
+except (OSError, struct.error, ValueError, IndexError):
+    sys.exit(2)                  # unreadable or malformed
+sys.exit(1)                      # parsed fine, no MTP marker
+PY
+}
+
+# --- probing the fit --------------------------------------------------------
+
+# Seconds to wait for the server to report. A 21 GB model off a cold page cache
+# takes far longer than a warm 5 GB one, so this is generous and only exists so a
+# wedged probe fails instead of hanging.
+FIT_TIMEOUT="${FIT_TIMEOUT:-300}"
+
+PROBE_PID=""
+
+probe_cleanup() {
+  if [ -n "$PROBE_PID" ] && kill -0 "$PROBE_PID" 2>/dev/null; then
+    true
+    wait "$PROBE_PID" 2>/dev/null || true
+  fi
+  PROBE_PID=""
+}
+
+free_port() {
+  local p
+  for p in $(seq 8090 8130); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; return; }
+    exec 3>&-
+  done
+  die "no free port between 8090 and 8130 for the fit probe"
+}
+
+# Load the model once with llama.cpp's fitter and read how many layers it pushed
+# to the CPU. Sets FIT_N to that count, or to empty when the model fits entirely.
+#
+# Two things here are not obvious. The log goes to a file because llama-server
+# buffers a pipe: README.md records losing the fit line twice by stopping a piped
+# probe as soon as it answered. And the loop waits for the fit line OR for the
+# server to come up, because a model that fits entirely never prints an overflow
+# line at all. Measured 2026-09-15: `lite` loads with "offloaded 34/34 layers to
+# GPU" and no fit line, so waiting only for the overflow line hangs forever. The
+# recipe in README.md had exactly that bug.
+probe_fit() {
+  local gguf="$1" mtp="$2"
+  local log port elapsed=0
+  log="$(mktemp "${TMPDIR:-/tmp}/add-model-fit-XXXXXX.log")"
+
+  local -a cmd=(llama-server -m "$gguf" -c 32768 -np 1 -fa on -ctk q4_0 -ctv q4_0
+                --no-mmproj --fit-target 2048 --port "$(free_port)" -lv 4)
+  [ "$mtp" = yes ] && cmd+=(--spec-type draft-mtp)
+
+  echo "Probing the GPU/CPU split (--fit-target 2048$([ "$mtp" = yes ] && echo ', MTP on'))."
+  echo "  Loading the model once. Close anything holding VRAM: the split is sized"
+  echo "  from what is free right now, and that is why it gets pinned."
+
+  "${cmd[@]}" > "$log" 2>&1 &
+  PROBE_PID=$!
+  trap probe_cleanup EXIT INT TERM
+
+  while true; do
+    grep -q 'overflowing' "$log" && break
+    grep -q 'model loaded' "$log" && break
+    kill -0 "$PROBE_PID" 2>/dev/null \
+      || die "the fit probe exited before reporting a split. Read the log: $log"
+    [ "$elapsed" -lt "$FIT_TIMEOUT" ] \
+      || die "the fit probe timed out after ${FIT_TIMEOUT}s. Read the log: $log"
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  # `|| true` on both: a model that fits entirely has no overflow line, so grep
+  # exits 1, and under `set -o pipefail` that failure propagates out of the
+  # command substitution and kills the script. An empty FIT_N is the answer here,
+  # not an error. `head -1` can also close the pipe early and raise SIGPIPE.
+  FIT_N="$(sed -n 's/.*[^0-9]\([0-9]\{1,\}\) overflowing.*/\1/p' "$log" | head -1 || true)"
+  FIT_LINE="$(grep -m1 'overflowing' "$log" | sed 's/^.*CUDA/CUDA/' || true)"
+  probe_cleanup
+  rm -f "$log"
+}
+
+# --- choosing the GGUF ------------------------------------------------------
+
+# Filenames already named by a BASE_MODEL line in some builder.
+claimed() {
+  sed -n 's/^BASE_MODEL="\(.*\)"[[:space:]]*$/\1/p' "$AI_ROOT"/build-* 2>/dev/null || true
+}
+
+# Staged GGUFs no builder claims. *.mmproj.gguf are vision projectors loaded
+# alongside a model, never a model themselves, so they are not offered.
+candidates() {
+  local taken
+  taken="$(claimed)"
+  find "$GGUF_DIR" -maxdepth 1 -type f -name '*.gguf' ! -name '*.mmproj.gguf' -printf '%f\n' \
+    | sort \
+    | while IFS= read -r f; do
+        grep -qxF "$f" <<<"$taken" || echo "$f"
+      done
+}
+
+pick_gguf() {
+  local -a options
+  mapfile -t options < <(candidates)
+  [ "${#options[@]}" -gt 0 ] \
+    || die "no unclaimed GGUF in $GGUF_DIR (every staged file already has a builder)"
+
+  echo "Staged GGUFs without a builder:" >&2
+  local i=1 f
+  for f in "${options[@]}"; do
+    printf '  %d) %s  (%s)\n' "$i" "$f" "$(du -h "$GGUF_DIR/$f" | cut -f1)"
+    i=$((i + 1))
+  done
+
+  local choice
+  while true; do
+    printf 'Pick a number: '
+    read -r choice || die "no choice given"
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
+      GGUF_NAME="${options[$((choice - 1))]}"
+      return
+    fi
+    echo "  not one of 1 to ${#options[@]}"
+  done
+}
+
+# --- choosing the router name -----------------------------------------------
+
+read_name() {
+  local name n
+  while true; do
+    printf 'Router name: '
+    read -r name || die "no name given"
+
+    if [[ ! "$name" =~ ^[a-z][a-z0-9]*$ ]]; then
+      echo "  '$name' is not usable: lower-case letter first, then letters and digits."
+      echo "  It becomes the [section] in models.ini and the model field clients send."
+      continue
+    fi
+
+    for n in "${CONTRACT_NAMES[@]}"; do
+      if [ "$name" = "$n" ]; then
+        echo "  '$name' is part of the router contract other repos depend on."
+        echo "  Reusing it would repoint their requests at a different model."
+        continue 2
+      fi
+    done
+
+    if [ -e "$AI_ROOT/build-$name" ]; then
+      echo "  build-$name already exists. Pick another name, or edit that file."
+      continue
+    fi
+
+    MODEL_NAME="$name"
+    return
+  done
+}
+
+# --- writing the builder ----------------------------------------------------
+
+write_builder() {
+  local out="$AI_ROOT/build-$MODEL_NAME"
+  [ ! -e "$out" ] || die "build-$MODEL_NAME appeared while you were typing, refusing to overwrite"
+
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'set -euo pipefail'
+    echo
+    echo "MODEL_NAME=\"$MODEL_NAME\""
+    echo "# Added $(date -u +%Y-%m-%d) by ./add-model."
+    echo "BASE_MODEL=\"$GGUF_NAME\""
+    echo
+    echo '# Per-model load params. PARAMS is the shared sampler baseline and lives in'
+    echo '# build-common.sh, identical for every model, so it is deliberately absent here.'
+    if [ "$HAS_MTP" = yes ]; then
+      echo '# This GGUF carries MTP heads (nextn_predict_layers), so speculative decoding'
+      echo '# is on. Keep spec-type when re-deriving n-cpu-moe: the MTP layer needs VRAM'
+      echo '# of its own, and fitting without it gives a split that is too generous.'
+    fi
+    echo '#'
+    if [ -n "$FIT_N" ]; then
+      echo "# Split pinned from --fit-target 2048 on $(date -u +%Y-%m-%d), with"
+      echo "# $(nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null || echo 'unknown') held by other processes at probe time."
+      echo "# Fit line: $FIT_LINE"
+      echo '# server.ini pins fit = off, so this is the split every load uses. Re-derive it'
+      echo '# with ./add-model on a fresh builder, or the recipe in README.md, after a'
+      echo '# model or hardware change. Do not turn automatic fitting back on: it would'
+      echo '# resize the split from whatever VRAM happens to be free per run.'
+    elif [ "$PROBE" = yes ]; then
+      echo "# Probed on $(date -u +%Y-%m-%d) with --fit-target 2048: this model fits"
+      echo '# entirely on the card, so there is no expert split to pin.'
+    else
+      echo '# n-cpu-moe is NOT set: --no-probe was used. server.ini pins fit = off, so'
+      echo '# until you add one this model is loaded entirely onto the GPU. Derive it'
+      echo '# with ./add-model without --no-probe, or the README.md recipe, then add:'
+      echo "#   'n-cpu-moe = N'"
+    fi
+    echo 'LOAD=('
+    [ -n "$FIT_N" ] && echo "  'n-cpu-moe = $FIT_N'"
+    [ "$HAS_MTP" = yes ] && echo "  'spec-type = draft-mtp'"
+    echo ')'
+    echo
+    echo '# Shared assembly, see build-common.sh.'
+    echo 'source "$(dirname "${BASH_SOURCE[0]}")/build-common.sh"'
+  } > "$out"
+  chmod +x "$out"
+}
+
+# --- main -------------------------------------------------------------------
+
+PROBE=yes
+FIT_N=""
+FIT_LINE=""
+positional=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-probe) PROBE=no ;;
+    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)         die "unknown option: $arg" ;;
+    *)          positional+=("$arg") ;;
+  esac
+done
+set -- ${positional[@]+"${positional[@]}"}
+
+[ -d "$GGUF_DIR" ] || die "GGUF_DIR does not exist: $GGUF_DIR"
+
+if [ $# -gt 0 ]; then
+  GGUF_NAME="$1"
+  [ -f "$GGUF_DIR/$GGUF_NAME" ] || die "no such GGUF: $GGUF_DIR/$GGUF_NAME"
+else
+  pick_gguf
+fi
+
+read_name
+
+# detect_mtp exits 0 MTP, 1 no MTP, 2 unreadable. Only 2 is a reason to stop:
+# guessing either way writes a builder that is wrong in a way nothing else catches.
+set +e
+detect_mtp "$GGUF_DIR/$GGUF_NAME"
+mtp_status=$?
+set -e
+case "$mtp_status" in
+  0) HAS_MTP=yes ;;
+  1) HAS_MTP=no ;;
+  *) die "could not read GGUF metadata from $GGUF_DIR/$GGUF_NAME (not a GGUF, or truncated)" ;;
+esac
+
+# Probe before writing: a failed probe must not leave a half-written builder
+# behind for someone to find later and assume was measured.
+if [ "$PROBE" = yes ]; then
+  probe_fit "$GGUF_DIR/$GGUF_NAME" "$HAS_MTP"
+fi
+
+write_builder
+
+echo
+echo "Wrote build-$MODEL_NAME"
+echo "  base:      $GGUF_NAME"
+echo "  MTP:       $HAS_MTP$([ "$HAS_MTP" = yes ] && echo ' (spec-type = draft-mtp)')"
+echo "  samplers:  shared baseline from build-common.sh"
+if [ -n "$FIT_N" ]; then
+  echo "  split:     n-cpu-moe = $FIT_N  ($FIT_LINE)"
+  echo
+  echo "Then: make build"
+elif [ "$PROBE" = yes ]; then
+  echo "  split:     none needed, it fits entirely on the card"
+  echo
+  echo "Then: make build"
+else
+  echo "  split:     not probed (--no-probe)"
+  echo
+  echo "Before serving it, derive the GPU/CPU split and add 'n-cpu-moe = N' to LOAD."
+  echo "server.ini sets fit = off, so without it llama.cpp puts the whole model on the"
+  echo "card and a model larger than VRAM fails to load. Re-run without --no-probe, or"
+  echo "use the recipe in README.md under \"Build And Tune\". Then: make build"
+fi

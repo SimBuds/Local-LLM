@@ -13,21 +13,6 @@ MODEL_NAME="lite"
 # Ollama-era `lite` and its scores are not comparable to that history.
 BASE_MODEL="qwen3.5-9b-mtp-q4_K_M.gguf"
 
-# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-
-# Shared baseline params — deliberately IDENTICAL to build-gemma/build-qwen. See
-# the note in build-gemma: differing samplers across builders confound the
-# head-to-head. 32k fits in VRAM here, so there is no reason to shrink it.
-PARAMS=(
-  'ctx-size = 32768'         # 32k: sweet spot for multi-file local tasks; matches run-json.py's pin
-  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
-  'top-p = 0.95'
-  'top-k = 40'
-  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
-  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
-)
-
 # Per-model load params. Fully on GPU, so no expert split to pin. MTP measured
 # 2026-09-14: 142.8 tok/s vs 101.1 without it.
 LOAD=(
