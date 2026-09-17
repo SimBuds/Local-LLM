@@ -70,6 +70,10 @@ jq -n --rawfile sys models/qwen/prompt.txt \
 The router loads a model on its first request (a few seconds) and keeps one
 model resident at a time.
 
+If the `llama-server` service is already installed, it holds port 8080 and plain
+`make serve` exits with a bind error. Run `make serve PORT=8081` instead and
+send the request to `http://localhost:8081`.
+
 The assembled system prompt carries a real user profile (skills, clients,
 hardware), so `memory/*.md` is gitignored and only the `*.example.md` templates
 are published. Seed them before the first build. The builders abort with the
@@ -140,6 +144,8 @@ llama.cpp.
 ├── apply-universal.py    # ports the portable half of AGENTS.md between repos
 ├── Makefile              # see the target table below
 ├── AGENTS.md             # working rules for AI agents in this repo
+├── PLAN.md               # the blueprint and the reasoning behind decisions
+├── Instructions.md       # end-to-end recap of the repo's flow
 └── TESTING.md            # testing source of truth and benchmark history
 ```
 
@@ -208,7 +214,8 @@ LOAD=(
 ```
 
 Keys are llama-server flag names without the leading dashes. For a new model,
-copy an existing `build-*` script and edit only that config block. Builders
+run `./add-model` (see *Adding A Model*) rather than copying an existing
+`build-*` script. Builders
 source the shared `build-common.sh`, which aborts up front if the GGUF is not in
 `GGUF_DIR`, so a stale or retargeted base fails loudly instead of leaving a
 half-written preset behind.
@@ -263,6 +270,25 @@ held by other processes: all passed. The cost against the old values was about
 to 65536 on 2026-09-16, which roughly doubled the KV cache. They have not yet had
 the 3.0 GB spike test.
 
+Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
+reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB
+used`). `gemma`'s fitter now picks 21, not 22 (`31 layers (21 overflowing),
+6403 MiB used`, the same in two runs). The pin stays at 22, which keeps more
+VRAM free than the 2 GB margin asks for. Casey chose that while two
+`llama-server` crashes (NVIDIA Xid 31) on 2026-09-17 are unexplained.
+
+**`server.ini` reads weights into RAM and uses a 1024-token physical batch.**
+Two settings in `server.ini` were added on 2026-09-17 because prompt ingest was
+the slow spot for the two models that keep experts in system RAM.
+`load-mode = none` stops the kernel from evicting those weights out of page cache,
+and `ubatch-size = 1024` processes prompts in larger chunks. On build 11022,
+prompt ingest went from 665 to 1565 tok/s for `gemma` and from 379 to 1030 for
+`qwen`, with generation unchanged and model VRAM up only 0.1 to 0.2 GiB, so the
+pinned splits still hold. Loads take 3 to 10 seconds longer. `lite` keeps
+`ubatch-size = 512` in its own `LOAD`, because at 1024 it no longer fits
+entirely on the GPU with the 2 GB margin. The full sweep is in
+[`TESTING.md`](TESTING.md) under *Preset tuning on build 11022*.
+
 To re-derive a value after a model or hardware change, use `./add-model` on a
 fresh builder, which runs this for you. The manual recipe below is the fallback,
 and it is what `add-model` automates: load the GGUF with a 2 GB fit margin and
@@ -282,7 +308,7 @@ report `model loaded`, whichever comes first.
 LOG="$(mktemp)"
 llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 65536 -np 1 -fa on \
   -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --fit-target 2048 \
-  --port 8081 -lv 4 > "$LOG" 2>&1 &
+  -ub 1024 --port 8081 -lv 4 > "$LOG" 2>&1 &
 PID=$!
 echo "probe pid: $PID, log: $LOG"
 until grep -q 'layers (.* overflowing)' "$LOG" || ! kill -0 "$PID"; do sleep 1; done
@@ -293,7 +319,9 @@ kill "$PID"
 The `echo` must print a numeric pid. A line ending
 `42 layers (34 overflowing), 6071 MiB used, 2157 MiB free` means
 `n-cpu-moe = 34`. Drop `--spec-type draft-mtp` for `gemma`, which has no MTP
-layer. A model that fits entirely prints no overflow and needs no `n-cpu-moe`.
+layer. `-ub 1024` matches `server.ini`, because the compute buffer grows with the
+physical batch. Use `-ub 512` for `lite`, or for any model whose `LOAD` pins 512.
+`./add-model` does not pass `-ub` yet, so a split it derives is sized for 512. A model that fits entirely prints no overflow and needs no `n-cpu-moe`.
 The count moves with the VRAM free at that moment, which is why it is pinned
 rather than re-fitted per run, so close apps that hold VRAM before deriving one.
 
@@ -356,7 +384,9 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-Benchmarks were run on llama.cpp build 10968 (commit `41abbfd59`), built from
+The installed build is 11022 (commit `f172be756`), from 2026-09-17. Every
+benchmark number in this README was measured on build 10968 (commit
+`41abbfd59`), until a pass on 11022 is promoted. llama.cpp is built from
 source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
 used to pin `g++-15` as the CUDA host compiler. That is corrected as of
 2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
@@ -365,11 +395,30 @@ in fact built with GNU 16.2.1. Nothing needs pinning. Verified by configuring in
 a scratch directory: cmake reports `CUDA host compiler is GNU 16.2.1` against
 CUDA 13.4.59.
 
+The configure step uses `--fresh`, which discards `build/CMakeCache.txt`. On
+2026-09-17 the update to 11022 failed at configure because the cache still held
+`CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-15` from the old recipe. The new
+CMakeLists asks nvcc for the host compiler version with errors suppressed, so
+the only symptom was `CUDA host compiler is GNU` with no version, followed by
+`ggml_get_flags Function invoked with incorrect arguments`.
+
+To update, keep a rollback point, pull, and re-run the block below, then
+restart the service:
+
+```bash
+# Runs in: local terminal, as your user. Safe to re-run.
+SRC="$HOME/src/llama.cpp"
+git -C "$SRC" branch -f known-good-11022 f172be756   # EDIT to the build you are leaving
+git -C "$SRC" pull --ff-only
+```
+
+Rolling back is `git -C "$SRC" checkout known-good-11022`, then the same block.
+
 ```bash
 # Runs in: local terminal, as your user (no sudo). Safe to re-run.
 SRC="$HOME/src/llama.cpp"
 [ -d "$SRC/.git" ] || git clone https://github.com/ggml-org/llama.cpp "$SRC"
-cmake -S "$SRC" -B "$SRC/build" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+cmake --fresh -S "$SRC" -B "$SRC/build" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
   -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
   && cmake --build "$SRC/build" -j 20 --target llama-server \
   && ln -sfn "$SRC/build/bin/llama-server" "$HOME/.local/bin/llama-server" \
@@ -520,7 +569,8 @@ any of them is a coordinated change across repos, not a local edit:
 ## Use In VSCode (Continue / Cline)
 
 Both extensions talk to the router's OpenAI-compatible API at
-`http://localhost:8080/v1`, with `make serve` running. The model names are the
+`http://localhost:8080/v1`, with the `llama-server` service running (see
+*Serving other apps*). The model names are the
 preset names `gemma`, `qwen`, and `lite`. The server has no API key set, so any
 non-empty key is accepted.
 
@@ -578,8 +628,8 @@ was observed thinking by default.
 
 Runners live under `eval/` and write results to `eval/runs/<UTC>/`. Routine
 testing goes through profiles (`smoke` after a rebuild, `standard` for the
-under-1-hour comparison, `deep` for a several-hour confidence run — see
-[`TESTING.md`](TESTING.md) for when to use each):
+routine comparison of about 2 hours, `deep` for a several-hour confidence run, and
+[`TESTING.md`](TESTING.md) says when to use each):
 
 ```bash
 ./eval/run-profile.py smoke --models gemma qwen lite
@@ -763,8 +813,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
 Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
-model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 10968
-(`41abbfd59`) with CUDA 13.4.
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11022
+(`f172be756`) installed 2026-09-17, with CUDA 13.4. The published numbers are
+from build 10968 (`41abbfd59`).
 
 ## Docs
 
@@ -772,6 +823,9 @@ model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 10968
   architecture decisions and the reasoning behind them, the locked decisions with
   their dates, and the open questions. Read it before changing anything
   structural.
+- [`Instructions.md`](Instructions.md): a recap of the whole flow, from a fresh
+  clone to a model answering another app to a benchmark landing in this README.
+  It summarizes the other docs and adds nothing of its own.
 - [`TESTING.md`](TESTING.md): testing source of truth, runner docs, safety notes,
   benchmark history, and detailed results.
 - [`AGENTS.md`](AGENTS.md): the working rules an AI coding agent follows in this

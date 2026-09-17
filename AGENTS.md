@@ -1266,6 +1266,14 @@ repos, and one ended in a colon with no template after it.)
   load-and-request each at about 1.1 GB held (7.1 GB used, no out-of-memory).
   The values live in the tracked `build-gemma` and `build-qwen`, whose comments
   carry the fit lines. (2026-09-16)
+- **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
+  `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
+  prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and
+  model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster, but it
+  cost about 0.5 GiB of VRAM, so Casey chose 1024. At 1024 or above, lite no
+  longer fits entirely on the GPU with the 2 GB margin. Raising the batch, or
+  returning to mmap, needs Casey's approval and a new VRAM check against the
+  pinned splits. (2026-09-17)
 - **Locked: `CACHE_PROMPT = False` in `eval/_gateway.py`.** The llama-server docs
   state that cached prompt prefixes make logits not bit-identical, and `--seed`
   reproducibility is already unresolved. Turning caching on for speed needs

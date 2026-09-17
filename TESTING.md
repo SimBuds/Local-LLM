@@ -208,6 +208,8 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 | `eval/test_speed.py` | `run-speed.py` offload label, GGUF size, per-process VRAM parsing |
 | `eval/test_json.py` | `run-json.py` served-context check, no `num_ctx` in requests |
 | `eval/test_preflight.py` | every runner preflights before creating a run dir (and `run-json.py` before reading served context), and imports the gateway's `preflight` |
+| `eval/test_llm.py` | `scripts/llm` `status`, `load`, `unload`, `chat`, and `logs`, against router shapes captured 2026-09-15, with `urlopen`, the clock, `nvidia-smi`, stdin, and `execvp` patched |
+| `eval/test_add_model.py` | `./add-model` run as a subprocess against synthetic GGUF headers and a fake `llama-server`: the menu, name validation, MTP detection from the header, the generated builder, the fit probe, dense and MoE offload pinning, fit-line provenance, HuggingFace lookup, and the checksum handoff |
 
 Every test was seen failing before its change landed. Where a test could only
 fail at first because its function did not exist yet, or because it guards
@@ -504,7 +506,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 10968 (`41abbfd59`), static, CUDA 13.4, from 2026-09-14 |
+| llama.cpp | build 10968 (`41abbfd59`), static, CUDA 13.4, from 2026-09-14. Every result in this file is from this build. Build 11022 (`f172be756`) installed 2026-09-17 and not yet benchmarked. |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -540,6 +542,40 @@ active parameters per token does.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Preset tuning on build 11022 (2026-09-17)
+
+Measured before the first `standard` pass on build 11022, to decide two
+`server.ini` keys. `run-speed.py --attempts 2` ran against a scratch router on
+port 8081, with the pinned splits (gemma 22, qwen 35) and a fresh boot, at
+`vm.swappiness = 10`.
+
+| Setup | `gemma` gen / prompt tok/s | `qwen` gen / prompt tok/s | Model VRAM (gemma / qwen) | Load (gemma / qwen) |
+|---|---|---|---|---|
+| mmap, `ubatch-size` 512 (before) | 44.6 / 665 | 57.6 / 379 | 5.9 / 5.9 GiB | 4.0 / 7.8 s |
+| `load-mode = none`, 512 | 43.6 / 1006 | 60.8 / 669 | 5.9 / 5.9 GiB | 7.8 / 17.4 s |
+| `load-mode = none`, 1024 (adopted) | 45.7 / 1565 | 56.5 / 1030 | 6.0 / 6.1 GiB | 7.8 / 13.3 s |
+| `load-mode = none`, 2048 | 45.6 / 1960 | 58.7 / 1294 | 6.5 / 6.5 GiB | 7.6 / 13.1 s |
+
+`lite` measured 126.4 / 3124 with mmap and 125.4 / 3121 without, at 512.
+
+Findings:
+
+- Turning mmap off alone raised prompt ingest 51% (`gemma`) and 77% (`qwen`).
+  The CPU expert weights were being read through page faults on the mapped file.
+- A larger physical batch raised it further, 2.4× and 2.7× at 1024 and 2.9× and
+  3.4× at 2048 against the old setting. Generation stayed within the ±3 tok/s
+  seen between repeat runs.
+- 2048 costs about 0.5 GiB of VRAM. The 2 GB-margin fitter then wanted `qwen` at
+  36, and the headroom the 2026-09-14 spike test proved would shrink by about
+  400 MiB. Casey chose 1024, which keeps model VRAM within 0.2 GiB of the
+  spike-tested values.
+- `lite` fits entirely on the GPU at the 2 GB margin only at 512 (the fitter
+  offloaded 31/34 layers at 1024 and 28/34 at 2048), so `build-lite` pins 512.
+- `mlock` was not tried: the service's `LimitMEMLOCK` is 8 MiB.
+
+One sample per setup. The prompt gains are far outside run-to-run noise, and the
+generation differences are not.
 
 ### Same-day Ollama and llama.cpp comparison (2026-09-15)
 

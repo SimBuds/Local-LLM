@@ -172,6 +172,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |
 | The router endpoint, model names, and context size | 2026-09-15 | Jobhunt and SEO-LLM depend on them. |
+| `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays all-GPU at the 2 GB margin only at 512. |
 
 The pinned splits are not guesses. `./add-model` re-derives one by loading the
 model once with `--fit-target 2048` and reading llama.cpp's own fit line, and on

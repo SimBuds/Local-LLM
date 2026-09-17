@@ -15,8 +15,13 @@ BASE_MODEL="qwen3.5-9b-mtp-q4_K_M.gguf"
 
 # Per-model load params. Fully on GPU, so no expert split to pin. MTP measured
 # 2026-09-14: 142.8 tok/s vs 101.1 without it.
+# ubatch stays at 512 while server.ini sets 1024: at the 2 GB fit margin lite
+# stays all-GPU only at 512 (build 11022, 2026-09-17: 1024 gave "offloaded
+# 31/34 layers", 2048 gave 28/34). With fit = off it would instead load all 34
+# layers with less than 2 GB free.
 LOAD=(
   'spec-type = draft-mtp'
+  'ubatch-size = 512'
 )
 
 # Shared assembly — see build-common.sh.
