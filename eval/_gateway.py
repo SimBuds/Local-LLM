@@ -119,36 +119,65 @@ def _normalize_meta(body: dict) -> dict:
     }
 
 
-def generate(model: str, prompt: str, timeout: int, think: bool = False,
-             options: dict | None = None, fmt: dict | str | None = None,
-             system: str | None = None) -> tuple[str, dict]:
-    """Single non-streaming call. Returns (response_text, meta).
+def _parse_tool_calls(message: dict) -> list[dict]:
+    """Normalize `message.tool_calls` into {id, name, arguments, ...} dicts.
 
-    `model` is the router model name (resolve a `:think` spec first). `think`
-    sets the chat template's `enable_thinking`; thoughts come back separately
-    from the answer, so the returned text is the answer only. `options` takes
-    Ollama-style names (e.g. `{"num_predict": 256}` to cap output length), see
-    _map_options(). `fmt` requests structured output: `"json"` for free JSON, or
-    a JSON schema object for schema-constrained decode (mirrors how jobhunt's
-    gateway constrains output) — used by run-json.py. `system` replaces the
-    built prompt stack for this call (persona baseline mode); otherwise the
-    stack is read from models/<model>/prompt.txt, and a missing file raises
-    instead of silently sending no stack.
+    llama-server returns `arguments` as a JSON *string*, so it is decoded here
+    once rather than in every caller. A model that emits malformed JSON is a
+    result the tool suite has to score, not a crash: the raw text is kept and
+    `arguments_ok` is False, with `arguments` left as an empty dict so callers
+    can index it either way.
+    """
+    calls = []
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function") or {}
+        raw = fn.get("arguments")
+        if isinstance(raw, dict):          # already decoded
+            args, ok = raw, True
+        else:
+            try:
+                args, ok = json.loads(raw or "{}"), True
+            except (TypeError, ValueError):
+                args, ok = {}, False
+        calls.append({"id": call.get("id"), "name": fn.get("name"),
+                      "arguments": args, "arguments_ok": ok,
+                      "arguments_raw": raw})
+    return calls
+
+
+def chat(model: str, messages: list[dict], timeout: int, think: bool = False,
+         options: dict | None = None, fmt: dict | str | None = None,
+         tools: list[dict] | None = None,
+         system: str | None = None) -> tuple[str, list[dict], dict]:
+    """Message-list call. Returns (response_text, tool_calls, meta).
+
+    `generate()` is the single-turn wrapper around this, so both share one
+    request builder. `messages` is sent after the prompt stack, which is read
+    from models/<model>/prompt.txt unless `system` is given or the caller's
+    first message is already a system message (the tool suite's multi-turn
+    tasks replay their own transcript). `tools` takes the OpenAI shape and is
+    omitted entirely when None, so untooled calls keep their previous body
+    byte for byte. See _parse_tool_calls() for the returned call shape.
     """
     fields = _map_options(options)
-    if system is None:
-        system = (MODELS_DIR / model / "prompt.txt").read_text(encoding="utf-8")
+    if messages and messages[0].get("role") == "system":
+        if system is not None:
+            raise ValueError("system= given but messages already start with a system message")
+        full = list(messages)
+    else:
+        if system is None:
+            system = (MODELS_DIR / model / "prompt.txt").read_text(encoding="utf-8")
+        full = [{"role": "system", "content": system}, *messages]
     body_obj = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": full,
         "stream": False,
         "cache_prompt": CACHE_PROMPT,
         "chat_template_kwargs": {"enable_thinking": think},
         **fields,
     }
+    if tools:
+        body_obj["tools"] = tools
     if isinstance(fmt, dict):
         # Nested OpenAI shape. The top-level `"schema"` shape in the server README
         # was accepted but ignored on build 10968 (decode came back "{}").
@@ -172,8 +201,33 @@ def generate(model: str, prompt: str, timeout: int, think: bool = False,
         # model and a rejected request keep their own classification.
         raise urllib.error.URLError(e) from e
     choices = body.get("choices") or [{}]
-    text = (choices[0].get("message") or {}).get("content") or ""
-    return text, _normalize_meta(body)
+    message = choices[0].get("message") or {}
+    return message.get("content") or "", _parse_tool_calls(message), _normalize_meta(body)
+
+
+def generate(model: str, prompt: str, timeout: int, think: bool = False,
+             options: dict | None = None, fmt: dict | str | None = None,
+             system: str | None = None) -> tuple[str, dict]:
+    """Single non-streaming call. Returns (response_text, meta).
+
+    `model` is the router model name (resolve a `:think` spec first). `think`
+    sets the chat template's `enable_thinking`; thoughts come back separately
+    from the answer, so the returned text is the answer only. `options` takes
+    Ollama-style names (e.g. `{"num_predict": 256}` to cap output length), see
+    _map_options(). `fmt` requests structured output: `"json"` for free JSON, or
+    a JSON schema object for schema-constrained decode (mirrors how jobhunt's
+    gateway constrains output) — used by run-json.py. `system` replaces the
+    built prompt stack for this call (persona baseline mode); otherwise the
+    stack is read from models/<model>/prompt.txt, and a missing file raises
+    instead of silently sending no stack.
+
+    Tool calls are not reachable from here: a runner that needs them calls
+    chat(), which this delegates to.
+    """
+    text, _calls, meta = chat(
+        model, [{"role": "user", "content": prompt}], timeout,
+        think=think, options=options, fmt=fmt, system=system)
+    return text, meta
 
 
 # --- server liveness ----------------------------------------------------------

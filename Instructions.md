@@ -167,6 +167,7 @@ streak of dead-server failures in the runners that support it.
 | `run-json.py` | Schema conformance and long-context fact recall | Deterministic, checks served context first |
 | `run-learn.py` | Teaching quality | Code gate plus leave-one-out judge panel (`_judge.py`) |
 | `run-tutor.py` | Socratic teaching without leaking the answer | Leak gate plus judge panel |
+| `run-tools.py` | Tool calling and grounding in tool results | Deterministic call and answer checks, no judge |
 | `run-persona.py` | Whether the prompt stack's rules hold | Deterministic regex, no judge |
 
 `run-persona.py` is the only suite that tests the stack itself. Run it with

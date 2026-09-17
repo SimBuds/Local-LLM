@@ -132,12 +132,19 @@ Nothing that uses the server may depend on this repo at runtime. That is why
 
 ## Measurement design
 
-The suites answer four questions: content-instruction following, code
-correctness, teaching without leaking, and whether the prompt stack actually
-holds. The fourth is the odd one out and the reason `run-persona.py` exists: the
-first three measure the base model *through* the stack, so a prompt edit that
-silently breaks a rule passes all of them. The stack is what this repo builds, so
-it gets its own regression suite.
+The suites answer five questions: content-instruction following, code
+correctness, teaching without leaking, driving an agent loop (`run-tools.py`,
+added 2026-09-17), and whether the prompt stack actually holds. The last is the
+odd one out and the reason `run-persona.py` exists: the others measure the base
+model *through* the stack, so a prompt edit that silently breaks a rule passes
+all of them. The stack is what this repo builds, so it gets its own regression
+suite.
+
+The tool suite exists because the editor-agent pick rested on prompt-ingest
+speed, which says nothing about whether a model calls the right function or uses
+what the function returned. Its scoring is deterministic, and its tool results
+are fixtures rather than live calls, so it stays inside the no-network rule the
+rest of the automated suite follows.
 
 Speed is tracked separately, because a better model that is too slow is not a
 usable local default.
@@ -172,6 +179,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |
 | The router endpoint, model names, and context size | 2026-09-15 | Jobhunt and SEO-LLM depend on them. |
+| `cache-type-k/v = q4_0` | 2026-09-17 | Measured against `q8_0` with the tool suite: no accuracy difference in totals, and `q8_0` costs 0.3 to 0.5 GiB of VRAM per model. |
 | `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays all-GPU at the 2 GB margin only at 512. |
 
 The pinned splits are not guesses. `./add-model` re-derives one by loading the

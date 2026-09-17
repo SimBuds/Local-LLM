@@ -25,7 +25,7 @@ sys.path.insert(0, str(EVAL))
 import _gateway as gw  # noqa: E402
 
 RUNNERS = ["run-code.py", "run-content.py", "run-json.py", "run-learn.py",
-           "run-persona.py", "run-speed.py", "run-tutor.py"]
+           "run-persona.py", "run-speed.py", "run-tools.py", "run-tutor.py"]
 
 
 def load_runner(filename: str):

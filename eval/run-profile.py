@@ -48,6 +48,7 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-content.py", "--tasks", "seo_product", "--attempts", "2"],
         ["run-persona.py", "--tasks", "identity", "familiar_skill", "--attempts", "2"],
         ["run-json.py", "--tasks", "jd_extract", "--attempts", "2"],
+        ["run-tools.py", "--tasks", "pick_tool", "grounded_answer", "--attempts", "2"],
     ],
     "standard": [
         ["run-speed.py"],
@@ -55,6 +56,7 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-content.py", "--attempts", "3"],
         ["run-persona.py", "--attempts", "3"],
         ["run-json.py"],
+        ["run-tools.py", "--attempts", "3"],
         ["run-learn.py"],
         ["run-tutor.py"],
     ],
@@ -69,6 +71,7 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-json.py", "--attempts", "5"],
         ["run-json.py", "--context-pressure", "medium", "--attempts", "2"],
         ["run-json.py", "--context-pressure", "high", "--attempts", "1"],
+        ["run-tools.py", "--attempts", "5"],
         ["run-learn.py", "--attempts", "5"],
         ["run-tutor.py", "--attempts", "5"],
     ],

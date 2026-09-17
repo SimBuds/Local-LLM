@@ -204,6 +204,122 @@ class GenerateTests(GatewayCase):
         self.assertEqual(self.requests, [])
 
 
+# POST /v1/chat/completions with two tools, model "lite", captured 2026-09-17
+# from build 11022 (f172be756). All three models answered this shape.
+TOOL_CALL_RESPONSE = {
+    "choices": [{"finish_reason": "tool_calls", "index": 0,
+                 "message": {"role": "assistant", "content": "",
+                             "tool_calls": [
+                                 {"type": "function", "id": "KMKmfqx78KuU6MbldYL8kWvevehBPLZI",
+                                  "function": {"name": "get_weather",
+                                               "arguments": "{\"city\":\"Toronto\",\"unit\":\"c\"}"}},
+                                 {"type": "function", "id": "ZNH7bx4fGv4Tm3Vg0RivoWGAQ0Tqwyj5",
+                                  "function": {"name": "get_weather",
+                                               "arguments": "{\"city\":\"Oslo\",\"unit\":\"c\"}"}}]}}],
+    "model": "lite",
+    "object": "chat.completion",
+    "timings": {"prompt_n": 900, "prompt_ms": 300.0, "predicted_n": 40, "predicted_ms": 350.0},
+}
+
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {"name": "get_weather", "description": "Current weather for a city",
+                 "parameters": {"type": "object",
+                                "properties": {"city": {"type": "string"},
+                                               "unit": {"type": "string", "enum": ["c", "f"]}},
+                                "required": ["city"]}},
+}
+
+
+class ChatTests(GatewayCase):
+    """chat() is the message-list entry point the tool suite needs."""
+
+    def test_tools_are_sent_and_calls_come_back_parsed(self):
+        self.serve(TOOL_CALL_RESPONSE)
+        text, calls, meta = gw.chat(
+            "lite", [{"role": "user", "content": "Weather in Toronto and Oslo, celsius?"}],
+            timeout=30, tools=[WEATHER_TOOL])
+
+        body = self.sent()
+        self.assertEqual(body["tools"], [WEATHER_TOOL])
+        self.assertEqual(body["messages"], [
+            {"role": "system", "content": "STACK PROMPT\n"},
+            {"role": "user", "content": "Weather in Toronto and Oslo, celsius?"},
+        ])
+        self.assertEqual(text, "")
+        self.assertEqual([c["name"] for c in calls], ["get_weather", "get_weather"])
+        self.assertEqual(calls[0]["arguments"], {"city": "Toronto", "unit": "c"})
+        self.assertEqual(calls[1]["arguments"], {"city": "Oslo", "unit": "c"})
+        self.assertEqual(calls[0]["id"], "KMKmfqx78KuU6MbldYL8kWvevehBPLZI")
+        self.assertIs(calls[0]["arguments_ok"], True)
+        self.assertEqual(meta["eval_count"], 40)
+
+    def test_multi_turn_messages_pass_through_with_the_stack_first(self):
+        self.serve(CHAT_RESPONSE)
+        turns = [
+            {"role": "user", "content": "Weather in Oslo?"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"type": "function", "id": "abc",
+                 "function": {"name": "get_weather", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "abc", "content": "{\"temp_c\": 7}"},
+        ]
+        gw.chat("lite", turns, timeout=30)
+        self.assertEqual(self.sent()["messages"][0],
+                         {"role": "system", "content": "STACK PROMPT\n"})
+        self.assertEqual(self.sent()["messages"][1:], turns)
+
+    def test_caller_supplied_system_message_is_not_duplicated(self):
+        self.serve(CHAT_RESPONSE)
+        gw.chat("lite", [{"role": "system", "content": "OWN"},
+                         {"role": "user", "content": "hi"}], timeout=30)
+        roles = [m["role"] for m in self.sent()["messages"]]
+        self.assertEqual(roles, ["system", "user"])
+        self.assertEqual(self.sent()["messages"][0]["content"], "OWN")
+
+    def test_no_tool_calls_gives_an_empty_list_not_none(self):
+        self.serve(CHAT_RESPONSE)
+        text, calls, _ = gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30)
+        self.assertEqual(text, "2")
+        self.assertEqual(calls, [])
+
+    def test_unparseable_arguments_are_kept_raw_and_flagged(self):
+        broken = json.loads(json.dumps(TOOL_CALL_RESPONSE))
+        broken["choices"][0]["message"]["tool_calls"] = [
+            {"type": "function", "id": "x",
+             "function": {"name": "get_weather", "arguments": "{city: Toronto"}}]
+        self.serve(broken)
+        _, calls, _ = gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30)
+        self.assertIs(calls[0]["arguments_ok"], False)
+        self.assertEqual(calls[0]["arguments_raw"], "{city: Toronto")
+        self.assertEqual(calls[0]["arguments"], {})
+
+    def test_tools_are_omitted_when_none_are_given(self):
+        self.serve(CHAT_RESPONSE)
+        gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30)
+        self.assertNotIn("tools", self.sent())
+
+    def test_options_and_thinking_reach_the_request(self):
+        self.serve(CHAT_RESPONSE)
+        gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30,
+                think=True, options={"num_predict": 64, "seed": 7})
+        body = self.sent()
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": True})
+        self.assertEqual(body["max_tokens"], 64)
+        self.assertEqual(body["seed"], 7)
+
+    def test_num_ctx_is_rejected_before_any_request(self):
+        self.serve(CHAT_RESPONSE)
+        with self.assertRaises(ValueError):
+            gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30,
+                    options={"num_ctx": 4096})
+        self.assertEqual(self.requests, [])
+
+    def test_dropped_connection_becomes_urlerror(self):
+        self.serve(http.client.RemoteDisconnected("closed"))
+        with self.assertRaises(urllib.error.URLError):
+            gw.chat("lite", [{"role": "user", "content": "hi"}], timeout=30)
+
+
 class TransportErrorTests(GatewayCase):
     """Connection-level failures must reach runners as URLError.
 

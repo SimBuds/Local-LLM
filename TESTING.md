@@ -7,7 +7,7 @@ only carries the operational summary and compact leaderboards.
 
 ## Goals
 
-The suite answers four practical questions:
+The suite answers five practical questions:
 
 1. **Can the model follow content instructions?** Format discipline, SEO keyword
    control, length, and Markdown structure.
@@ -15,11 +15,16 @@ The suite answers four practical questions:
    tasks with hidden asserts.
 3. **Can the model teach without leaking?** Explanation quality, code gate, and
    solution-leak checks for tutor use.
-4. **Does the prompt stack actually hold?** Whether the rules in `prompts/`,
+4. **Can the model drive an agent loop?** The right tool with the right
+   arguments, no call where none fits, and an answer that uses the tool result
+   it was handed instead of the model's own memory (`run-tools.py`, added
+   2026-09-17). This is the suite behind the Cline pick, which until then rested
+   on prompt-ingest speed alone.
+5. **Does the prompt stack actually hold?** Whether the rules in `prompts/`,
    `memory/` is obeyed — identity, honesty about Casey's skill
    buckets, `Unverified:` marking, output shape.
 
-Question 4 is the odd one out and the reason `run-persona.py` exists: suites 1–3
+Question 5 is the odd one out and the reason `run-persona.py` exists: suites 1-4
 measure the *base model* through the stack, so a prompt edit that silently breaks
 a rule passes all of them. The stack is what this repo actually builds, so it gets
 its own regression suite.
@@ -69,6 +74,7 @@ All runners write to `eval/runs/<UTC>/`.
 | `run-learn.py` | Code + explanation, leave-one-out judge panel (median of `--judge-repeats` calls per judge) | yes | 3 per task | Medium because explanation quality is judge-scored; the code gate half is deterministic |
 | `run-tutor.py` | Leak-gated tutoring guidance, same judge panel | yes | 3 per task | Medium because teaching quality is judge-scored; the leak gate is deterministic execution and does not depend on judges |
 | `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
+| `run-tools.py` | Tool calling: right tool, right arguments, no call when none fits, and what the model does with the result it gets back | no | 3 per task |
 | `run-persona.py` | Prompt-stack compliance: identity, skill-bucket honesty, `Unverified:`, output shape | no | 5 per task | Medium-high for the rule shapes encoded; regex scorers miss novel phrasings |
 
 Common flags:
@@ -88,7 +94,7 @@ median; default 3).
 Every runner preflights the router, the model names, and each model's built
 `prompt.txt` before it creates a run directory, so a down router or an unbuilt
 model stops the run with a message instead of showing up as failed attempts
-(all seven since 2026-09-15, pinned by `eval/test_preflight.py`). `run-json.py`
+(all eight, pinned by `eval/test_preflight.py`). `run-json.py`
 then also checks each model's served context. Only `run-learn.py`,
 `run-persona.py`, and `run-tutor.py` abort mid-run if the server stops answering.
 The other four record those attempts as failures. See the 2026-07-28 note in
@@ -176,6 +182,7 @@ Runner-specific flags:
 | `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
+| `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
@@ -289,7 +296,7 @@ individual runners so routine testing doesn't drift across hand-typed flags.
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
 | `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each |
-| `standard` | When picking models or after prompt-stack changes | ~1 hour | All seven suites; code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
+| `standard` | When picking models or after prompt-stack changes | ~1 hour | All eight suites; code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
 | `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
@@ -481,14 +488,41 @@ Finding: `qwen` passed every rule for the first time (95% before). At 3 attempts
 that is within the measured noise floor. `gemma` and `lite` still fail
 `unverified` and `fields_echo` 0/3, and both passed `model_origin` only 1 of 3.
 
+### Tool calling (`run-tools.py`)
+
+Run: `eval/runs/20260917T211246Z/tools/summary.md` (first run of this suite,
+2026-09-17, 13 tasks × 3 attempts)
+
+| Rank | Model | Pass rate | Passed | Avg s | Failure shapes |
+|---|---|---:|---:|---:|---|
+| 1 | `qwen` | 100% | 39/39 | 5.6 | none |
+| 2 | `lite` | 92% | 36/39 | 1.9 | no-call ×3 |
+| 3 | `gemma` | 69% | 27/39 | 3.1 | no-call ×9, wrong-arg ×3 |
+
+Finding: the ranking is the opposite of the coding and content suites, and it is
+not close. `gemma` failed every attempt at three tasks: it called `get_weather`
+in celsius after being asked for Fahrenheit, and on `chain_lookup`,
+`result_beats_prior` and `empty_results` it answered from memory rather than
+calling the tool it was offered. `lite` failed only `empty_results`, for the same
+reason. Every model that did call a tool used the returned result correctly,
+including the search result that contradicted its prior and the tool that
+returned an error.
+
+Read it as a first measurement: one run, 3 attempts per task, and the suite was
+written the same day. The per-task pattern (0/3 or 3/3 almost everywhere) says
+these are behaviors, not coin flips, but the rates themselves have not been
+repeated.
+
 ## Current Picks
 
-From the 2026-09-17 `standard` pass above, on build 11022.
+From the 2026-09-17 `standard` pass above, on build 11022. The tool-calling row
+is from the separate `run-tools.py` run of the same day, the suite's first.
 
 | Use | Pick | Basis |
 |---|---|---|
 | Fast local default | `lite` | 114 tok/s fully on GPU, 2.1× `qwen` (55) and 2.5× `gemma` (45). |
-| Agentic tools (Cline) | `lite` | Prompt ingest 3021 tok/s vs `gemma` 1545 and `qwen` 1020. The gap narrowed from 4 to 7× to 2 to 3×. |
+| Agentic tools (Cline) | `lite` for speed, `qwen` for reliability | Prompt ingest `lite` 3021 tok/s vs `gemma` 1545 and `qwen` 1020, but tool calling `qwen` 39/39 vs `lite` 36/39 and `gemma` 27/39. |
+| Tool calling / agent loops | `qwen` | 39/39 vs `lite` 36/39 and `gemma` 27/39, deterministic scoring. |
 | Coding puzzles / small functions | `gemma` or `qwen` (tie) | `qwen` 26/27, `gemma` 25/27, inside the tie threshold, and the order flipped from 2026-09-15. `gemma` is faster to first token, `qwen` generates faster. |
 | Content / SEO / copy | `gemma` | 9/9 clean vs `lite` 8/9 and `qwen` 7/9 (`qwen` still runs over word limits). |
 | Leak-gated tutoring | `gemma` | 2/15 leaks vs `lite` 4/15 and `qwen` 7/15. Deterministic, not judge-scored. |
@@ -496,9 +530,11 @@ From the 2026-09-17 `standard` pass above, on build 11022.
 | Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.5s against 5.3s and 7.3s. |
 | Prompt-stack fidelity | `qwen` | 100% clean vs 57% for both others. |
 
-The split holds. `gemma` takes content and tutoring, `lite` takes everything
-speed-shaped, `qwen` is the only model that reliably obeys the prompt stack, and
-coding and learning are now ties between `gemma` and `qwen`.
+The split holds, with one addition. `gemma` takes content and tutoring, `lite`
+takes everything speed-shaped, and coding and learning are ties between `gemma`
+and `qwen`. `qwen` now takes two rows rather than one: the prompt stack, and
+tool calling. Those two are also where `gemma` is weakest, which is worth knowing
+before pointing an agent at the model that wins the quality suites.
 
 ## Hardware
 
@@ -546,6 +582,44 @@ active parameters per token does.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### KV cache q4_0 vs q8_0 for tool calling (2026-09-17)
+
+The llama.cpp function-calling docs warn that "extreme KV quantizations (e.g.
+`-ctk q4_0`) can substantially degrade the model's tool calling performance",
+and `server.ini` has used `q4_0` for both cache types since the runtime switch.
+This measured it: `run-tools.py` (13 tasks x 3 attempts, `--seed 1000`) plus a
+speed pass, at each cache type, on a scratch router on port 8081.
+
+| Cache | `qwen` | `lite` | `gemma` | Model VRAM (gemma / qwen / lite) |
+|---|---|---|---|---|
+| `q4_0` (current) | 39/39 | 36/39 | 27/39 | 6.3 / 6.3 / 6.9 GiB |
+| `q8_0` | 39/39 | 36/39 | 27/36 | 6.7 / 6.6 / 7.4 GiB |
+
+Generation speed was within the repeat spread at both (`gemma` 46.8 vs 46.7,
+`qwen` 56.8 vs 59.8, `lite` 124.3 vs 126.7 tok/s), as was prompt ingest.
+
+Findings:
+
+- **No accuracy gain from `q8_0` on these tasks.** Totals are identical for
+  `qwen` and `lite`. `gemma`'s three missing attempts are the crash below, not a
+  score.
+- **The per-task differences run both ways.** At `q8_0`, `gemma` passed
+  `chain_lookup` 3/3 (0/3 at `q4_0`) while `lite` dropped `tool_error` to 0/3
+  (3/3 at `q4_0`). Those are not noise: the two `q4_0` runs of the same day, one
+  against the live service and one on 8081, were identical on every task for
+  every model. The cache type moves individual answers without moving the totals.
+- **`q8_0` costs 0.3 to 0.5 GiB of VRAM per model**, which comes straight out of
+  the 2 GB margin the pinned splits are sized around.
+- **Decision: `q4_0` stays.** The documented warning does not reproduce here, and
+  the change would buy nothing while spending headroom. Re-measure if the lineup
+  or the task set changes.
+- **A crash interrupted the `q8_0` pass.** `gemma` died with
+  `CUDA error: an illegal memory access` (kernel `NVRM: Xid 31`, MMU fault at a
+  host address) on the last task, and the runner recorded three HTTP 500s and
+  excluded them, which is why `gemma` shows 27/36. This is the same signature as
+  the two crashes of 2026-09-17 morning, and it happened with `load-mode = none`
+  in effect, so memory-mapped weights are not the cause. Unresolved.
 
 ### Preset tuning on build 11022 (2026-09-17)
 

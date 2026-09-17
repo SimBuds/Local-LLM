@@ -1274,6 +1274,12 @@ repos, and one ended in a colon with no template after it.)
   longer fits entirely on the GPU with the 2 GB margin. Raising the batch, or
   returning to mmap, needs Casey's approval and a new VRAM check against the
   pinned splits. (2026-09-17)
+- **Locked: `cache-type-k` and `cache-type-v` stay `q4_0`.** The llama.cpp
+  function-calling docs warn that q4_0 KV degrades tool calling. Measured on
+  2026-09-17 with `run-tools.py` at both cache types: totals identical for qwen
+  (39/39) and lite (36/39), per-task differences in both directions, and `q8_0`
+  costs 0.3 to 0.5 GiB of VRAM per model out of the 2 GB margin. Re-measure
+  before changing it, and re-derive the splits if it changes. (2026-09-17)
 - **Locked: `CACHE_PROMPT = False` in `eval/_gateway.py`.** The llama-server docs
   state that cached prompt prefixes make logits not bit-identical, and `--seed`
   reproducibility is already unresolved. Turning caching on for speed needs

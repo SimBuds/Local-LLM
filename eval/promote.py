@@ -52,12 +52,14 @@ SUITES: dict[str, tuple[str, tuple[str, ...]]] = {
     "tutor":   ("Tutor (leak-gated)",  ("Teach /10",)),
     "json":    ("JSON / long-context", ("Score",)),
     "persona": ("Prompt stack",        ("Clean rate",)),
+    "tools":   ("Tool calling",        ("Passed", "Pass rate")),
 }
 
 # Extra context column worth carrying into the README next to the headline
 # metric — the number that changes the decision when the headline is a tie.
 SECONDARY: dict[str, str] = {
     "speed": "GPU/CPU split",
+    "tools": "Pass rate",
     "learn": "Code pass",
     "tutor": "Leaks",
     "json": "Avg s",
