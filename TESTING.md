@@ -289,7 +289,7 @@ individual runners so routine testing doesn't drift across hand-typed flags.
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
 | `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each |
-| `standard` | When picking models or after prompt-stack changes | ~1-2 hours | All seven suites; code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
+| `standard` | When picking models or after prompt-stack changes | ~1 hour | All seven suites; code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
 | `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
@@ -298,7 +298,9 @@ Two of the three current models spill to CPU, and — the larger factor — the 
 suites scale with the **square** of the model count: `run-learn.py` and
 `run-tutor.py` generate `models x tasks x attempts` responses and then grade each
 with `models-1` judges x `--judge-repeats` calls. Going 2 -> 3 models roughly
-triples the judging work. Budget ~2 hours for a 3-model `standard`; drop
+triples the judging work. A 3-model `standard` took 97 minutes on 2026-09-15.
+On 2026-09-17 it took 63, because `load-mode = none` and `ubatch-size = 1024`
+roughly doubled prompt ingest on the two CPU-spilling models. Drop
 `--judge-repeats` to 1 to trade the median back for speed.
 
 The wrapper prints every `summary.md` it produced at the end. Individual runners
@@ -351,150 +353,152 @@ deciding what to cut.
 
 ## Current Benchmark Snapshot
 
-Full `standard` pass on llama.cpp, 2026-09-15 (started 01:21 UTC, 96.8 minutes,
-`run-profile.py` exit 0). Three models, 3 attempts per task, identical `PARAMS`
-across builders, one model loaded at a time, pinned offload (gemma 21 and qwen 34
-MoE layers on CPU, lite all GPU), prompt caching off, Ollama stopped.
+Full `standard` pass on llama.cpp build 11022 (`f172be756`), 2026-09-17 (started
+09:54 UTC, 63.1 minutes, `run-profile.py` exit 0). Three models, 3 attempts per
+task, identical `PARAMS` across builders, one model loaded at a time, pinned
+offload (gemma 22 and qwen 35 MoE layers on CPU, lite all GPU), 65536 context,
+`load-mode = none`, `ubatch-size = 1024` (lite 512), prompt caching off, fresh
+boot, `vm.swappiness = 10`.
 
-The router log for the whole pass had no `out of memory` lines, and all 29 model
-process exits were normal swaps (status 0). No runner logged a connection error,
-HTTP error, or traceback, so no infrastructure failure is hiding inside a model's
-score.
+The kernel log for the boot had no NVIDIA Xid lines, the router log had no
+`out of memory` or CUDA error lines, and all 29 model process exits were normal
+swaps (status 0). No runner logged a connection error, HTTP error, or traceback,
+and every judge call parsed. The pass took 63 minutes against 97 on 2026-09-15,
+mostly because prompt ingest is 2 to 2.4× faster.
 
-Read it with the usual caveats. Samples are small (n = 9 to 27 per model), so a
-few points either way is noise, while failures and the leak-rate gap are strong
-signal. `lite` runs different weights from its Ollama-era history. Timing columns
-include re-processing the whole prompt on every call, so they are not comparable
-with the Ollama-era timings, which had prompt caching.
+Four things changed at once since the 2026-09-15 pass: the llama.cpp build
+(10968 to 11022), context (32768 to 65536), the pinned splits (gemma 21 to 22,
+qwen 34 to 35), and the two preset keys above. A difference against that pass
+cannot be assigned to any one of them. Samples are small (n = 9 to 27 per model),
+so a few points either way is noise, while failures and the leak-rate gap are
+strong signal.
 
 ### Speed (`run-speed.py`)
 
-Run: `eval/runs/20260915T012103Z/speed/summary.md`
+Run: `eval/runs/20260917T095456Z/speed/summary.md`
 
 | Rank | Model | Gen tok/s | Prompt tok/s | Load | GGUF | VRAM | GPU/CPU split |
 |---|---|---:|---:|---:|---:|---:|---|
-| 1 | `lite` | 122.4 | 2796 | 3.3s | 5.5 GiB | 6.1 GiB | all GPU, MTP |
-| 2 | `qwen` | 56.4 | 430 | 7.7s | 20.2 GiB | 6.1 GiB | 34 MoE layers on CPU, MTP |
-| 3 | `gemma` | 41.6 | 701 | 5.2s | 13.4 GiB | 6.1 GiB | 21 MoE layers on CPU |
+| 1 | `lite` | 114.3 | 3021 | 4.3s | 5.5 GiB | 6.7 GiB | all GPU, MTP |
+| 2 | `qwen` | 55.0 | 1020 | 13.0s | 20.2 GiB | 6.1 GiB | 35 MoE layers on CPU, MTP |
+| 3 | `gemma` | 45.1 | 1545 | 7.2s | 13.4 GiB | 6.0 GiB | 22 MoE layers on CPU |
 
-Finding: generation reads well ahead of the Ollama-era numbers for the two models
-with identical weights (`gemma` 28.3 → 41.6, `qwen` 40.9 → 56.4), but most of that
-gap is not the runtime. A same-day comparison on the same weights ran Ollama
-0.33.3 at 43.5 tok/s for `gemma` and 44.4 for `qwen`, putting llama.cpp's own gain
-at about 5 to 7% for `gemma` and 32% for `qwen`, about half of it from MTP (see
-**Same-day Ollama and llama.cpp comparison** under Historical Notes). `gemma` read
-44.8 in the back-to-back headroom test the day before, so treat about ±3 tok/s as
-run-to-run spread at 2 samples.
+Finding: prompt ingest is the change. `gemma` went 701 → 1545 tok/s and `qwen`
+430 → 1020, which matches the tuning sweep below (1565 and 1030). Generation is
+flat within the ±3 tok/s repeat spread for `gemma` and `qwen` despite one more
+expert layer each on CPU. `lite` read 114.3, below the 125 to 126 it read in the
+tuning sweep with the same settings. It is a single attempt per prompt, so treat
+that as spread until it repeats. Loads are 2 to 5 seconds
+slower without mmap.
 
 ### Coding (`run-code.py`)
 
-Run: `eval/runs/20260915T012204Z/code/summary.md`
+Run: `eval/runs/20260917T095551Z/code/summary.md`
 
 | Rank | Model | Pass rate | Passed | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|
-| 1 | `gemma` | 100% | 27/27 | 9.3 | 46 |
-| 2 | `qwen` | 89% | 24/27 | 9.6 | 75 |
-| 3 | `lite` | 81% | 22/27 | 2.3 | 153 |
+| 1 | `qwen` | 96% | 26/27 | 5.6 | 73 |
+| 2 | `gemma` | 93% | 25/27 | 5.6 | 46 |
+| 3 | `lite` | 89% | 24/27 | 2.2 | 154 |
 
-Finding: `gemma` went 26/27 → 27/27. `qwen` and `lite` both failed every
-`decode_string` attempt, and `lite` also missed 2 of 3 `calc` attempts.
+Finding: a tie, flagged by the runner (4 points). `gemma` missed 2 of 3 `calc`
+attempts, `qwen` 1 of 3 `decode_string`, and `lite` every `decode_string`.
+`gemma` was 27/27 on 2026-09-15 and 26/27 on 2026-09-16, so its lead there was
+inside this spread. Average time halved for `gemma` and `qwen` (9.3 → 5.6s and
+9.6 → 5.6s), which is the faster prompt ingest.
 
 ### Content (`run-content.py`)
 
-Run: `eval/runs/20260915T013141Z/content/summary.md`
+Run: `eval/runs/20260917T100152Z/content/summary.md`
 
 | Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words |
 |---|---|---:|---:|---:|---:|---:|
-| 1 | `gemma` | 100% | 9/9 | 11.1 | 47 | 213 |
-| 2 | `lite` | 89% | 8/9 | 3.8 | 105 | 196 |
-| 3 | `qwen` | 56% | 5/9 | 14.2 | 50 | 236 |
+| 1 | `gemma` | 100% | 9/9 | 8.2 | 47 | 208 |
+| 2 | `lite` | 89% | 8/9 | 3.5 | 110 | 185 |
+| 3 | `qwen` | 78% | 7/9 | 9.8 | 50 | 218 |
 
-Finding: `qwen` dropped from 8/9 to 5/9, and every miss is a length violation
-only: `tech_explain` at 212, 214, and 221 words against a 120 to 200 limit, and
-one `md_brief` at 212 against under 200. Every other rule passed, and a saved
-response is clean prose with no leaked thinking, so this is `qwen` writing long,
-not a runtime artifact. The Wilson interval (27 to 81%) overlaps its Ollama-era
-8/9, and `qwen` also tripped `tech_explain` on 2026-06-14. Weak signal.
+Finding: unchanged in shape. `gemma` is clean again. `qwen`'s two misses are both
+`tech_explain`, and two of its three answers there ran 206 and 201 words by `wc`
+against a 200 limit, the same over-length pattern as 2026-09-15. `lite` missed
+one `seo_product`.
 
 ### Learning (`run-learn.py`)
 
-Run: `eval/runs/20260915T015142Z/learn/summary.md`
+Run: `eval/runs/20260917T101423Z/learn/summary.md`
 
 | Rank | Model | Teach /10 | Code pass | Explanation /10 | Explanation when correct |
 |---|---|---:|---:|---:|---:|
-| 1 | `qwen` | 9.9 | 12/12 | 9.9 | 9.9 |
-| 2 | `gemma` | 9.1 | 11/12 | 9.1 | 9.9 |
-| 3 | `lite` | 8.2 | 10/12 | 9.7 | 9.8 |
+| 1 | `qwen` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 2 | `gemma` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 3 | `lite` | 7.3 | 9/12 | 9.6 | 9.7 |
 
-Finding: `gemma`'s drop from 9.8 is one failed solution (11/12 on the code gate,
-weakest task `edit_distance`), not teaching quality. Judges parsed 216/216 calls, and inter-judge disagreement was σ
-0.11/10. The rubric is still saturated (9.8 to 9.9 when the code runs), so
-`--judge-rubric strict` remains the way to get a real ranking.
+Finding: `qwen` and `gemma` tie (0.1 apart, flagged). The gap to `lite` is the
+code gate, not the explanations. Judges parsed 216/216 calls, inter-judge σ
+0.24/10. The rubric is still saturated, so `--judge-rubric strict` remains the
+way to get a real ranking.
 
 ### Tutor (`run-tutor.py`, leak-gated)
 
-Run: `eval/runs/20260915T021916Z/tutor/summary.md`
+Run: `eval/runs/20260917T103232Z/tutor/summary.md`
 
 | Rank | Model | Teach /10 | Leaks | Explanation /10 |
 |---|---|---:|---:|---:|
-| 1 | `gemma` | 9.4 | **0/15** | 9.4 |
-| 2 | `qwen` | 6.1 | 5/15 | 9.3 |
-| 3 | `lite` | 5.0 | 7/15 | 9.0 |
+| 1 | `gemma` | 8.1 | **2/15** | 9.3 |
+| 2 | `lite` | 6.9 | 4/15 | 9.1 |
+| 3 | `qwen` | 5.1 | 7/15 | 9.1 |
 
-Finding: the decisive result from the Ollama era holds on the new runtime.
-`gemma` leaked nothing (Wilson 0 to 20%), while `qwen` (15 to 58%) and `lite`
-(25 to 70%) handed over working solutions. Judges parsed 270/270 calls, σ 0.33/10.
+Finding: `gemma` still leaks least, but not zero this time (Wilson 4 to 38%,
+against 0 to 20% on 2026-09-15). `lite` (11 to 52%) and `qwen` (25 to 70%)
+overlap it. The ordering matches every pass since 2026-06-09, while the size of
+the gap is less certain than the 0/15 made it look. Judges parsed 270/270 calls,
+σ 0.32/10.
 
 ### JSON / long-context (`run-json.py`)
 
-Run: `eval/runs/20260915T014158Z/json/summary.md`
+Run: `eval/runs/20260917T100907Z/json/summary.md`
 
 | Rank | Model | Score | Schema OK | Fact rate | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|---:|
-| 1 | `lite` | 100% | 100% | 100% | 2.5 | 136 |
-| 2 | `qwen` | 100% | 100% | 100% | 15.4 | 64 |
-| 3 | `gemma` | 100% | 100% | 100% | 9.8 | 45 |
+| 1 | `lite` | 100% | 100% | 100% | 2.5 | 130 |
+| 2 | `qwen` | 100% | 100% | 100% | 7.3 | 65 |
+| 3 | `gemma` | 100% | 100% | 100% | 5.3 | 45 |
 
-Finding: still a three-way 100%, confirming schema-constrained decode through the
-llama-server `json_schema` path on all three models. Average time rose against the
-Ollama era (`qwen` 7.2 → 15.4s, `gemma` 6.0 → 9.8s) despite faster generation. That
-matches re-reading the ~6.5k-token prompt on every call at each model's ingest
-speed (`qwen` about 6.5k at 430 tok/s is 15s), which is arithmetic consistency,
-not a separate measurement.
+Finding: a three-way 100% again. Average time dropped from 15.4 to 7.3s for
+`qwen` and from 9.8 to 5.3s for `gemma`, which fits the ~6.2k-token prompts
+being read at 2.4× the old speed.
 
 ### Prompt stack (`run-persona.py`)
 
-Run: `eval/runs/20260915T013603Z/persona/summary.md` (stacked only, no baseline pass)
+Run: `eval/runs/20260917T100506Z/persona/summary.md` (stacked only, no baseline pass)
 
 | Rank | Model | Clean rate | Clean |
 |---|---|---:|---:|
-| 1 | `qwen` | 95% | 20/21 |
+| 1 | `qwen` | 100% | 21/21 |
 | 2 | `lite` | 57% | 12/21 |
 | 3 | `gemma` | 57% | 12/21 |
 
-Finding: `qwen` is unchanged at 95%. `gemma` moved 43% → 57% by passing
-`unknown_fact`, which it failed under Ollama, while still failing `model_origin`,
-`unverified`, and `fields_echo` 0/3. `lite` fails `unverified` and `fields_echo`
-0/3, as its Ollama-era weights did.
+Finding: `qwen` passed every rule for the first time (95% before). At 3 attempts
+that is within the measured noise floor. `gemma` and `lite` still fail
+`unverified` and `fields_echo` 0/3, and both passed `model_origin` only 1 of 3.
 
 ## Current Picks
 
-From the 2026-09-15 llama.cpp `standard` pass above.
+From the 2026-09-17 `standard` pass above, on build 11022.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `lite` | 122 tok/s fully on GPU, 2.2× `qwen` and 2.9× `gemma`. |
-| Agentic tools (Cline) | `lite` | Prompt ingest 2796 tok/s vs `gemma` 701 and `qwen` 430, each re-reading a ~3k-token system prompt. |
-| Coding puzzles / small functions | `gemma` | 27/27 vs `qwen` 24/27 and `lite` 22/27. |
-| Content / SEO / copy | `gemma` | 9/9 clean vs `lite` 8/9 and `qwen` 5/9 (all four `qwen` misses were over-length). |
-| Leak-gated tutoring | `gemma` | **0/15 leaks** vs 5/15 and 7/15. Deterministic, not judge-scored. |
-| Learning explanations | `qwen` | 9.9 with 12/12 on the code gate. `gemma`'s 9.1 is one failed solution, and its explanations score 9.9 when the code runs. |
-| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.5s against 9.8s and 15.4s. |
-| Prompt-stack fidelity | `qwen` | 95% clean vs 57% for both others. |
+| Fast local default | `lite` | 114 tok/s fully on GPU, 2.1× `qwen` (55) and 2.5× `gemma` (45). |
+| Agentic tools (Cline) | `lite` | Prompt ingest 3021 tok/s vs `gemma` 1545 and `qwen` 1020. The gap narrowed from 4 to 7× to 2 to 3×. |
+| Coding puzzles / small functions | `gemma` or `qwen` (tie) | `qwen` 26/27, `gemma` 25/27, inside the tie threshold, and the order flipped from 2026-09-15. `gemma` is faster to first token, `qwen` generates faster. |
+| Content / SEO / copy | `gemma` | 9/9 clean vs `lite` 8/9 and `qwen` 7/9 (`qwen` still runs over word limits). |
+| Leak-gated tutoring | `gemma` | 2/15 leaks vs `lite` 4/15 and `qwen` 7/15. Deterministic, not judge-scored. |
+| Learning explanations | `qwen` or `gemma` (tie) | Both 9.8 with 12/12 on the code gate. |
+| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.5s against 5.3s and 7.3s. |
+| Prompt-stack fidelity | `qwen` | 100% clean vs 57% for both others. |
 
-The split is the same as under Ollama. `gemma` takes the quality suites, `lite`
-takes everything speed-shaped, and `qwen` is the only model that reliably obeys
-the prompt stack.
+The split holds. `gemma` takes content and tutoring, `lite` takes everything
+speed-shaped, `qwen` is the only model that reliably obeys the prompt stack, and
+coding and learning are now ties between `gemma` and `qwen`.
 
 ## Hardware
 
@@ -506,7 +510,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 10968 (`41abbfd59`), static, CUDA 13.4, from 2026-09-14. Every result in this file is from this build. Build 11022 (`f172be756`) installed 2026-09-17 and not yet benchmarked. |
+| llama.cpp | build 11022 (`f172be756`), static, CUDA 13.4, from 2026-09-17. The current snapshot and the tuning sweep are from this build. Everything from 2026-09-14 to 2026-09-16 is from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -576,6 +580,153 @@ Findings:
 
 One sample per setup. The prompt gains are far outside run-to-run noise, and the
 generation differences are not.
+
+### llama.cpp standard pass on build 10968 (2026-09-15)
+
+Full `standard` pass on llama.cpp, 2026-09-15 (started 01:21 UTC, 96.8 minutes,
+`run-profile.py` exit 0). Three models, 3 attempts per task, identical `PARAMS`
+across builders, one model loaded at a time, pinned offload (gemma 21 and qwen 34
+MoE layers on CPU, lite all GPU), prompt caching off, Ollama stopped.
+
+The router log for the whole pass had no `out of memory` lines, and all 29 model
+process exits were normal swaps (status 0). No runner logged a connection error,
+HTTP error, or traceback, so no infrastructure failure is hiding inside a model's
+score.
+
+Read it with the usual caveats. Samples are small (n = 9 to 27 per model), so a
+few points either way is noise, while failures and the leak-rate gap are strong
+signal. `lite` runs different weights from its Ollama-era history. Timing columns
+include re-processing the whole prompt on every call, so they are not comparable
+with the Ollama-era timings, which had prompt caching.
+
+#### Speed (`run-speed.py`)
+
+Run: `eval/runs/20260915T012103Z/speed/summary.md`
+
+| Rank | Model | Gen tok/s | Prompt tok/s | Load | GGUF | VRAM | GPU/CPU split |
+|---|---|---:|---:|---:|---:|---:|---|
+| 1 | `lite` | 122.4 | 2796 | 3.3s | 5.5 GiB | 6.1 GiB | all GPU, MTP |
+| 2 | `qwen` | 56.4 | 430 | 7.7s | 20.2 GiB | 6.1 GiB | 34 MoE layers on CPU, MTP |
+| 3 | `gemma` | 41.6 | 701 | 5.2s | 13.4 GiB | 6.1 GiB | 21 MoE layers on CPU |
+
+Finding: generation reads well ahead of the Ollama-era numbers for the two models
+with identical weights (`gemma` 28.3 → 41.6, `qwen` 40.9 → 56.4), but most of that
+gap is not the runtime. A same-day comparison on the same weights ran Ollama
+0.33.3 at 43.5 tok/s for `gemma` and 44.4 for `qwen`, putting llama.cpp's own gain
+at about 5 to 7% for `gemma` and 32% for `qwen`, about half of it from MTP (see
+**Same-day Ollama and llama.cpp comparison** under Historical Notes). `gemma` read
+44.8 in the back-to-back headroom test the day before, so treat about ±3 tok/s as
+run-to-run spread at 2 samples.
+
+#### Coding (`run-code.py`)
+
+Run: `eval/runs/20260915T012204Z/code/summary.md`
+
+| Rank | Model | Pass rate | Passed | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|
+| 1 | `gemma` | 100% | 27/27 | 9.3 | 46 |
+| 2 | `qwen` | 89% | 24/27 | 9.6 | 75 |
+| 3 | `lite` | 81% | 22/27 | 2.3 | 153 |
+
+Finding: `gemma` went 26/27 → 27/27. `qwen` and `lite` both failed every
+`decode_string` attempt, and `lite` also missed 2 of 3 `calc` attempts.
+
+#### Content (`run-content.py`)
+
+Run: `eval/runs/20260915T013141Z/content/summary.md`
+
+| Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `gemma` | 100% | 9/9 | 11.1 | 47 | 213 |
+| 2 | `lite` | 89% | 8/9 | 3.8 | 105 | 196 |
+| 3 | `qwen` | 56% | 5/9 | 14.2 | 50 | 236 |
+
+Finding: `qwen` dropped from 8/9 to 5/9, and every miss is a length violation
+only: `tech_explain` at 212, 214, and 221 words against a 120 to 200 limit, and
+one `md_brief` at 212 against under 200. Every other rule passed, and a saved
+response is clean prose with no leaked thinking, so this is `qwen` writing long,
+not a runtime artifact. The Wilson interval (27 to 81%) overlaps its Ollama-era
+8/9, and `qwen` also tripped `tech_explain` on 2026-06-14. Weak signal.
+
+#### Learning (`run-learn.py`)
+
+Run: `eval/runs/20260915T015142Z/learn/summary.md`
+
+| Rank | Model | Teach /10 | Code pass | Explanation /10 | Explanation when correct |
+|---|---|---:|---:|---:|---:|
+| 1 | `qwen` | 9.9 | 12/12 | 9.9 | 9.9 |
+| 2 | `gemma` | 9.1 | 11/12 | 9.1 | 9.9 |
+| 3 | `lite` | 8.2 | 10/12 | 9.7 | 9.8 |
+
+Finding: `gemma`'s drop from 9.8 is one failed solution (11/12 on the code gate,
+weakest task `edit_distance`), not teaching quality. Judges parsed 216/216 calls, and inter-judge disagreement was σ
+0.11/10. The rubric is still saturated (9.8 to 9.9 when the code runs), so
+`--judge-rubric strict` remains the way to get a real ranking.
+
+#### Tutor (`run-tutor.py`, leak-gated)
+
+Run: `eval/runs/20260915T021916Z/tutor/summary.md`
+
+| Rank | Model | Teach /10 | Leaks | Explanation /10 |
+|---|---|---:|---:|---:|
+| 1 | `gemma` | 9.4 | **0/15** | 9.4 |
+| 2 | `qwen` | 6.1 | 5/15 | 9.3 |
+| 3 | `lite` | 5.0 | 7/15 | 9.0 |
+
+Finding: the decisive result from the Ollama era holds on the new runtime.
+`gemma` leaked nothing (Wilson 0 to 20%), while `qwen` (15 to 58%) and `lite`
+(25 to 70%) handed over working solutions. Judges parsed 270/270 calls, σ 0.33/10.
+
+#### JSON / long-context (`run-json.py`)
+
+Run: `eval/runs/20260915T014158Z/json/summary.md`
+
+| Rank | Model | Score | Schema OK | Fact rate | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `lite` | 100% | 100% | 100% | 2.5 | 136 |
+| 2 | `qwen` | 100% | 100% | 100% | 15.4 | 64 |
+| 3 | `gemma` | 100% | 100% | 100% | 9.8 | 45 |
+
+Finding: still a three-way 100%, confirming schema-constrained decode through the
+llama-server `json_schema` path on all three models. Average time rose against the
+Ollama era (`qwen` 7.2 → 15.4s, `gemma` 6.0 → 9.8s) despite faster generation. That
+matches re-reading the ~6.5k-token prompt on every call at each model's ingest
+speed (`qwen` about 6.5k at 430 tok/s is 15s), which is arithmetic consistency,
+not a separate measurement.
+
+#### Prompt stack (`run-persona.py`)
+
+Run: `eval/runs/20260915T013603Z/persona/summary.md` (stacked only, no baseline pass)
+
+| Rank | Model | Clean rate | Clean |
+|---|---|---:|---:|
+| 1 | `qwen` | 95% | 20/21 |
+| 2 | `lite` | 57% | 12/21 |
+| 3 | `gemma` | 57% | 12/21 |
+
+Finding: `qwen` is unchanged at 95%. `gemma` moved 43% → 57% by passing
+`unknown_fact`, which it failed under Ollama, while still failing `model_origin`,
+`unverified`, and `fields_echo` 0/3. `lite` fails `unverified` and `fields_echo`
+0/3, as its Ollama-era weights did.
+
+#### Picks from that pass
+
+From the 2026-09-15 pass above, superseded by **Current Picks**.
+
+| Use | Pick | Basis |
+|---|---|---|
+| Fast local default | `lite` | 122 tok/s fully on GPU, 2.2× `qwen` and 2.9× `gemma`. |
+| Agentic tools (Cline) | `lite` | Prompt ingest 2796 tok/s vs `gemma` 701 and `qwen` 430, each re-reading a ~3k-token system prompt. |
+| Coding puzzles / small functions | `gemma` | 27/27 vs `qwen` 24/27 and `lite` 22/27. |
+| Content / SEO / copy | `gemma` | 9/9 clean vs `lite` 8/9 and `qwen` 5/9 (all four `qwen` misses were over-length). |
+| Leak-gated tutoring | `gemma` | **0/15 leaks** vs 5/15 and 7/15. Deterministic, not judge-scored. |
+| Learning explanations | `qwen` | 9.9 with 12/12 on the code gate. `gemma`'s 9.1 is one failed solution, and its explanations score 9.9 when the code runs. |
+| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.5s against 9.8s and 15.4s. |
+| Prompt-stack fidelity | `qwen` | 95% clean vs 57% for both others. |
+
+The split is the same as under Ollama. `gemma` takes the quality suites, `lite`
+takes everything speed-shaped, and `qwen` is the only model that reliably obeys
+the prompt stack.
 
 ### Same-day Ollama and llama.cpp comparison (2026-09-15)
 

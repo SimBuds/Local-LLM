@@ -70,7 +70,7 @@ Each builder declares only three things and then sources `build-common.sh`:
 |---|---|
 | `MODEL_NAME` | Router name, the `model` field clients send |
 | `BASE_MODEL` | GGUF filename under `$GGUF_DIR` |
-| `LOAD` | Pinned per-model load keys (`n-cpu-moe`, `spec-type = draft-mtp`) |
+| `LOAD` | Pinned per-model load keys (`n-cpu-moe`, `spec-type = draft-mtp`, and `ubatch-size = 512` for `lite`) |
 
 `build-common.sh` then:
 
@@ -87,7 +87,9 @@ Each builder declares only three things and then sources `build-common.sh`:
 Finally `make build` concatenates `server.ini` and every `preset.ini` into
 `models/models.ini`. `server.ini` holds the shared router settings: one slot
 (`parallel = 1`), flash attention, q4_0 KV cache, `fit = off`, all layers on GPU
-unless overridden, no vision projector, and sleep after 600 idle seconds.
+unless overridden, no vision projector, weights read into RAM instead of
+memory-mapped (`load-mode = none`), a 1024-token physical batch
+(`ubatch-size = 1024`), and sleep after 600 idle seconds.
 
 Editing one builder rebuilds only that model. Editing anything in `prompts/` or
 `memory/` rebuilds every model. `make clean` drops the stamps to force a full
@@ -174,7 +176,7 @@ Routine runs use profiles:
 
 ```bash
 ./eval/run-profile.py smoke    --models gemma qwen lite   # after a rebuild, minutes
-./eval/run-profile.py standard --models gemma qwen lite   # routine comparison, about 2 hours
+./eval/run-profile.py standard --models gemma qwen lite   # routine comparison, about 1 hour
 ./eval/run-profile.py deep     --models gemma qwen lite   # several hours
 ```
 
@@ -198,9 +200,10 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 ```
 
 The leaderboard between `<!-- BENCH:START -->` and `<!-- BENCH:END -->` is
-generated. Never hand-edit it. Current picks (2026-09-15 `standard` pass):
-`gemma` for coding, content, and tutoring, `lite` for speed, Cline, and JSON,
-`qwen` for learning explanations and prompt-stack fidelity.
+generated. Never hand-edit it. Current picks (2026-09-17 `standard` pass, build
+11022): `gemma` for content and tutoring, `lite` for speed, Cline, and JSON,
+`qwen` for prompt-stack fidelity, and `gemma` and `qwen` tied on coding and
+learning explanations.
 
 ---
 
@@ -217,7 +220,8 @@ generated. Never hand-edit it. Current picks (2026-09-15 `standard` pass):
 1. `./add-model Org/Repo-GGUF` prints the download and checksum commands. Run them.
 2. Close anything holding VRAM, then `./add-model <file>.gguf`. It picks a
    router name (refusing contract names), reads MTP support from the GGUF
-   header, and probes once with `--fit-target 2048` to pin `n-cpu-moe`.
+   header, and probes once with `--fit-target 2048` to pin `n-cpu-moe`. The probe
+   does not pass `-ub 1024` yet, so re-check the split with the README recipe.
 3. `make build`. The new builder is discovered automatically.
 4. Benchmark with `make serve PORT=8081` and `LLM_URL=http://localhost:8081`.
 

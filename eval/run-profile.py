@@ -13,8 +13,9 @@ Profiles:
 
 Runtime scales with the MODEL COUNT SQUARED on the judged suites, not linearly:
 run-learn/run-tutor generate N models × tasks × attempts responses, and each is
-then graded by N-1 judges × --judge-repeats calls. A 3-model `standard` pass is
-roughly a 2-hour job on this box, not the sub-hour a 2-model pass was. Drop
+then graded by N-1 judges × --judge-repeats calls. A 3-model `standard` pass
+took 97 minutes on this box before the 2026-09-17 prompt-ingest tuning and 63
+after it. Drop
 `--judge-repeats` to 1 to trade the median back for speed.
 
 Usage:
