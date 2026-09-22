@@ -11,6 +11,7 @@ captures from the llama-server router (build 10968, commit 41abbfd59) taken on
 
 from __future__ import annotations
 
+import argparse
 import http.client
 import io
 import json
@@ -515,6 +516,120 @@ class CheckAliveTests(GatewayCase):
     def test_at_streak_with_server_up_continues(self):
         self.serve(MODELS_RESPONSE)
         gw.check_alive(gw.DEAD_SERVER_STREAK)  # no exception
+
+
+def http_500() -> urllib.error.HTTPError:
+    """What a runner sees when the router proxies to a model instance that died."""
+    return urllib.error.HTTPError(gw.CHAT_URL, 500, "Internal Server Error", {}, io.BytesIO(b""))
+
+
+class AfterFailureTests(GatewayCase):
+    """after_failure() tells a crashed model apart from a model that answered badly.
+
+    The router records a crashed instance as `unloaded` with `failed: true` and
+    its exit code (server-models.cpp, on_child_exit), and clears that when the
+    model reloads. The error can reach the client before the exit is recorded, so
+    a server-side failure is followed by a short poll rather than a single read.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.clock = 0.0
+
+        def sleep(dt):
+            self.clock += dt
+
+        for name, fake in (("sleep", sleep), ("monotonic", lambda: self.clock)):
+            patcher = mock.patch.object(gw.time, name, side_effect=fake)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_crashed_model_aborts_naming_the_model_and_exit_code(self):
+        self.serve(router_listing("gemma", "unloaded", failed=True, exit_code=134))
+        with self.assertRaises(gw.ModelCrashed) as cm:
+            gw.after_failure("gemma", http_500(), streak=1)
+        self.assertIn("gemma", str(cm.exception))
+        self.assertIn("134", str(cm.exception))
+
+    def test_crash_recorded_after_the_error_is_still_caught(self):
+        # 2026-09-17 04:11: the 500s went out while the core dumped, and the
+        # router recorded the exit about 5 s later.
+        self.serve(router_listing("gemma", "loaded"), router_listing("gemma", "loaded"),
+                   router_listing("gemma", "unloaded", failed=True, exit_code=1))
+        with self.assertRaises(gw.ModelCrashed):
+            gw.after_failure("gemma", http_500(), streak=1)
+
+    def test_model_that_stays_loaded_counts_as_its_own_failure(self):
+        steady = router_listing("gemma", "loaded")
+        polls = int(gw.CRASH_SETTLE_S / gw.CRASH_POLL_S) + 5
+        self.serve(*[steady] * polls)
+        gw.after_failure("gemma", http_500(), streak=1)  # no exception
+        self.assertLessEqual(self.clock, gw.CRASH_SETTLE_S + gw.CRASH_POLL_S)
+
+    def test_model_mid_reload_counts_as_its_own_failure(self):
+        loading = router_listing("gemma", "loading")
+        polls = int(gw.CRASH_SETTLE_S / gw.CRASH_POLL_S) + 5
+        self.serve(*[loading] * polls)
+        gw.after_failure("gemma", http_500(), streak=1)
+
+    def test_timeout_is_counted_without_asking_the_router(self):
+        self.serve()  # any request would pop from an empty list and fail the test
+        gw.after_failure("gemma", TimeoutError("timed out"), streak=1)
+        self.assertEqual(self.requests, [])
+
+    def test_router_down_below_the_streak_continues(self):
+        self.serve(urllib.error.URLError("connection refused"))
+        gw.after_failure("gemma", urllib.error.URLError("refused"),
+                         streak=gw.DEAD_SERVER_STREAK - 1)
+
+    def test_router_down_at_the_streak_aborts_as_dead_server(self):
+        self.serve(urllib.error.URLError("connection refused"),
+                   urllib.error.URLError("connection refused"))
+        with self.assertRaises(gw.DeadServer):
+            gw.after_failure("gemma", urllib.error.URLError("refused"),
+                             streak=gw.DEAD_SERVER_STREAK)
+
+    def test_model_missing_from_the_listing_aborts_instead_of_guessing(self):
+        self.serve(router_listing(None))
+        with self.assertRaises(gw.ModelCrashed) as cm:
+            gw.after_failure("gemma", http_500(), streak=1)
+        self.assertIn("gemma", str(cm.exception))
+
+    def test_abort_types_are_system_exits_so_runners_do_not_count_them(self):
+        self.assertTrue(issubclass(gw.ModelCrashed, SystemExit))
+
+
+class PositiveIntTests(unittest.TestCase):
+    """--attempts 0 used to run nothing and write a summary reading "(all failed)"."""
+
+    def test_one_is_accepted(self):
+        self.assertEqual(gw.positive_int("1"), 1)
+
+    def test_larger_values_are_accepted(self):
+        self.assertEqual(gw.positive_int("12"), 12)
+
+    def test_zero_is_rejected_with_a_clear_message(self):
+        with self.assertRaises(argparse.ArgumentTypeError) as cm:
+            gw.positive_int("0")
+        self.assertIn("at least 1", str(cm.exception))
+
+    def test_negative_is_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            gw.positive_int("-3")
+
+    def test_non_integer_is_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError) as cm:
+            gw.positive_int("two")
+        self.assertIn("'two'", str(cm.exception))
+
+    def test_argparse_turns_it_into_a_usage_error(self):
+        ap = argparse.ArgumentParser(prog="run-x.py")
+        ap.add_argument("--attempts", type=gw.positive_int, default=3)
+        with mock.patch.object(sys, "stderr", io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as cm:
+            ap.parse_args(["--attempts", "0"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--attempts", err.getvalue())
 
 
 if __name__ == "__main__":

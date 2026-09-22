@@ -29,8 +29,9 @@ from __future__ import annotations
 import json
 import re
 import statistics
+import urllib.error
 
-from _gateway import generate, resolve_model
+from _gateway import DEAD_SERVER_STREAK, after_failure, generate, resolve_model
 
 JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -59,7 +60,12 @@ def judge_scores(judge_model: str, topic: str, response: str, timeout: int,
     jname, jthink = resolve_model(judge_model)
     try:
         text, _ = generate(jname, prompt, timeout, think=jthink, options=options)
-    except Exception:  # noqa: BLE001
+    except (urllib.error.URLError, TimeoutError) as e:
+        # A crashed judge stops the run: on 2026-09-17 qwen died mid-grading and
+        # 53 calls were recorded as unparseable. The streak is passed at the
+        # threshold because a judge call has no loop of its own to count in, so
+        # a router that is down is confirmed and reported on the first failure.
+        after_failure(jname, e, DEAD_SERVER_STREAK)
         return {d: 0 for d in rubric} | {"_parsed": False}
     m = JSON_RE.search(text)
     if not m:

@@ -95,12 +95,24 @@ Every runner preflights the router, the model names, and each model's built
 `prompt.txt` before it creates a run directory, so a down router or an unbuilt
 model stops the run with a message instead of showing up as failed attempts
 (all eight, pinned by `eval/test_preflight.py`). `run-json.py`
-then also checks each model's served context. Only `run-learn.py`,
-`run-persona.py`, and `run-tutor.py` abort mid-run if the server stops answering.
-The other four record those attempts as failures. See the 2026-07-28 note in
+then also checks each model's served context. See the 2026-07-28 note in
 **Historical Notes** for why preflight matters:
 a restart during a run previously produced complete, exit-0 summaries reporting
 that every model scored zero.
+
+**Every runner, and the judge panel, stops mid-run when the model it is calling
+crashes** (since 2026-09-22, pinned by `eval/test_failure_paths.py`). A failed
+call goes to the gateway's `after_failure()`, which asks the router about that
+model and polls for up to 15 seconds, because the router can report the error
+before it records the crash. A model the router marks `failed` stops the run with
+its exit code and writes no summary. A router that stops answering stops it the
+same way. A timeout, or an error from a model that stays loaded, is recorded as
+that attempt's failure and the run continues. Before this, only three runners
+aborted, and only when the router itself went down: on 2026-09-17 `qwen` crashed
+while grading, the router stayed up, and `run-tutor.py` recorded 53 failed judge
+calls as unparseable and exited 0. `run-code.py` and `run-speed.py` also caught
+every exception, so a bug in their own scoring would have been recorded as the
+model failing. They now catch only transport errors.
 
 A server stopped mid-request surfaces as a connection error in every runner,
 since `generate()` re-raises dropped connections as `URLError`. Before

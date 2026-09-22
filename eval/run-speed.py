@@ -31,12 +31,14 @@ import argparse
 import subprocess
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, generate, get_effective_think, load_model, new_run_dir,
-    preflight, prompt_tok_per_s, rel_path, resolve_model, tok_per_s,
+    REPO_ROOT, add_seed_arg, after_failure, generate, get_effective_think, load_model,
+    new_run_dir, positive_int, preflight, prompt_tok_per_s, rel_path, resolve_model,
+    tok_per_s,
 )
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
@@ -109,6 +111,7 @@ def time_model(model: str, prompts: list[str], attempts: int, num_predict: int,
     load_s, args = load_model(name, timeout)
     print(f"    loaded in {load_s:.1f}s ({declared_offload(args)})")
     vram = None
+    streak = 0  # consecutive failed calls; see after_failure()
     for pi, prompt in enumerate(prompts):
         for n in range(attempts):
             label = f"    p{pi+1} a{n+1}"
@@ -118,9 +121,12 @@ def time_model(model: str, prompts: list[str], attempts: int, num_predict: int,
                 _, meta = generate(name, prompt, timeout, think=think, options=opts)
             except ValueError:
                 raise  # a bad --opt is a usage error, not a slow model: abort the run
-            except Exception as e:  # noqa: BLE001
+            except (urllib.error.URLError, TimeoutError) as e:
                 print(f"GEN-FAIL ({time.monotonic()-t0:.1f}s): {e}")
+                streak += 1
+                after_failure(name, e, streak)
                 continue
+            streak = 0
             elapsed = time.monotonic() - t0
             g, p = tok_per_s(meta), prompt_tok_per_s(meta)
             gen_tps.append(g)
@@ -175,7 +181,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", required=True, help="router model names")
-    ap.add_argument("--attempts", type=int, default=1, help="attempts per prompt (default 1)")
+    ap.add_argument("--attempts", type=positive_int, default=1, help="attempts per prompt (default 1)")
     ap.add_argument("--num-predict", type=int, default=200,
                     help="cap generated tokens per call (default 200)")
     ap.add_argument("--timeout", type=int, default=600, help="model call timeout (s)")

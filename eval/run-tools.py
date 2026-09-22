@@ -40,9 +40,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    DEAD_SERVER_STREAK, REPO_ROOT, add_seed_arg, attempt_seed, chat, check_alive,
-    ci_str, close_call_note, get_effective_think, new_run_dir, preflight, rel_path,
-    resolve_model, sample_caveat, seed_opts, spread_note, tok_per_s,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, chat, ci_str, close_call_note,
+    get_effective_think, new_run_dir, positive_int, preflight, rel_path, resolve_model,
+    sample_caveat, seed_opts, spread_note, tok_per_s,
 )
 from tool_tasks import TASKS, ToolTask  # noqa: E402
 
@@ -215,7 +215,8 @@ def run_attempt(model: str, task: ToolTask, n: int, total: int, timeout: int,
                                  options=options, tools=task.tools)
     except (urllib.error.URLError, TimeoutError) as e:
         print(f"FAIL ({time.monotonic()-t0:.1f}s): {e}")
-        return {"ok": False, "error": str(e), "elapsed_s": time.monotonic() - t0}
+        return {"ok": False, "error": str(e), "exc": e,
+                "elapsed_s": time.monotonic() - t0}
 
     passed, reasons = score_calls(task, calls, text)
     calls_after: list[dict] = []
@@ -236,7 +237,8 @@ def run_attempt(model: str, task: ToolTask, n: int, total: int, timeout: int,
                                            options=options, tools=task.tools)
         except (urllib.error.URLError, TimeoutError) as e:
             print(f"FAIL ({time.monotonic()-t0:.1f}s): {e}")
-            return {"ok": False, "error": str(e), "elapsed_s": time.monotonic() - t0}
+            return {"ok": False, "error": str(e), "exc": e,
+                    "elapsed_s": time.monotonic() - t0}
         after_ok, after_reasons = score_calls(task, calls_after, text,
                                               expect=task.expect_after)
         answer_ok, answer_reasons = score_answer(task, text)
@@ -263,7 +265,7 @@ def main() -> int:
     ap.add_argument("--models", nargs="+", required=True)
     ap.add_argument("--tasks", nargs="+", default=list(TASKS),
                     help=f"Subset of: {', '.join(TASKS)}")
-    ap.add_argument("--attempts", type=int, default=3)
+    ap.add_argument("--attempts", type=positive_int, default=3)
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
@@ -306,8 +308,9 @@ def main() -> int:
                                    indent=2), encoding="utf-8")
                 else:
                     streak += 1
-                    if streak >= DEAD_SERVER_STREAK:
-                        check_alive(streak)
+                    # Stops the run on a crashed model or a dead router, before
+                    # the summary can report either as the model's answers.
+                    after_failure(resolve_model(model)[0], r["exc"], streak)
                 rs.append(r)
             summary[model][task.key] = rs
         print()

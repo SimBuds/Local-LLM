@@ -11,6 +11,7 @@ they format counts/rates a runner already computed, they don't decide pass/fail.
 
 from __future__ import annotations
 
+import argparse
 import http.client
 import json
 import math
@@ -386,6 +387,60 @@ def check_alive(streak: int) -> None:
             f"  Restart it:  make serve")
 
 
+# --- crashed model ------------------------------------------------------------
+# check_alive() only asks whether the router answers, and the router outlives a
+# crashed model instance. On 2026-09-17 qwen died mid-run (CUDA error, Xid 31),
+# the router kept answering, and run-tutor.py recorded 53 failed judge calls as
+# unparseable and exited 0. The router does know: it records a crashed instance
+# as `unloaded` with `failed: true` and its exit code (server-models.cpp,
+# on_child_exit), and clears that when the model is next loaded. So a failed call
+# asks, before the next attempt can trigger that reload.
+
+# The error can reach the client before the router records the exit: about 30 ms
+# on 2026-09-17 13:52, about 5 s at 04:11 while the core dumped. Poll this long.
+CRASH_SETTLE_S = 15.0
+CRASH_POLL_S = 0.5
+
+
+class ModelCrashed(SystemExit):
+    """The model instance a run was calling died, so its results so far are void."""
+
+
+def after_failure(model: str, exc: BaseException, streak: int) -> None:
+    """Classify a failed call. Raises when the run must stop, returns otherwise.
+
+    Runners call this from their per-attempt exception handler with the model's
+    router name and the consecutive-failure count. A timeout is the model being
+    slow and counts against it without asking. An HTTP error or a dropped
+    connection makes it poll the router: `failed: true` raises ModelCrashed, a
+    router that does not answer falls back to check_alive(), and a model that
+    stays loaded (or is reloading) returns, so the attempt counts as the model's.
+    """
+    if isinstance(exc, TimeoutError):
+        return
+    deadline = time.monotonic() + CRASH_SETTLE_S
+    while True:
+        try:
+            status = _router_status(model)
+        except LoadFailed as e:
+            raise ModelCrashed(
+                f"ERROR: aborting — {model!r} disappeared from the router listing "
+                f"after a failed call ({e}).") from exc
+        except (urllib.error.URLError, OSError, ValueError):
+            check_alive(streak)
+            return
+        if status.get("failed"):
+            raise ModelCrashed(
+                f"ERROR: aborting — model {model!r} crashed in the router "
+                f"(exit code {status.get('exit_code')}).\n"
+                f"  Results so far would count that crash as the model's answers, "
+                f"so no results or summary were written (the run folder stays empty).\n"
+                f"  Check the GPU log:  journalctl -k -b | grep -i xid") from exc
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(CRASH_POLL_S)
+
+
 def tok_per_s(meta: dict) -> float:
     n = meta.get("eval_count", 0)
     return n / (meta.get("eval_duration", 1) / 1e9) if n else 0.0
@@ -446,6 +501,21 @@ def attempt_seed(seed: int | None, attempt: int) -> int | None:
     between-attempt variance these suites are trying to measure.
     """
     return None if seed is None else seed + attempt
+
+
+def positive_int(text: str) -> int:
+    """argparse type for counts that must be at least 1, such as --attempts.
+
+    `--attempts 0` used to run nothing and still write a summary reading
+    "(all failed)", which reads as a model result rather than a typo.
+    """
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
 
 
 def add_seed_arg(ap) -> None:

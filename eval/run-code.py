@@ -32,13 +32,15 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, extract_code, generate,
-    get_effective_think, new_run_dir, preflight, rel_path, resolve_model, run_program,
-    sample_caveat, sandbox_note, seed_opts, spread_note, tok_per_s,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    extract_code, generate, get_effective_think, new_run_dir, positive_int, preflight,
+    rel_path, resolve_model, run_program, sample_caveat, sandbox_note, seed_opts,
+    spread_note, tok_per_s,
 )
 from coding_tasks import TASKS, Task  # noqa: E402
 
@@ -59,10 +61,12 @@ def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
     try:
         text, meta = generate(name, task.prompt, timeout, think=think,
                               options=seed_opts(attempt_seed(seed, n)))
-    except Exception as e:  # noqa: BLE001 — surface any transport error as a fail
+    except (urllib.error.URLError, TimeoutError) as e:
+        # Transport errors only: a bug in this runner's own scoring must crash
+        # loudly, not be recorded as the model failing a task.
         print(f"GEN-FAIL ({time.monotonic()-t0:.1f}s): {e}")
         return {"task": task.name, "passed": False, "reason": "gen-fail",
-                "elapsed_s": time.monotonic() - t0, "eval_count": 0}
+                "elapsed_s": time.monotonic() - t0, "eval_count": 0, "exc": e}
     elapsed = time.monotonic() - t0
 
     code = extract_code(text, prefer_lang="python")
@@ -83,7 +87,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
-    ap.add_argument("--attempts", type=int, default=5, help="attempts per task (default 5)")
+    ap.add_argument("--attempts", type=positive_int, default=5, help="attempts per task (default 5)")
     ap.add_argument("--tasks", nargs="+", default=None,
                     help="subset of task names (default: all)")
     ap.add_argument("--timeout", type=int, default=120, help="model call timeout (s); culls runaway thinking traces")
@@ -119,12 +123,16 @@ def main() -> int:
         mdir.mkdir()
         rs: list[dict] = []
         i = 0
+        streak = 0  # consecutive failed calls; see after_failure()
         for task in tasks:
             for n in range(1, per_task + 1):
                 i += 1
-                rs.append(run_attempt(model, task, n, per_task, args.timeout,
-                                      args.exec_timeout, args.thinking, mdir,
-                                      args.seed))
+                r = run_attempt(model, task, n, per_task, args.timeout,
+                                args.exec_timeout, args.thinking, mdir, args.seed)
+                streak = streak + 1 if "exc" in r else 0
+                if "exc" in r:
+                    after_failure(resolve_model(model)[0], r["exc"], streak)
+                rs.append(r)
         results[model] = rs
         npass = sum(1 for r in rs if r["passed"])
         print(f"  -> {npass}/{len(rs)} passed\n")

@@ -41,13 +41,14 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, attempt_seed, check_alive, ci_str, close_call_note,
-    extract_code, generate, get_effective_think, new_run_dir, preflight, rel_path,
-    resolve_model, run_program, sample_caveat, sandbox_note, seed_opts,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    extract_code, generate, get_effective_think, new_run_dir, positive_int, preflight,
+    rel_path, resolve_model, run_program, sample_caveat, sandbox_note, seed_opts,
     spread_note, tok_per_s,
 )
 from _judge import judge_total, reliability_lines  # noqa: E402
@@ -84,7 +85,7 @@ def main() -> int:
                     help="judge panel (default: all --models, leave-one-out). "
                          "Each response is graded by every judge except the model "
                          "that wrote it, and the scores are averaged.")
-    ap.add_argument("--attempts", type=int, default=3, help="attempts per task (default 3)")
+    ap.add_argument("--attempts", type=positive_int, default=3, help="attempts per task (default 3)")
     ap.add_argument("--tasks", nargs="+", default=None)
     ap.add_argument("--timeout", type=int, default=120, help="model call timeout (s); culls runaway thinking traces")
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto",
@@ -140,7 +141,7 @@ def main() -> int:
 
         mdir = run_dir / model
         mdir.mkdir()
-        streak = 0  # consecutive connection failures; see check_alive()
+        streak = 0  # consecutive failed calls; see after_failure()
         for task in tasks:
             for n in range(1, args.attempts + 1):
                 print(f"    {task.name:<16} [{n}/{args.attempts}] ", end="", flush=True)
@@ -150,11 +151,11 @@ def main() -> int:
                                           think=think,
                                           options=seed_opts(attempt_seed(args.seed, n)))
                     streak = 0
-                except Exception as e:  # noqa: BLE001
+                except (urllib.error.URLError, TimeoutError) as e:
                     print(f"GEN-FAIL: {e}")
                     text, meta = "", {}
                     streak += 1
-                    check_alive(streak)
+                    after_failure(name, e, streak)
                 elapsed = time.monotonic() - t0
                 code = extract_code(text, "python")
                 src = f"{code}\n\n# --- hidden tests ---\n{task.tests}\n"

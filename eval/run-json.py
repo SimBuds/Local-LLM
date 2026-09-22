@@ -55,9 +55,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, generate,
-    get_effective_think, new_run_dir, preflight, rel_path, resolve_model, sample_caveat,
-    seed_opts, served_ctx, spread_note, tok_per_s,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    generate, get_effective_think, new_run_dir, positive_int, preflight, rel_path,
+    resolve_model, sample_caveat, seed_opts, served_ctx, spread_note, tok_per_s,
 )
 from json_tasks import TASKS, JsonTask, build_context  # noqa: E402
 
@@ -196,7 +196,8 @@ def run_attempt(model: str, task: JsonTask, n: int, total: int, timeout: int,
                               options=options, fmt=task.schema)
     except (urllib.error.URLError, TimeoutError) as e:
         print(f"FAIL ({time.monotonic()-t0:.1f}s): {e}")
-        return {"ok": False, "error": str(e), "elapsed_s": time.monotonic() - t0}
+        return {"ok": False, "error": str(e), "exc": e,
+                "elapsed_s": time.monotonic() - t0}
     elapsed = time.monotonic() - t0
 
     valid_json = True
@@ -240,7 +241,7 @@ def main() -> int:
     ap.add_argument("--models", nargs="+", required=True)
     ap.add_argument("--tasks", nargs="+", default=list(TASKS),
                     help=f"Subset of: {', '.join(TASKS)}")
-    ap.add_argument("--attempts", type=int, default=3)
+    ap.add_argument("--attempts", type=positive_int, default=3)
     ap.add_argument("--num-ctx", type=int, default=65536,
                     help="minimum context each model must serve (checked against the "
                          "router before the run; default 65536)")
@@ -284,11 +285,15 @@ def main() -> int:
         mdir = run_dir / model
         mdir.mkdir()
         summary[model] = {}
+        streak = 0  # consecutive failed calls; see after_failure()
         for task in tasks:
             rs = []
             for n in range(1, args.attempts + 1):
                 r = run_attempt(model, task, n, args.attempts, args.timeout,
                                 args.thinking, args.seed)
+                streak = streak + 1 if "exc" in r else 0
+                if "exc" in r:
+                    after_failure(resolve_model(model)[0], r["exc"], streak)
                 if r.get("ok"):
                     (mdir / f"{task.key}-attempt-{n}.json").write_text(
                         r["text"], encoding="utf-8")

@@ -31,9 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, attempt_seed, ci_str, close_call_note, generate,
-    get_effective_think, new_run_dir, preflight, rel_path, resolve_model, sample_caveat,
-    seed_opts, spread_note, tok_per_s,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    generate, get_effective_think, new_run_dir, positive_int, preflight, rel_path,
+    resolve_model, sample_caveat, seed_opts, spread_note, tok_per_s,
 )
 from content_tasks import TASKS, ContentTask, seo_task_from_prompt  # noqa: E402
 
@@ -53,7 +53,8 @@ def run_attempt(model: str, task: ContentTask, n: int, total: int, timeout: int,
                               options=seed_opts(attempt_seed(seed, n)))
     except (urllib.error.URLError, TimeoutError) as e:
         print(f"FAIL ({time.monotonic()-t0:.1f}s): {e}")
-        return {"ok": False, "error": str(e), "elapsed_s": time.monotonic() - t0}
+        return {"ok": False, "error": str(e), "exc": e,
+                "elapsed_s": time.monotonic() - t0}
     elapsed = time.monotonic() - t0
     s = task.evaluate(text)
     tag = "clean" if s["clean"] else "DIRTY"
@@ -68,7 +69,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
-    ap.add_argument("--attempts", type=int, default=5)
+    ap.add_argument("--attempts", type=positive_int, default=5)
     ap.add_argument("--tasks", nargs="+", default=None,
                     help=f"subset of: {', '.join(TASKS)} (default: all)")
     ap.add_argument("--prompt-file", type=Path, default=None,
@@ -111,10 +112,14 @@ def main() -> int:
         mdir = run_dir / model
         mdir.mkdir()
         rs: list[dict] = []
+        streak = 0  # consecutive failed calls; see after_failure()
         for task in tasks:
             for n in range(1, args.attempts + 1):
                 r = run_attempt(model, task, n, args.attempts, args.timeout,
                                 args.thinking, args.seed)
+                streak = streak + 1 if "exc" in r else 0
+                if "exc" in r:
+                    after_failure(resolve_model(model)[0], r["exc"], streak)
                 if r.get("ok"):
                     (mdir / f"{task.key}-attempt-{n}.md").write_text(
                         r["text"], encoding="utf-8")
