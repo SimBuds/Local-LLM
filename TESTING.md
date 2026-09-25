@@ -303,6 +303,7 @@ individual runners so routine testing doesn't drift across hand-typed flags.
 ./eval/run-profile.py standard --models gemma qwen lite   # routine full comparison
 ./eval/run-profile.py deep --models gemma qwen lite       # pre-decision confidence run
 ./eval/run-profile.py standard --models gemma qwen lite --dry-run  # show commands
+./eval/run-profile.py smoke --models lite --out-root /tmp/check    # results outside eval/runs/
 ```
 
 | Profile | When to run | Runtime | What it does |
@@ -322,7 +323,11 @@ On 2026-09-17 it took 63, because `load-mode = none` and `ubatch-size = 1024`
 roughly doubled prompt ingest on the two CPU-spilling models. Drop
 `--judge-repeats` to 1 to trade the median back for speed.
 
-The wrapper prints every `summary.md` it produced at the end. Individual runners
+The wrapper prints every `summary.md` it produced at the end. `--out-root` is
+passed to every runner in the profile (since 2026-09-25, pinned by
+`eval/test_profile.py`). Use it for any run that only checks that code or a new
+llama.cpp build works, because `promote.py` publishes the newest run in
+`eval/runs/` as the leaderboard. Individual runners
 remain usable directly for targeted sweeps (single task, context pressure,
 needle position, strict rubric).
 
@@ -558,7 +563,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 11022 (`f172be756`), static, CUDA 13.4, from 2026-09-17. The current snapshot and the tuning sweep are from this build. Everything from 2026-09-14 to 2026-09-16 is from build 10968 (`41abbfd59`). |
+| llama.cpp | build 11188 (`e85e15cf6`) installed 2026-09-25, not yet benchmarked. The current snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -569,6 +574,100 @@ The **Base-model speed survey (2026-08-11)** isolates this: a dense 27B and a
 larger 35B A3B MoE spill nearly identically (74% vs 76% CPU), and the dense one
 runs 4.6× slower. Size on disk does not predict throughput once spilling starts —
 active parameters per token does.
+
+### GPU faults (NVIDIA Xid 31)
+
+`llama-server` has crashed 18 times since 2026-07-28 with `CUDA error: an illegal
+memory access`, logged by the kernel as `NVRM: Xid 31` (a GPU MMU fault). Every
+fault the journal holds, attributed on 2026-09-23 from the log lines before it:
+
+| When | Runtime | Model | GPU layers | MoE layers on CPU | Vision projector | Crash after load |
+|---|---|---|---|---|---|---|
+| 2026-07-28 12:05 | Ollama | `qwen3.5:9b` (dense 9B) | 32/34 | none | yes | 7 s |
+| 2026-07-28 12:53 | Ollama | `qwen3.5:9b` | 34/34 | none | yes | 6 s |
+| 2026-07-28 18:14 | Ollama | `lite` (same weights) | 34/34 | none | yes | 6 s |
+| 2026-07-28 19:03 | Ollama | `lite` | 34/34 | none | yes | 45 s |
+| 2026-08-06 08:09 | Ollama | `qwen3.5:9b` | 29/34 | none | yes | 10 s |
+| 2026-08-10 00:34 | Ollama | `qwen3.5:9b` | 32/34 | none | yes | 51 s |
+| 2026-08-10 00:34 | Ollama | `qwen3.5:9b` | 32/34 | none | yes | 7 s |
+| 2026-08-12 10:09 | Ollama | `gemma4:26b-a4b-it-qat` (MoE) | 31/31 | 23 | yes | 14 s |
+| 2026-08-12 10:09 | Ollama | `gemma4:26b-a4b-it-qat` | 31/31 | 23 | yes | 14 s |
+| 2026-08-12 20:04 | Ollama | `gemma4:26b-a4b-it-qat` | 31/31 | 24 | yes | 67 s |
+| 2026-08-23 06:18 | Ollama | `gemma4:12b-it-qat` (dense 12B) | 48/49 | none | yes | 45 s |
+| 2026-08-24 07:50 | Ollama | `qwen3.5:9b` | 34/34 | none | yes | 23 s |
+| 2026-08-29 12:19 | Ollama | `qwen3.5:9b` | 33/34 | none | yes | 17 s |
+| 2026-08-29 12:19 | Ollama | `qwen3.5:9b` | 33/34 | none | yes | 4 s |
+| 2026-09-17 04:11 | router, build 11022 | `qwen` (MoE) | all | 35 | no | 347 s |
+| 2026-09-17 05:03 | router, build 11022 | `gemma` (MoE) | all | 22 | no | 34 s |
+| 2026-09-17 18:31 | scratch router, build 11022, `q8_0` KV | `gemma` | all | 22 | no | unknown (1) |
+| 2026-09-22 07:36 | service, build 11022 | `qwen` | all | 35 | no | 2478 s |
+
+(1) This one ran on a scratch router whose log went to a file, not the journal.
+The model comes from the KV cache note above, and the journal's nearest service
+log line (which named `lite`) is not this process.
+
+What the table settles:
+
+- **The CPU-offloaded expert path is not required.** Five crashes had the dense
+  9B entirely on the GPU (34/34 layers, no experts on CPU). The first hypothesis,
+  that the fault follows the GPU reading expert weights from system RAM, is
+  broken.
+- **No one model, runtime, or build.** Dense 9B, dense 12B, and two MoE models,
+  under Ollama's bundled llama.cpp and builds 10968 and 11022, across drivers
+  610.43, 610.57 and 615.71, kernels 7.1.5 to 7.2.6, and CUDA 13.3 and 13.4.
+- **The vision projector is not required.** Every Ollama crash had one loaded
+  and none of the router crashes did.
+- **Under Ollama, every crash came within 67 s of a model load**, mostly on the
+  first request. The router crashes came later (34 s to 41 minutes). Ollama
+  reloaded models far more often than the router does, so this may reflect how
+  often each loaded rather than a load-time trigger. It is not established.
+- **Something other than llama.cpp hits the same fault.** A game (`Sand.exe`)
+  logged Xid 31 on 2026-08-24, and games have logged Xid 32 (2026-08-10) and
+  Xid 109 context-switch timeouts (four times on 2026-08-31).
+- **17 of the 18 fault addresses are in the host program-memory range**
+  (`0x7f..`), including crashes with the model fully on the GPU. The game's
+  fault and one router fault were at GPU-range addresses.
+- **Not measured:** crash rate per model. The journal records crashes, not hours
+  of use, so the table cannot say whether one model crashes more often per hour
+  than another.
+
+The card has no ECC, so it cannot report VRAM errors itself, and PCIe replays
+since boot read 0.
+
+**VRAM stress test, 2026-09-25: clean.** With the service stopped, a small CUDA
+pattern tester (built with the installed `nvcc`, nothing new installed) wrote and
+verified four patterns (address-in-address, its inverse, pseudo-random, and a
+checkerboard) over 7,800 MiB for 20 minutes: 9,866 passes, 0 mismatches, no Xid.
+The card ran at full memory clock (9,251 MHz), 1,965 MHz core, up to 306 W and
+64 °C, which is harder than any crash's conditions. The tester was first shown to
+catch an injected error, reporting exactly one mismatch per pattern pass at the
+corrupted word. This makes bad VRAM an unlikely cause. It did not test the path
+17 of the 18 faults point at: the GPU reading **host** memory (the `0x7f..`
+addresses), which is where the driver's unified-memory handling and the open
+kernel module come in.
+
+**Host-memory stress test, 2026-09-25: clean, but short.** The driver reports
+`Addressing Mode: HMM` (`uvm_disable_hmm = N`), so the GPU can read plain `malloc`
+memory directly, which is the address range 17 of the 18 faults hit. A second
+scratch tester, again shown first to catch injected errors, had the GPU write and
+the CPU verify (and the reverse) three kinds of host memory for 20 minutes:
+pinned zero-copy, unified memory migrating between CPU and GPU, and pageable
+`malloc` memory through HMM, 512 MiB each. 1,377 passes, 0 mismatches, no Xid.
+This does not clear the host-memory path. The crash is rare (at worst 3 in about
+12 hours of heavy load on 2026-09-17), so 20 clean minutes is what the fault
+would also produce by chance. A test that can clear or convict it has to run for
+hours, and ideally on llama.cpp's own workload.
+
+**Investigation paused, 2026-09-25.** Casey's working explanation is too many
+processes running in the background at the time of the crashes. The tests above
+did not cover that, so it is untested rather than ruled in. If the crash
+returns, capture what else was using the GPU at the time
+(`nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv`, and
+`journalctl -k -b | grep -i xid`) before restarting anything. The runners now
+stop on a crashed model instead of recording it (see *Runner Matrix*), so a
+recurrence cannot silently corrupt a benchmark run. The next step, if it comes
+back, is an overnight soak on llama.cpp's own workload, then turning HMM off
+(`uvm_disable_hmm=1`) and repeating.
 
 ## Models Tested
 
@@ -632,6 +731,39 @@ Findings:
   excluded them, which is why `gemma` shows 27/36. This is the same signature as
   the two crashes of 2026-09-17 morning, and it happened with `load-mode = none`
   in effect, so memory-mapped weights are not the cause. Unresolved.
+
+### Build check and margin findings (2026-09-25)
+
+`scripts/verify-build` checks a new llama.cpp build before it goes live. Its
+first design judged each pinned split by what `--fit-target 2048` chose on the
+new build. That failed on the evidence: run against the live build 11022 as well,
+the same probe said `lite` and `qwen` no longer had the 2 GB margin, because the
+fitter's answer tracks free VRAM (desktop apps held about 500 MiB more than when
+the pins were derived). The shipped check compares builds instead: each model at
+its pinned split, live build then candidate, back to back, reading each process's
+VRAM from `nvidia-smi`.
+
+| Model | 11022 (live) | 11188 (candidate) |
+|---|---:|---:|
+| `gemma` (22 on CPU) | 6120 MiB | 6120 MiB |
+| `lite` (all GPU) | 6810 MiB | 6810 MiB |
+| `qwen` (35 on CPU) | 6182 MiB | 6184 MiB |
+
+The same binary on both sides measured +0 for every model, so the 100 MiB
+tolerance sits far above the noise. A preset pinning `qwen` at 10 CPU layers
+failed loudly (out of memory allocating 15.7 GB, exit 1).
+
+What the first design exposed, and still stands:
+
+- **`lite` does not have the 2 GB margin at 65,536 context.** It holds about
+  6.8 GiB, and the fitter at the 2 GB margin keeps only 29 of its 34 layers on the
+  GPU on 11022. It runs all-GPU with roughly 1.7 GB to spare on a typical
+  desktop. The 2 GB rule was written for the MoE splits, and `lite` was never
+  probed against it at this context.
+- **At the desktop VRAM use of 2026-09-25, `qwen`'s pinned 35 is one layer short
+  of the 2 GB margin** on both builds (the fitter chose 36). The pins assume
+  about 1.1 GB held by desktop apps. This is the same question the owed spike
+  test asks.
 
 ### Preset tuning on build 11022 (2026-09-17)
 

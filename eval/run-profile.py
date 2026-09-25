@@ -85,16 +85,25 @@ def main() -> int:
     ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the underlying commands without running them")
+    ap.add_argument("--out-root", type=Path, default=None,
+                    help="write every runner's results here instead of eval/runs/. "
+                         "Use it for any run that only checks the code or a build "
+                         "works: the newest run in eval/runs/ becomes the README "
+                         "leaderboard.")
     args = ap.parse_args()
 
+    # Resolved once, so every runner writes to the same place whatever its cwd.
+    out_root = args.out_root.resolve() if args.out_root else None
+    extra = ["--out-root", str(out_root)] if out_root else []
+    runs = out_root or RUNS
     cmds = [[sys.executable, str(EVAL_DIR / step[0]), "--models", *args.models,
-             *step[1:]] for step in PROFILES[args.profile]]
+             *step[1:], *extra] for step in PROFILES[args.profile]]
     if args.dry_run:
         for c in cmds:
             print(" ".join(c[1:2] + c[2:]))  # skip the interpreter for readability
         return 0
 
-    before = {p.name for p in RUNS.iterdir()} if RUNS.is_dir() else set()
+    before = {p.name for p in runs.iterdir()} if runs.is_dir() else set()
     t0 = time.monotonic()
     failures: list[str] = []
     for i, (step, cmd) in enumerate(zip(PROFILES[args.profile], cmds), 1):
@@ -107,11 +116,12 @@ def main() -> int:
 
     mins = (time.monotonic() - t0) / 60
     print(f"\n===== profile '{args.profile}' finished in {mins:.1f} min =====")
-    new = sorted({p.name for p in RUNS.iterdir()} - before) if RUNS.is_dir() else []
+    new = sorted({p.name for p in runs.iterdir()} - before) if runs.is_dir() else []
     print("Summaries:")
     for d in new:
-        for s in sorted((RUNS / d).glob("*/summary.md")):
-            print(f"  {s.relative_to(EVAL_DIR.parent)}")
+        for s in sorted((runs / d).glob("*/summary.md")):
+            shown = s.relative_to(EVAL_DIR.parent) if s.is_relative_to(EVAL_DIR.parent) else s
+            print(f"  {shown}")
     if failures:
         print(f"FAILED steps: {'; '.join(failures)}", file=sys.stderr)
     return 1 if failures else 0

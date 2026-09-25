@@ -385,9 +385,11 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-The installed build is 11022 (commit `f172be756`), from 2026-09-17, and the
-current leaderboard was measured on it. Results from 2026-09-14 to 2026-09-16
-came from build 10968 (commit `41abbfd59`). llama.cpp is built from
+The installed build is 11188 (commit `e85e15cf6`), swapped in on 2026-09-25
+through `scripts/llama-update` after `scripts/verify-build` passed it. The
+current leaderboard was measured on build 11022 (commit `f172be756`), and
+results from 2026-09-14 to 2026-09-16 came from build 10968 (commit
+`41abbfd59`). A new `standard` pass would move the leaderboard to 11188. llama.cpp is built from
 source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
 used to pin `g++-15` as the CUDA host compiler. That is corrected as of
 2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
@@ -403,17 +405,8 @@ CMakeLists asks nvcc for the host compiler version with errors suppressed, so
 the only symptom was `CUDA host compiler is GNU` with no version, followed by
 `ggml_get_flags Function invoked with incorrect arguments`.
 
-To update, keep a rollback point, pull, and re-run the block below, then
-restart the service:
-
-```bash
-# Runs in: local terminal, as your user. Safe to re-run.
-SRC="$HOME/src/llama.cpp"
-git -C "$SRC" branch -f known-good-11022 f172be756   # EDIT to the build you are leaving
-git -C "$SRC" pull --ff-only
-```
-
-Rolling back is `git -C "$SRC" checkout known-good-11022`, then the same block.
+The block below is the first install. Updates after that go through
+`scripts/llama-update` (see *Updating llama.cpp* below).
 
 ```bash
 # Runs in: local terminal, as your user (no sudo). Safe to re-run.
@@ -427,6 +420,60 @@ cmake --fresh -S "$SRC" -B "$SRC/build" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURE
 ```
 
 `-DCMAKE_CUDA_ARCHITECTURES=86` is the RTX 3080. Change it for another card.
+
+### Updating llama.cpp
+
+Upstream pushes most days. The weekly update runs through `scripts/llama-update`,
+which builds the new version **beside** the live one and changes nothing the
+service uses until you swap it in. It never restarts the service itself: it
+prints that command for you to run when no app or benchmark is mid-request.
+
+Why beside rather than in place: the router starts every model process from
+`~/src/llama.cpp/build/bin/llama-server` (visible in its log). Rebuilding that
+folder in place would start new-version model processes under the old,
+still-running router before any restart.
+
+```bash
+# Runs in: local terminal, repo root. Writes only inside ~/src/llama.cpp.
+./scripts/llama-update status     # installed build, waiting commits, CUDA and server changes
+./scripts/llama-update build      # pull --ff-only, build into build-next; the live build is untouched
+```
+
+`build` refuses a checkout with uncommitted changes or a diverged history,
+records a `known-good-b<build>` branch at the commit you are leaving, and always
+configures with `--fresh`. A failed build leaves `build` untouched and
+`build-next` unswappable. Then check it against this repo's preset before it
+goes live:
+
+```bash
+# Runs in: local terminal, repo root. Needs the service idle or stopped (it
+# refuses while a model is loaded). Starts and stops everything it uses.
+./scripts/verify-build            # checks ~/src/llama.cpp/build-next against the live build
+```
+
+It loads each model at its pinned split with the live build and then the new
+one, and fails if the new one needs more than 100 MiB of extra VRAM. It then
+runs the smoke profile on a scratch router on 8081 (results go to a temp folder,
+never `eval/runs/`) and fails on any new GPU fault. It ends with `PASS` or `FAIL`
+and a non-zero exit on failure. On a `PASS`, swap it in and restart:
+
+```bash
+# Runs in: local terminal, repo root. The printed restart is yours to run.
+./scripts/llama-update swap       # build -> build-prev, build-next -> build
+systemctl --user restart llama-server && systemctl --user is-active llama-server
+```
+
+Between the swap and the restart, a model load runs the new binary under the
+old router, so restart straight after swapping. To undo a bad update:
+
+```bash
+# Runs in: local terminal, repo root.
+./scripts/llama-update rollback   # build <-> build-prev, then restart as above
+```
+
+`LLAMA_SRC` points it at another checkout and `CUDA_ARCH` at another card. A new
+build is a new benchmark baseline, so the leaderboard stays on the build it was
+measured with until a new `standard` pass is promoted.
 
 `server.ini` holds the settings every model shares, and replaces the old Ollama
 systemd override:
@@ -829,8 +876,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
 Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
-model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11022
-(`f172be756`) with CUDA 13.4, from 2026-09-17.
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11188
+(`e85e15cf6`) with CUDA 13.4, from 2026-09-25. The published numbers are from
+build 11022.
 
 ## Docs
 

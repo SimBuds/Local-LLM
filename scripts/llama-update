@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# llama-update: the weekly llama.cpp update, built beside the live build and
+# swapped in only when Casey chooses.
+#
+#   llama-update status     fetch, then show the installed build and what is waiting
+#   llama-update build      pull and build into build-next (the live build is untouched)
+#   llama-update swap       build -> build-prev, build-next -> build, print the restart
+#   llama-update rollback   swap build and build-prev back, print the restart
+#
+# Why beside, not in place: the router starts every model process from
+# build/bin/llama-server, so rebuilding that folder would run new-version model
+# processes under the still-running old router before any restart (seen in its
+# log, 2026-09-25). A rename is instant, and the restart that follows it is the
+# only moment the version changes.
+#
+# It never restarts the service: that is printed for Casey to run when no app or
+# benchmark is mid-request. LLAMA_SRC overrides the checkout (default
+# ~/src/llama.cpp), CUDA_ARCH the GPU architecture (default 86, the RTX 3080).
+set -euo pipefail
+
+SRC="${LLAMA_SRC:-$HOME/src/llama.cpp}"
+ARCH="${CUDA_ARCH:-86}"
+LIVE="$SRC/build"
+NEXT="$SRC/build-next"
+PREV="$SRC/build-prev"
+OK_MARK=".llama-update-ok"   # written only after a build finishes and its binary runs
+RESTART="systemctl --user restart llama-server && systemctl --user is-active llama-server"
+
+die() { echo "llama-update: $*" >&2; exit 1; }
+
+usage() {
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+need_checkout() {
+  [ -d "$SRC/.git" ] && [ -f "$SRC/CMakeLists.txt" ] \
+    || die "$SRC is not a llama.cpp checkout (set LLAMA_SRC to the right path)"
+}
+
+version_of() {  # prints the --version line of a build folder's binary, or nothing
+  local bin="$1/bin/llama-server"
+  [ -x "$bin" ] && "$bin" --version 2>&1 | grep -m1 '^version:' || true
+}
+
+build_number() {  # "11022" from "version: ... (build 11022, commit ...)", else the short sha
+  local n
+  n=$(version_of "$LIVE" | sed -n 's/.*(build \([0-9]*\),.*/\1/p')
+  echo "${n:-$(git -C "$SRC" rev-parse --short HEAD)}"
+}
+
+upstream() { git -C "$SRC" rev-parse --abbrev-ref --symbolic-full-name '@{u}'; }
+
+cmd_status() {
+  echo "installed: $(version_of "$LIVE")"
+  git -C "$SRC" fetch --quiet
+  local up behind
+  up=$(upstream)
+  behind=$(git -C "$SRC" rev-list --count "HEAD..$up")
+  if [ "$behind" -eq 0 ]; then
+    echo "upstream:  up to date with $up"
+  else
+    echo "upstream:  $behind new commits on $up"
+    echo
+    echo "CUDA and server changes among them:"
+    git -C "$SRC" log --format='  %h %s' "HEAD..$up" \
+      | grep -i -E 'cuda|ggml-cuda|server|router|mmq|memory' || echo "  (none)"
+  fi
+  if [ -f "$NEXT/$OK_MARK" ]; then
+    echo; echo "build-next: $(version_of "$NEXT") (built, not yet swapped in)"
+  elif [ -d "$NEXT" ]; then
+    echo; echo "build-next: incomplete (a failed or interrupted build, not swappable)"
+  fi
+  [ -d "$PREV" ] && echo "build-prev: $(version_of "$PREV") (what rollback restores)"
+  return 0
+}
+
+cmd_build() {
+  [ -z "$(git -C "$SRC" status --porcelain --untracked-files=no)" ] \
+    || die "$SRC has uncommitted changes; commit or stash them first"
+  git -C "$SRC" fetch --quiet
+  local up
+  up=$(upstream)
+  if [ "$(git -C "$SRC" rev-parse HEAD)" = "$(git -C "$SRC" rev-parse "$up")" ]; then
+    echo "Already up to date with $up. Nothing to build."
+    return 0
+  fi
+  git -C "$SRC" merge-base --is-ancestor HEAD "$up" \
+    || die "local history has diverged from $up, so a fast-forward pull is impossible"
+
+  local was
+  was=$(build_number)
+  git -C "$SRC" branch -f "known-good-b$was" HEAD
+  echo "Recorded branch known-good-b$was at the installed commit."
+  git -C "$SRC" merge --ff-only --quiet "$up"
+  echo "Pulled $(git -C "$SRC" rev-parse --short HEAD) from $up."
+
+  if [ -d "$NEXT" ]; then
+    echo "Removing the previous $NEXT (a build that was never swapped in)."
+    rm -rf -- "$NEXT"
+  fi
+  # --fresh discards any CMakeCache: on 2026-09-17 a stale cache still pinned a
+  # g++-15 host compiler that no longer existed, and configure failed.
+  cmake --fresh -S "$SRC" -B "$NEXT" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$ARCH" \
+    -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+  if ! cmake --build "$NEXT" -j "$(nproc)" --target llama-server; then
+    die "the build failed. The live build is untouched and $NEXT is not swappable."
+  fi
+  local v
+  v=$(version_of "$NEXT")
+  [ -n "$v" ] || die "the build finished but $NEXT/bin/llama-server does not report a version"
+  touch "$NEXT/$OK_MARK"
+  echo
+  echo "Built: $v"
+  echo "Live:  $(version_of "$LIVE")"
+  echo
+  echo "Next: verify build-next, then run  llama-update swap"
+}
+
+cmd_swap() {
+  [ -f "$NEXT/$OK_MARK" ] || die "no finished build-next to swap in; run llama-update build first"
+  if [ -d "$PREV" ]; then
+    echo "Removing the older $PREV."
+    rm -rf -- "$PREV"
+  fi
+  mv -- "$LIVE" "$PREV"
+  mv -- "$NEXT" "$LIVE"
+  rm -f -- "$LIVE/$OK_MARK"
+  echo "Installed: $(version_of "$LIVE")"
+  echo "Previous:  $(version_of "$PREV") (llama-update rollback restores it)"
+  echo
+  echo "Model loads now start the new binary under the old router, so restart now:"
+  echo "  $RESTART"
+}
+
+cmd_rollback() {
+  [ -x "$PREV/bin/llama-server" ] || die "no build-prev to roll back to"
+  local tmp="$SRC/build-rollback-tmp"
+  mv -- "$LIVE" "$tmp"
+  mv -- "$PREV" "$LIVE"
+  mv -- "$tmp" "$PREV"
+  echo "Installed: $(version_of "$LIVE")"
+  echo "Moved aside: $(version_of "$PREV")"
+  echo "The source tree stays at its newer commit. The known-good-b* branches mark older ones."
+  echo
+  echo "Restart now:"
+  echo "  $RESTART"
+}
+
+case "${1:-}" in
+  status)   need_checkout; cmd_status ;;
+  build)    need_checkout; cmd_build ;;
+  swap)     need_checkout; cmd_swap ;;
+  rollback) need_checkout; cmd_rollback ;;
+  -h|--help|help) usage 0 ;;
+  *) echo "unknown command '${1:-}'. Commands: status, build, swap, rollback" >&2; usage 64 >&2 ;;
+esac
