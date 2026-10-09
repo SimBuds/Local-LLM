@@ -7,7 +7,10 @@
   llm chat [--think] [--verbose] [--system-file PATH] MODEL [PROMPT...]
                                    one request, answer streamed; thinking and
                                    --verbose stats go to stderr; the prompt is
-                                   read from stdin when not given                (ollama run MODEL "...")
+                                   read from stdin when piped                    (ollama run MODEL "...")
+                                   with no prompt on a terminal: a session that
+                                   keeps the conversation; Ctrl-C stops an
+                                   answer, Ctrl-C or Ctrl-D at the prompt exits  (ollama run MODEL)
   llm logs [--all] [JOURNALCTL ARGS...]
                                    router log, default `-n 50 -f`, without the
                                    per-load argument dump unless --all           (journalctl -u ollama -f)
@@ -79,11 +82,13 @@ def request(path: str, body: dict | None = None, timeout: int = 30) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def stream_chat(body: dict) -> dict:
+def stream_chat(body: dict, stop_on_interrupt: bool = False) -> dict:
     """POST a streamed chat request and print it as it arrives.
 
     Answer text goes to stdout. Thinking goes to stderr, so redirecting stdout keeps
-    only the answer. Returns {"content": full answer, "timings": dict or None}."""
+    only the answer. Returns {"content": full answer, "timings": dict or None}.
+    With stop_on_interrupt, Ctrl-C ends the answer and returns what arrived, so a
+    chat session can keep the partial text and carry on."""
     dim, reset = ("\033[2m", "\033[0m") if sys.stderr.isatty() else ("", "")
     content: list[str] = []
     timings = None
@@ -119,6 +124,9 @@ def stream_chat(body: dict) -> dict:
                     sys.stdout.flush()
     except (ConnectionError, TimeoutError, http.client.HTTPException) as e:
         raise CliError(f"connection to the router dropped mid-answer ({e})") from e
+    except KeyboardInterrupt:
+        if not stop_on_interrupt:
+            raise
     finally:
         if thinking:
             sys.stderr.write(f"\n...done thinking.{reset}\n")
@@ -229,13 +237,15 @@ def cmd_unload(args) -> int:
 def cmd_chat(args) -> int:
     # Checked first so an unknown model lists the names, as `load` does.
     require(args.model, models())
-    prompt = " ".join(args.prompt) if args.prompt else sys.stdin.read().strip()
-    if not prompt:
-        raise CliError("no prompt given (pass it as arguments or on stdin)")
     messages = []
     if args.system_file:
         messages.append({"role": "system",
                          "content": Path(args.system_file).read_text(encoding="utf-8")})
+    if not args.prompt and sys.stdin.isatty():
+        return chat_session(args, messages)
+    prompt = " ".join(args.prompt) if args.prompt else sys.stdin.read().strip()
+    if not prompt:
+        raise CliError("no prompt given (pass it as arguments or on stdin)")
     messages.append({"role": "user", "content": prompt})
     reply = stream_chat({
         "model": args.model,
@@ -245,6 +255,42 @@ def cmd_chat(args) -> int:
     if args.verbose and reply["timings"]:
         print(stats_line(reply["timings"]), file=sys.stderr)
     return 0
+
+
+def chat_session(args, messages: list[dict]) -> int:
+    """A conversation on the terminal: every line is a turn and the history is kept.
+
+    Ctrl-C during an answer stops it and keeps what arrived. Ctrl-C or Ctrl-D at the
+    prompt ends the session with exit 0. A failed turn is reported and dropped, so
+    one router error does not end the conversation."""
+    import readline  # noqa: F401  arrow keys and line history for input()
+    print(f"Chatting with {args.model}. Ctrl-C stops an answer. "
+          f"Ctrl-C or Ctrl-D at the prompt exits.", file=sys.stderr)
+    while True:
+        try:
+            line = input(">>> ")
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return 0
+        if not line.strip():
+            continue
+        messages.append({"role": "user", "content": line})
+        try:
+            reply = stream_chat({
+                "model": args.model,
+                "messages": messages,
+                "chat_template_kwargs": {"enable_thinking": args.think},
+            }, stop_on_interrupt=True)
+        except CliError as e:
+            print(f"llm: {e}", file=sys.stderr)
+            messages.pop()
+            continue
+        if reply["content"]:
+            messages.append({"role": "assistant", "content": reply["content"]})
+        else:
+            messages.pop()  # stopped before any answer, so the turn never happened
+        if args.verbose and reply["timings"]:
+            print(stats_line(reply["timings"]), file=sys.stderr)
 
 
 def cmd_logs(extra: list[str]) -> int:
@@ -285,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("unload", help="unload one model, or every resident one")
     p.add_argument("model", nargs="?")
     p.set_defaults(func=cmd_unload)
-    p = sub.add_parser("chat", help="one request, answer printed")
+    p = sub.add_parser("chat", help="one request, or a session when no prompt is given on a terminal")
     p.add_argument("--think", action="store_true", help="let the model think first")
     p.add_argument("--system-file", help="send this file as the system message")
     p.add_argument("--verbose", action="store_true",

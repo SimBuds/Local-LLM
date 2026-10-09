@@ -1266,6 +1266,10 @@ repos, and one ended in a colon with no template after it.)
   load-and-request each at about 1.1 GB held (7.1 GB used, no out-of-memory).
   The values live in the tracked `build-gemma` and `build-qwen`, whose comments
   carry the fit lines. (2026-09-16)
+  Accepted exception: `lite` runs all 34 layers on the GPU with about 1.7 GB
+  spare at 65536 context, short of the 2 GB margin (the fitter would keep 29 of
+  34 on the GPU). Casey chose to keep it all-GPU for its speed on 2026-10-09. Do
+  not pin layers to the CPU to restore the margin without asking. (2026-10-09)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and
@@ -1325,9 +1329,9 @@ repos, and one ended in a colon with no template after it.)
   reads MTP support from the GGUF header rather than the filename (gemma4-26b
   contains 4 literal "mtp" byte sequences and has no MTP), and derives the pinned
   split by loading the model once at `--fit-target 2048`. A builder declares only
-  `MODEL_NAME`, `BASE_MODEL` and `LOAD`: `PARAMS` is the shared baseline in
-  `build-common.sh` and a builder that declares its own is opting out of every
-  head-to-head comparison. The lineup is discovered from the `build-*` files, so
+  `MODEL_NAME`, `BASE_MODEL` and `LOAD`: the shared sampler baseline is in
+  `server.ini` `[*]` (moved from `build-common.sh` on 2026-10-09), and a builder
+  that declares its own `PARAMS` is opting out of every head-to-head comparison. The lineup is discovered from the `build-*` files, so
   no list is edited by hand. (2026-09-15)
 - **A mutation harness runs against a scratch copy, never the tracked file.**
   `eval/test_add_model.py` takes its script from `ADD_MODEL_SRC` for this reason.

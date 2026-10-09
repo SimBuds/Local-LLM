@@ -5,8 +5,9 @@
 #   MODEL_NAME   router model name (the preset section, and what clients request)
 #   BASE_MODEL   GGUF filename under $GGUF_DIR
 #   LOAD         array of "<llama-server key> = <value>" per-model load params
-#   PARAMS       optional. The shared sampler baseline below is used when a
-#                builder does not define one, which is the normal case.
+#   PARAMS       optional, and normally absent. The shared sampler baseline is
+#                in server.ini's [*] section. A builder that defines PARAMS gets
+#                them in its own section, which overrides [*].
 #
 # Writes models/<name>/{system.txt,prompt.txt,preset.ini}. The Makefile joins
 # every preset.ini with server.ini into models/models.ini for `make serve`.
@@ -40,33 +41,11 @@ if ! compgen -G "$AI_ROOT/memory/*.md" >/dev/null \
   exit 1
 fi
 
-# The shared sampler baseline, deliberately the SAME for every model. Only
-# run-json.py sends sampler options; every other suite inherits whatever the
-# preset sets, so a value that differs between builders makes the leaderboard
-# measure model x sampler instead of model. That mistake invalidated the
-# 2026-06-14 coding, learning, and tutor tables, which compared `gemma` at
-# temperature 0.75 / presence_penalty 0.2 against `qwen` at 0.2 / 0.0.
-#
-# It lives here rather than once per builder so the values cannot drift: before
-# 2026-09-15 this array was copy-pasted identically into all three build-*
-# scripts and staying in sync was manual discipline.
-#
-# A model that genuinely needs its own decoding for daily use defines PARAMS in
-# its own builder, which wins over this default. That is a separate preset, not
-# a tweak to the shared baseline: keep it out of head-to-head benchmark runs.
-#
-# Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-if [ -z "${PARAMS+x}" ]; then
-  PARAMS=(
-    'ctx-size = 65536'         # raised from 32768 on 2026-09-16; matches run-json.py's --num-ctx default
-    'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
-    'top-p = 0.95'
-    'top-k = 40'
-    'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
-    'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
-    'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
-  )
-fi
+# The shared sampler baseline lives in server.ini's [*] section, with its reasons.
+# Before 2026-10-09 it was a default PARAMS array here, copied into every
+# model's section of models.ini. A builder that defines PARAMS opts out: its
+# values go in its own section and override [*].
+[ -n "${PARAMS+x}" ] || PARAMS=()
 
 OUT_DIR="$AI_ROOT/models/$MODEL_NAME"
 SYSTEM_FILE="$OUT_DIR/system.txt"

@@ -454,6 +454,25 @@ def after_failure(model: str, exc: BaseException, streak: int,
         time.sleep(CRASH_POLL_S)
 
 
+# --- Ctrl-C -------------------------------------------------------------------
+# Every runner imports this module, so one hook covers all of them. Ctrl-C used to
+# print a traceback from wherever the runner was waiting, usually deep inside a
+# socket read. Python still exits by SIGINT (130 in a shell) after the hook runs,
+# and the atexit hook in new_run_dir() still removes the run's empty folders.
+_default_excepthook = sys.excepthook
+
+
+def _quiet_interrupt(exc_type, exc, tb) -> None:
+    if issubclass(exc_type, KeyboardInterrupt):
+        print("\ninterrupted (Ctrl-C). Finished results stay in the run folder, "
+              "and no summary was written.", file=sys.stderr)
+        return
+    _default_excepthook(exc_type, exc, tb)
+
+
+sys.excepthook = _quiet_interrupt
+
+
 def tok_per_s(meta: dict) -> float:
     n = meta.get("eval_count", 0)
     return n / (meta.get("eval_duration", 1) / 1e9) if n else 0.0

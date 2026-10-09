@@ -202,10 +202,12 @@ thinking mode for content runs unless explicitly testing it.
 
 `run-json.py --context-pressure` scales document length to probe true
 long-context degradation: `normal` (default) is the standard ~6-7k-token
-prompts, `medium` lands ~15-19k, and `high` ~21-27k. `high` was sized to sit as
-close to the 32k context served until 2026-09-16 as fits. At the 64k served now
-it uses under half the window, so it no longer probes the limit. On 2026-09-14 `high` measured 21250 to 27301 prompt tokens on
-`lite` with no context error. A prompt that does overflow gets an HTTP 400 from
+prompts, `medium` lands ~15-19k, and `high` ~39-52k. `high` was resized on
+2026-10-09 from a 6.0 to a 12.0 multiplier: at 6.0 it measured 21016 to 27067
+prompt tokens, under half the 64k context served since 2026-09-16, and at 12.0 it
+measured 39196 to 51307 on `lite` with no context error and a 100% score. `high`
+results from before 2026-10-09 used half-length documents and are not comparable
+with later ones. A prompt that does overflow gets an HTTP 400 from
 llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
 moves the buried needle to measure position bias. Both are manual sweeps, not
 part of the default comparison. `--judge-rubric strict` on the learn/tutor
@@ -577,7 +579,7 @@ active parameters per token does.
 
 ### GPU faults (NVIDIA Xid 31)
 
-`llama-server` has crashed 18 times since 2026-07-28 with `CUDA error: an illegal
+`llama-server` has crashed 19 times since 2026-07-28 with `CUDA error: an illegal
 memory access`, logged by the kernel as `NVRM: Xid 31` (a GPU MMU fault). Every
 fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 
@@ -601,10 +603,18 @@ fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 | 2026-09-17 05:03 | router, build 11022 | `gemma` (MoE) | all | 22 | no | 34 s |
 | 2026-09-17 18:31 | scratch router, build 11022, `q8_0` KV | `gemma` | all | 22 | no | unknown (1) |
 | 2026-09-22 07:36 | service, build 11022 | `qwen` | all | 35 | no | 2478 s |
+| 2026-09-26 14:10 | service, build 11188 | `qwen` | all | 35 | no | about 1900 s (2) |
 
 (1) This one ran on a scratch router whose log went to a file, not the journal.
 The model comes from the KV cache note above, and the journal's nearest service
 log line (which named `lite`) is not this process.
+
+(2) Found on 2026-10-09 while re-checking the record. It happened the day after
+11188 went live and had not been written down. Same signature as 2026-09-22:
+`illegal memory access` in `ggml_backend_cuda_synchronize` during a decode, MMU
+fault at `GPC4 GPCCLIENT_T1_9`, address `0x7f82_0b5de000`. Measured from the
+start of the load (13:39:09), because the router log has no load-finished line
+for that instance.
 
 What the table settles:
 
@@ -613,7 +623,7 @@ What the table settles:
   that the fault follows the GPU reading expert weights from system RAM, is
   broken.
 - **No one model, runtime, or build.** Dense 9B, dense 12B, and two MoE models,
-  under Ollama's bundled llama.cpp and builds 10968 and 11022, across drivers
+  under Ollama's bundled llama.cpp and builds 10968, 11022 and 11188, across drivers
   610.43, 610.57 and 615.71, kernels 7.1.5 to 7.2.6, and CUDA 13.3 and 13.4.
 - **The vision projector is not required.** Every Ollama crash had one loaded
   and none of the router crashes did.
@@ -624,7 +634,7 @@ What the table settles:
 - **Something other than llama.cpp hits the same fault.** A game (`Sand.exe`)
   logged Xid 31 on 2026-08-24, and games have logged Xid 32 (2026-08-10) and
   Xid 109 context-switch timeouts (four times on 2026-08-31).
-- **17 of the 18 fault addresses are in the host program-memory range**
+- **18 of the 19 fault addresses are in the host program-memory range**
   (`0x7f..`), including crashes with the model fully on the GPU. The game's
   fault and one router fault were at GPU-range addresses.
 - **Not measured:** crash rate per model. The journal records crashes, not hours
@@ -668,6 +678,18 @@ stop on a crashed model instead of recording it (see *Runner Matrix*), so a
 recurrence cannot silently corrupt a benchmark run. The next step, if it comes
 back, is an overnight soak on llama.cpp's own workload, then turning HMM off
 (`uvm_disable_hmm=1`) and repeating.
+
+**Closed, 2026-10-09.** Checked across every boot the journal still holds
+(2026-09-20 onward, each boot read separately, because `journalctl -k` reads only
+the current boot unless one is named): two faults, 2026-09-22 and 2026-09-26, both
+in the table. None since, over 13 days and 41 model loads, though use in that
+window was light (loads on five days). Build 11537, live from 2026-10-09,
+includes upstream fixes for MMQ out-of-bounds reads (`fc9ce6b9d`) and an MMQ
+memory fault when experts outnumber the batch (`dd266785c`), which touch the
+kernels the MoE models use. Neither is shown to be this fault. Casey closed the
+investigation on the quiet window. **Reopen trigger: any new Xid 31.** Capture the
+`nvidia-smi` and `journalctl` lines above before restarting anything, and add the
+row to the table.
 
 ## Models Tested
 
@@ -1478,6 +1500,13 @@ profile it has never heard of the operator, so it declines for the wrong reason.
 `prompts/system.md` was rewritten to replace two abstract bullets with a trigger
 list plus a worked example (`OLLAMA_MAX_QUEUE` / `ollama serve --help`). Measured
 against the then-current persona task, the rule went **0/10 → 10/10**.
+
+On 2026-10-09 the example became `--cache-reuse` / `llama-server --help`, since
+Ollama is gone from the box. The `unverified` task asks about a git config key,
+so the new example stays disjoint from it. Persona runs before and after that date
+used different stacks. A check on the rebuilt stack (3 attempts per task, scratch
+router) gave the same totals as the published run: `qwen` 21/21, `lite` and
+`gemma` 12/21, with `unverified` 3/3, 0/3 and 0/3.
 
 That number was wrong, and the way it was wrong is worth remembering. The persona
 task happened to ask about the same Ollama queue variable the new example used, so

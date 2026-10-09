@@ -18,6 +18,8 @@ from __future__ import annotations
 import atexit
 import importlib.util
 import io
+import signal
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -145,6 +147,47 @@ class AbortedRunLeavesNoEmptyFolders(FailurePathCase):
         self.run_exit_hooks()
         self.assertTrue((kept / "a-attempt-1.md").is_file())
         self.assertFalse((run_dir / "persona" / "lite").exists())
+
+
+class CtrlCEndsQuietly(unittest.TestCase):
+    """Ctrl-C used to dump a traceback from wherever the runner was waiting.
+    Every runner imports _gateway, which installs the hook, so a real
+    interpreter is started: the hook only runs at interpreter exit."""
+
+    def run_python(self, body: str) -> subprocess.CompletedProcess:
+        code = f"import sys; sys.path.insert(0, {str(EVAL)!r}); import _gateway\n{body}"
+        return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                              timeout=60)
+
+    def test_ctrl_c_exits_by_sigint_with_one_line(self):
+        r = self.run_python("raise KeyboardInterrupt")
+        # Python re-raises SIGINT on itself after an unhandled KeyboardInterrupt,
+        # which a shell reports as 130 and subprocess as -SIGINT.
+        self.assertEqual(r.returncode, -signal.SIGINT)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("interrupted", r.stderr)
+
+    def test_other_exceptions_keep_their_traceback(self):
+        r = self.run_python("raise ValueError('boom')")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Traceback", r.stderr)
+        self.assertIn("ValueError: boom", r.stderr)
+
+    def test_run_profile_stops_with_130_naming_the_step(self):
+        profile = load_runner("run-profile.py")
+        err = io.StringIO()
+        with mock.patch.object(profile.subprocess, "run", side_effect=KeyboardInterrupt), \
+                mock.patch.object(sys, "argv", ["run-profile.py", "smoke", "--models", "lite",
+                                                "--out-root", tempfile.mkdtemp()]), \
+                mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(sys, "stderr", err):
+            try:
+                rc = profile.main()
+            except KeyboardInterrupt:
+                self.fail("KeyboardInterrupt escaped run-profile's main(), which prints a traceback")
+        self.assertEqual(rc, 130)
+        self.assertIn("interrupted", err.getvalue())
+        self.assertIn("run-speed.py", err.getvalue())
 
 
 class SingleFailureIsRecorded(FailurePathCase):

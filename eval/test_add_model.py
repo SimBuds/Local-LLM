@@ -626,6 +626,19 @@ class HuggingFaceLookupTests(AddModelTestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertRegex(r.stderr.lower(), r"gated|access|terms")
 
+    def test_401_names_a_misspelling_as_a_possible_cause(self):
+        # HuggingFace's API answers a repo that does not exist with 401, the same
+        # as a gated one (seen 2026-10-09 with Org/Repo-GGUF), so the message must
+        # not claim the repo is gated.
+        for code in ("401", "403"):
+            with self.subTest(code=code):
+                r = self.lookup("Org/Misspelt-GGUF", body="", code=code)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("not found", r.stderr)
+                self.assertIn("spelling", r.stderr)
+                self.assertIn("huggingface.co/Org/Misspelt-GGUF", r.stderr)
+                self.assertIn("terms", r.stderr)
+
     def test_repo_with_no_gguf_exits_with_the_reason(self):
         r = self.lookup("DavidAU/Empty", body=HF_NO_GGUF)
         self.assertNotEqual(r.returncode, 0)

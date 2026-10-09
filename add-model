@@ -110,7 +110,11 @@ hf_pick() {
   code="$(curl -sS -o "$json" -w '%{http_code}' --max-time 30 "$HF_API/$slug/tree/main" || echo 000)"
   case "$code" in
     200) ;;
-    401|403) rm -f "$json"; die "$slug is gated or private (HTTP $code). Accept the model's terms on its HuggingFace page first, then retry." ;;
+    # HuggingFace answers a repo that does not exist with 401, the same as a
+    # gated one (seen 2026-10-09), so the message names both causes.
+    401|403) rm -f "$json"; die "$slug was not found, or is gated or private (HTTP $code).
+  Check the spelling at https://huggingface.co/$slug. If it is right, accept the
+  model's terms on that page while signed in, then retry." ;;
     404) rm -f "$json"; die "no such model repo: $slug (HTTP 404)" ;;
     000) rm -f "$json"; die "could not reach $HF_API (no network, or the request timed out)" ;;
     *)   rm -f "$json"; die "HuggingFace returned HTTP $code for $slug" ;;
@@ -438,8 +442,8 @@ write_builder() {
     echo "# Added $(date -u +%Y-%m-%d) by ./add-model."
     echo "BASE_MODEL=\"$GGUF_NAME\""
     echo
-    echo '# Per-model load params. PARAMS is the shared sampler baseline and lives in'
-    echo '# build-common.sh, identical for every model, so it is deliberately absent here.'
+    echo '# Per-model load params. The shared sampler baseline lives in server.ini [*],'
+    echo '# identical for every model, so PARAMS is deliberately absent here.'
     if [ "$HAS_MTP" = yes ]; then
       echo '# This GGUF carries MTP heads (nextn_predict_layers), so speculative decoding'
       echo '# is on. Keep spec-type when re-deriving n-cpu-moe: the MTP layer needs VRAM'
@@ -548,7 +552,7 @@ echo
 echo "Wrote build-$MODEL_NAME"
 echo "  base:      $GGUF_NAME"
 echo "  MTP:       $HAS_MTP$([ "$HAS_MTP" = yes ] && echo ' (spec-type = draft-mtp)')"
-echo "  samplers:  shared baseline from build-common.sh"
+echo "  samplers:  shared baseline from server.ini [*]"
 if [ -n "$FIT_N" ]; then
   echo "  split:     $FIT_KEY = $FIT_N  ($FIT_LINE)"
   echo

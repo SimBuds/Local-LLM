@@ -66,9 +66,10 @@ failure rather than as a missing file.
 
 ### One shared sampler baseline
 
-`PARAMS` lives once in `build-common.sh` and applies to every model. A builder
-may declare its own, which wins, and that is how a model needing different
-decoding gets a separate preset.
+The sampler baseline lives once, in the `[*]` section of `server.ini`, and applies
+to every model. A builder may declare its own `PARAMS`, which go in that model's
+section and win, and that is how a model needing different decoding gets a
+separate preset.
 
 The reason is a measurement failure, not tidiness. The 2026-06-14 coding,
 learning, and tutor tables compared `gemma` at temperature 0.75 and presence
@@ -76,7 +77,9 @@ penalty 0.2 against `qwen` at 0.2 and 0.0, so they measured model times sampler
 instead of model, and had to be thrown out. Only `run-json.py` sends sampler
 options, and every other suite inherits whatever the preset sets. Until 2026-09-15
 the array was copy-pasted into all three builders and staying in sync was manual
-discipline.
+discipline. From then until 2026-10-09 it was one default array in
+`build-common.sh`, written into every model's section. Moving it to `[*]` left
+each model's effective settings byte-identical.
 
 ### The lineup is discovered, not listed
 
@@ -174,13 +177,13 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 22, `qwen` 35 at 65536 context) | 2026-09-14, values updated 2026-09-16 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. |
+| 2 GB fit margin (`gemma` 22, `qwen` 35 at 65536 context) | 2026-09-14, values updated 2026-09-16 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09): all-GPU with about 1.7 GB spare, kept for speed. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |
 | The router endpoint, model names, and context size | 2026-09-15 | Jobhunt and SEO-LLM depend on them. |
 | `cache-type-k/v = q4_0` | 2026-09-17 | Measured against `q8_0` with the tool suite: no accuracy difference in totals, and `q8_0` costs 0.3 to 0.5 GiB of VRAM per model. |
-| `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays all-GPU at the 2 GB margin only at 512. |
+| `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays at 512, where it is all-GPU with about 1.7 GB spare (see the margin row). |
 
 The pinned splits are not guesses. `./add-model` re-derives one by loading the
 model once with `--fit-target 2048` and reading llama.cpp's own fit line, and on
@@ -213,5 +216,3 @@ in `IMPLEMENT.md`, which is untracked and does not survive a clone.
   rather than a cut, because deleting them would cost `qwen` a rule it does obey.
 - The learn rubric is saturated, so the `qwen` and `gemma` ordering on that suite
   should not be trusted until it is rerun with a stricter rubric.
-- Runners do not abort mid-run when the server dies, and score a model load
-  failure as a model failure.

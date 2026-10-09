@@ -31,9 +31,10 @@ truncated. Temperature is forced to 0 for deterministic extraction.
 
 --context-pressure scales document length to test true long-context degradation:
 normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high
-lengthen them (~15-19k and ~21-27k tok). high was sized to sit near the 32k
-context served until 2026-09-16, and uses under half of the 64k served since.
-It is a manual stress sweep, kept out of the
+lengthen them (~15-19k and ~39-52k tok). high was resized on 2026-10-09 to
+fill most of the 64k context (it was ~21-27k, sized for the old 32k), so high
+results before that date are not comparable. It is a manual stress sweep, kept
+out of the
 default full comparison. --position moves the buried needle to the
 start/middle/end so position bias can be measured.
 
@@ -66,10 +67,10 @@ CLOSE_PTS = 0.05  # score gaps within 5 points are a tie, not a quality win
 
 # Context-pressure presets: multiplier on each task's normal document length.
 # normal reproduces the default docs exactly; medium/high lengthen them to stress
-# long-context recall. Observed prompt size ≈ 1.24 tok/word + ~3k system-prompt
-# tokens, so medium lands ~15-19k and high ~21-27k — high is as close to the 32k
-# served context as fits before the server rejects the prompt.
-PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 6.0}
+# long-context recall. Measured on lite, 2026-10-09: high at 12.0 gives 39196 to
+# 51307 prompt tokens across the tasks, about 14k under the 65536 served context.
+# It was 6.0 (21016 to 27067), sized for the 32k context served until 2026-09-16.
+PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 12.0}
 # Needle placement for single-needle tasks under --position (multi-needle tasks
 # keep their own spread). "default" leaves each task's baked-in position alone.
 POSITIONS = {"early": 0.15, "middle": 0.5, "late": 0.85}
@@ -249,9 +250,9 @@ def main() -> int:
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",
                     help="document length preset: normal (default, current docs), "
-                         "medium (~15-19k prompt tok), high (~21-27k, sized for the "
-                         "former 32k context, under half of 64k). high is a manual "
-                         "stress sweep, not part of the default run.")
+                         "medium (~15-19k prompt tok), high (~39-52k, most of the "
+                         "64k context). high is a manual stress sweep, not part of "
+                         "the default run.")
     ap.add_argument("--position", choices=["default", *POSITIONS, "all"], default="default",
                     help="single-needle placement: default (task's own), early/middle/late, "
                          "or all (run each as a separate variant). Multi-needle tasks ignore it.")

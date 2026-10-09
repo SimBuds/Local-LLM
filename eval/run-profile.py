@@ -109,7 +109,14 @@ def main() -> int:
     for i, (step, cmd) in enumerate(zip(PROFILES[args.profile], cmds), 1):
         label = " ".join(step)
         print(f"\n##### [{i}/{len(cmds)}] {label}\n", flush=True)
-        rc = subprocess.run(cmd).returncode
+        try:
+            rc = subprocess.run(cmd).returncode
+        except KeyboardInterrupt:
+            # The terminal sends Ctrl-C to the runner too, which stops on its own.
+            # 130 is what a shell reports for a command stopped by SIGINT.
+            print(f"\ninterrupted (Ctrl-C) during step {i}/{len(cmds)}: {label}. "
+                  f"Later steps were not run.", file=sys.stderr)
+            return 130
         if rc != 0:
             failures.append(f"{label} (exit {rc})")
             print(f"##### step failed (exit {rc}) — continuing\n", file=sys.stderr)

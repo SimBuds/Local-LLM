@@ -123,9 +123,22 @@ different files, and switching to one starts a new baseline for that model.
 checked against their blob digests: `granite4.2-8b-q4_K_M.gguf`, `ornith.gguf`,
 `qwen3.8-27b-mtp-q4_K_M.gguf` and `gemma4-12b-it-qat.gguf`. Only
 `gemma4-12b-it-qat` has its `.mmproj.gguf` vision projector on disk (checked
-2026-09-17). Ollama's params, licenses, and ornith's built-in
-system prompt are in `ollama-extras/`. None is in the lineup or has been loaded in
-llama.cpp.
+2026-09-17). Ollama's params, licenses, and ornith's built-in system prompt were
+not kept: no `ollama-extras/` folder exists (checked 2026-10-09). None is in the
+lineup. On 2026-10-09 each was loaded once on build 11537 (standalone, 8192
+context, `--fit-target 2048`, text only) and answered a one-line request
+correctly:
+
+| File | Architecture | Layers on GPU | Speed (short reply) |
+|---|---|---:|---:|
+| `granite4.2-8b-q4_K_M.gguf` | granite | 41/41 | 97 tok/s |
+| `ornith.gguf` | qwen35 | 33/33 | 94 tok/s |
+| `gemma4-12b-it-qat.gguf` | gemma4 | 42/49 | 30 tok/s |
+| `qwen3.8-27b-mtp-q4_K_M.gguf` | qwen35 (dense 27B) | 24/66 | 4 tok/s |
+
+These are load checks, not benchmarks. The speeds come from one short reply at a
+small context, and the 27B ran without its MTP heads (no `--spec-type`). Adding
+one to the lineup goes through `./add-model`.
 
 ## Structure
 
@@ -139,14 +152,14 @@ llama.cpp.
 ├── models/<name>/        # generated system.txt, prompt.txt, preset.ini (gitignored)
 ├── models/models.ini     # generated router preset: server.ini + every preset.ini
 ├── server.ini            # llama-server settings shared by every model
-├── build-common.sh       # shared assembly, and the shared PARAMS baseline
+├── build-common.sh       # shared assembly of the prompt stack and presets
 ├── build-{gemma,qwen,lite}   # one per model, discovered by make
 ├── add-model             # scaffolds a new build-* from a staged or remote GGUF
 ├── apply-universal.py    # ports the portable half of AGENTS.md between repos
 ├── Makefile              # see the target table below
 ├── AGENTS.md             # working rules for AI agents in this repo
 ├── PLAN.md               # the blueprint and the reasoning behind decisions
-├── Instructions.md       # end-to-end recap of the repo's flow
+├── Instructions.md       # plain-language handbook: setup, daily use, new models
 └── TESTING.md            # testing source of truth and benchmark history
 ```
 
@@ -191,7 +204,7 @@ It asks for the router name, refusing one that is malformed, already taken, or
 part of the `gemma` / `qwen` / `lite` contract other repos depend on. It reads
 the GGUF header to decide whether the model carries MTP heads, and emits
 `spec-type = draft-mtp` only when it does. It writes no `PARAMS`, because the
-sampler baseline is shared (see *Build And Tune*).
+sampler baseline is shared in `server.ini` (see *Build And Tune*).
 
 Then it derives the GPU/CPU split, by loading the model once with
 `--fit-target 2048` on a spare port and reading what llama.cpp's fitter chose.
@@ -233,31 +246,31 @@ new builder needs no edit anywhere else, and deleting one drops its section from
 `models/models.ini` on the next `make build`. Section order follows the sorted
 filenames. The router sorts `/models` itself, so file order carries no meaning.
 
-**The sampler baseline is shared, and lives in `build-common.sh`.** Only
+**The sampler baseline is shared, and lives in `server.ini`'s `[*]` section.** Only
 `run-json.py` sends sampler options. Every other suite inherits whatever the
 preset sets, so a value that differs between builders makes the leaderboard
 measure model × sampler instead of model. That mistake invalidated the
 2026-06-14 coding, learning, and tutor tables, which compared `gemma` at
 `temperature 0.75` / `presence_penalty 0.2` against `qwen` at `0.2` / `0.0`.
 
-```bash
-# build-common.sh, used by every builder that does not define its own PARAMS
-PARAMS=( # Context: 262144 - 131072 - 65536 - 32768 - 16384 - 8192 - 4096
-  'ctx-size = 65536'         # raised from 32768 on 2026-09-16
-  'temp = 0.2'               # Low temperature forces strict compliance with code syntax and tool tags
-  'top-p = 0.95'
-  'top-k = 40'
-  'min-p = 0.05'             # Safeguards structural format without restricting code vocabulary
-  'presence-penalty = 0.0'   # MUST BE ZERO. Coding requires reusing exact variable names.
-  'repeat-penalty = 1.05'    # Prevents infinite code loops without breaking boilerplate code
-)
+```ini
+; server.ini, [*] section (each value carries its reason in the file)
+ctx-size = 65536
+temp = 0.2
+top-p = 0.95
+top-k = 40
+min-p = 0.05
+presence-penalty = 0.0
+repeat-penalty = 1.05
 ```
 
-Until 2026-09-15 this array was copy-pasted into all three builders and keeping
-them in sync was manual discipline. A builder that defines its own `PARAMS`
-still overrides the default, which is how a model that needs different decoding
-for daily use gets a separate preset rather than skewing the shared baseline.
-Keep such a preset out of head-to-head benchmark runs.
+Until 2026-09-15 these were copy-pasted into all three builders and keeping them
+in sync was manual discipline. Until 2026-10-09 they were a default `PARAMS`
+array in `build-common.sh`, copied into every model's section. A builder that
+defines its own `PARAMS` still overrides them in its own section, which is how a
+model that needs different decoding for daily use gets a separate preset rather
+than skewing the shared baseline. Keep such a preset out of head-to-head
+benchmark runs.
 
 **`LOAD` is per model and pinned.** It holds how the model is split between GPU
 and CPU, which has to differ by model size. `server.ini` sets `fit = off`, so the
@@ -399,11 +412,14 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-The installed build is 11188 (commit `e85e15cf6`), swapped in on 2026-09-25
-through `scripts/llama-update` after `scripts/verify-build` passed it. The
+The installed build is 11537 (commit `8e2d31e0e`), swapped in on 2026-10-09
+through `scripts/llama-update` after `scripts/verify-build` passed it: at every
+pinned split it needed within 8 MiB of the VRAM 11188 did (`qwen` 62 MiB less),
+the smoke profile ran clean, and no GPU fault was logged. Build 11188 (commit
+`e85e15cf6`) ran from 2026-09-25 and is now the rollback target. The
 current leaderboard was measured on build 11022 (commit `f172be756`), and
 results from 2026-09-14 to 2026-09-16 came from build 10968 (commit
-`41abbfd59`). A new `standard` pass would move the leaderboard to 11188. llama.cpp is built from
+`41abbfd59`). A new `standard` pass would move the leaderboard to 11537. llama.cpp is built from
 source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
 used to pin `g++-15` as the CUDA host compiler. That is corrected as of
 2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
@@ -564,10 +580,14 @@ cp ~/Apps/Local-LLM/systemd/llama-server.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now llama-server
 systemctl --user is-active llama-server
-curl -s localhost:8080/health
+ok=no; for i in $(seq 1 30); do curl -sf localhost:8080/health && { ok=yes; echo; break; }; sleep 1; done
+[ "$ok" = yes ] || echo "The server did not answer within 30 seconds. Check: journalctl --user -u llama-server -n 50"
 ```
 
-`is-active` must print `active` and the last command `{"status":"ok"}`. If not,
+`is-active` must print `active` and the health check `{"status":"ok"}`. The
+check polls for up to 30 seconds, because `is-active` reports `active` as soon as
+the process starts, before the router listens: a request sent straight after a
+start or restart got `Connection refused` on 2026-10-09. If it never answers,
 read `journalctl --user -u llama-server -n 50`. Both files are copies, so after
 changing the tracked unit, copy it again and run `systemctl --user daemon-reload`.
 
@@ -598,7 +618,7 @@ llm status
 | `ollama ps`, `ollama list` | `llm status` | Router up or down, each model's state (`loaded`, `sleeping`, `unloaded`), VRAM held by llama-server |
 | (preload) | `llm load MODEL` | Loads and waits until ready. Reports `already loaded` or `sleeping` instead of reloading. |
 | `ollama stop MODEL` | `llm unload [MODEL]` | Unloads one model, or every resident one, and waits until the router confirms it stopped |
-| `ollama run MODEL "..."` | `llm chat MODEL "..."` | One request, answer streamed as it is written. Thinking off unless `--think`, which shows the reasoning on stderr, so `> file` keeps only the answer. `--verbose` adds prompt and answer token counts and speed on stderr. `--system-file PATH` sends a system message (for example `models/qwen/prompt.txt`). Reads the prompt from stdin when none is given. An unknown model lists the available names. |
+| `ollama run MODEL "..."`, `ollama run MODEL` | `llm chat MODEL "..."`, `llm chat MODEL` | One request, answer streamed as it is written. Thinking off unless `--think`, which shows the reasoning on stderr, so `> file` keeps only the answer. `--verbose` adds prompt and answer token counts and speed on stderr. `--system-file PATH` sends a system message (for example `models/qwen/prompt.txt`). Reads the prompt from stdin when it is piped in. With no prompt on a terminal it starts a session that keeps the conversation: Ctrl-C stops the current answer and keeps what arrived, and Ctrl-C or Ctrl-D at the `>>>` prompt ends it. An unknown model lists the available names. |
 | `journalctl -u ollama -f` | `llm logs` | Router log, last 50 lines then follow. Hides the one-argument-per-line dump each model load writes. `llm logs --all` shows every line. Extra arguments go straight to journalctl, e.g. `llm logs -n 20 --no-pager`. |
 
 `LLM_URL` points it at another router, such as a test one on port 8081. Unlike
@@ -890,8 +910,8 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
 Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
-model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11188
-(`e85e15cf6`) with CUDA 13.4, from 2026-09-25. The published numbers are from
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11537
+(`8e2d31e0e`) with CUDA 13.4, from 2026-10-09. The published numbers are from
 build 11022.
 
 ## Docs
@@ -900,9 +920,10 @@ build 11022.
   architecture decisions and the reasoning behind them, the locked decisions with
   their dates, and the open questions. Read it before changing anything
   structural.
-- [`Instructions.md`](Instructions.md): a recap of the whole flow, from a fresh
-  clone to a model answering another app to a benchmark landing in this README.
-  It summarizes the other docs and adds nothing of its own.
+- [`Instructions.md`](Instructions.md): the handbook, written for developers and
+  everyday users alike. It runs from first setup through daily use to downloading
+  a new model from HuggingFace and running it, with a troubleshooting table. It
+  links here for the detail rather than repeating it.
 - [`TESTING.md`](TESTING.md): testing source of truth, runner docs, safety notes,
   benchmark history, and detailed results.
 - [`AGENTS.md`](AGENTS.md): the working rules an AI coding agent follows in this

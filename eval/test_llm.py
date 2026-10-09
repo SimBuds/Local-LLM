@@ -425,6 +425,85 @@ class CtrlCTests(CliCase):
         self.assertEqual(code, 130)
 
 
+class Tty(io.StringIO):
+    def isatty(self):
+        return True
+
+
+class ChatSessionTests(CliCase):
+    """`llm chat MODEL` with no prompt on a terminal: one conversation, many turns."""
+
+    def session(self, lines, *argv):
+        """Run a session typing `lines` in order. An exception class or instance in
+        `lines` is raised by input() at that point, as Ctrl-C or Ctrl-D would."""
+        def fake_input(_prompt=""):
+            item = lines.pop(0)
+            if isinstance(item, BaseException) or (isinstance(item, type) and issubclass(item, BaseException)):
+                raise item
+            return item
+        with mock.patch.object(llm.sys, "stdin", Tty()), \
+                mock.patch("builtins.input", side_effect=fake_input):
+            try:
+                return self.run_cli("chat", *argv)
+            except KeyboardInterrupt:
+                self.fail("KeyboardInterrupt escaped the session")
+
+    def test_second_turn_carries_the_first_exchange(self):
+        self.serve(listing(lite="loaded"), sse({"content": "Hello."}), sse({"content": "Again."}))
+        code, out, _ = self.session(["Hi", "And again?", EOFError], "lite")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.body(2)["messages"], [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello."},
+            {"role": "user", "content": "And again?"}])
+        self.assertIn("Hello.", out)
+        self.assertIn("Again.", out)
+
+    def test_ctrl_c_mid_answer_keeps_the_partial_text_and_carries_on(self):
+        body = sse({"content": "Partial"}).getvalue().replace(b"data: [DONE]\n\n", b"")
+        body = body[:body.index(b'data: {"choices": [{"finish_reason": "stop"')]
+        self.serve(listing(lite="loaded"), InterruptedStream(body), sse({"content": "OK"}))
+        code, out, _ = self.session(["long one", "next", EOFError], "lite")
+        self.assertEqual(code, 0)
+        self.assertIn("Partial", out)
+        self.assertEqual(self.body(2)["messages"][1], {"role": "assistant", "content": "Partial"})
+
+    def test_ctrl_c_at_the_prompt_ends_the_session(self):
+        self.serve(listing(lite="loaded"))
+        code, _, _ = self.session([KeyboardInterrupt], "lite")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_ctrl_d_at_the_prompt_ends_the_session(self):
+        self.serve(listing(lite="loaded"))
+        code, _, _ = self.session([EOFError], "lite")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_blank_lines_send_nothing(self):
+        self.serve(listing(lite="loaded"))
+        code, _, _ = self.session(["", "   ", EOFError], "lite")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_router_error_keeps_the_session_and_drops_the_failed_turn(self):
+        err = urllib.error.HTTPError("u", 500, "boom", {}, io.BytesIO(b'{"error":{"message":"busy"}}'))
+        self.serve(listing(lite="loaded"), err, sse({"content": "OK"}))
+        code, _, stderr = self.session(["first", "second", EOFError], "lite")
+        self.assertEqual(code, 0)
+        self.assertIn("busy", stderr)
+        self.assertEqual(self.body(2)["messages"], [{"role": "user", "content": "second"}])
+
+    def test_system_file_leads_every_turn(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("Be brief.")
+        self.addCleanup(os.unlink, f.name)
+        self.serve(listing(lite="loaded"), sse({"content": "A"}), sse({"content": "B"}))
+        self.session(["one", "two", EOFError], "--system-file", f.name, "lite")
+        for i in (1, 2):
+            self.assertEqual(self.body(i)["messages"][0], {"role": "system", "content": "Be brief."})
+
+
 class FakeJournal:
     """Stands in for the journalctl child: yields lines, optionally Ctrl-C part way."""
 
