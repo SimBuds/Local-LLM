@@ -15,6 +15,7 @@ unparseable and exited 0 with a summary that read as the model's own scores.
 
 from __future__ import annotations
 
+import atexit
 import importlib.util
 import io
 import sys
@@ -110,6 +111,42 @@ class CrashedModelStopsTheRun(FailurePathCase):
         self.assertEqual(self.summaries(), [])
 
 
+class AbortedRunLeavesNoEmptyFolders(FailurePathCase):
+    """An abort used to leave `<UTC>/<suite>/<model>/` behind with no files in it.
+    The cleanup runs at interpreter exit, so these run the hooks new_run_dir()
+    registered, as exit would."""
+
+    def setUp(self):
+        super().setUp()
+        self.hooks: list = []
+        self._patch(atexit, "register", lambda fn, *a: self.hooks.append((fn, a)))
+
+    def run_exit_hooks(self):
+        for fn, a in self.hooks:
+            fn(*a)
+
+    def test_crashed_run_leaves_nothing_under_out_root(self):
+        for filename in GENERATE_RUNNERS + ["run-tools.py"]:
+            with self.subTest(runner=filename):
+                runner = self.drive(filename, http_500(), CRASHED)
+                with self.assertRaises(gw.ModelCrashed):
+                    runner.main()
+                self.run_exit_hooks()
+                self.assertEqual(list(Path(self.out.name).iterdir()), [],
+                                 f"{filename} left an empty run folder")
+                self.assertTrue(Path(self.out.name).is_dir(), "out_root itself was removed")
+
+    def test_folders_holding_files_are_kept(self):
+        run_dir = gw.new_run_dir(Path(self.out.name))
+        kept = run_dir / "persona" / "qwen"
+        kept.mkdir(parents=True)
+        (kept / "a-attempt-1.md").write_text("answer")
+        (run_dir / "persona" / "lite").mkdir()
+        self.run_exit_hooks()
+        self.assertTrue((kept / "a-attempt-1.md").is_file())
+        self.assertFalse((run_dir / "persona" / "lite").exists())
+
+
 class SingleFailureIsRecorded(FailurePathCase):
     def test_timeouts_are_counted_and_the_run_finishes(self):
         for filename in GENERATE_RUNNERS + ["run-tools.py"]:
@@ -130,6 +167,17 @@ class JudgeFailurePaths(FailurePathCase):
         self._patch(gw.time, "sleep", lambda _s: None)
         self._patch(_judge, "generate", mock.Mock(side_effect=http_500()))
         self._patch(gw, "_router_status", lambda _m: dict(CRASHED))
+        with self.assertRaises(gw.ModelCrashed):
+            _judge.judge_scores(*self.ARGS)
+
+    def test_judge_crash_recorded_late_still_aborts(self):
+        # 2026-09-17 04:11: the 500s reached the client while the core dumped,
+        # and the router recorded the exit about 5 s later. The judge's streak is
+        # the dead-server threshold, so a window tied to the streak alone would
+        # read once, see `loaded`, and miss it.
+        statuses = iter([LOADED, LOADED, CRASHED])
+        self._patch(_judge, "generate", mock.Mock(side_effect=http_500()))
+        self._patch(gw, "_router_status", lambda _m: dict(next(statuses)))
         with self.assertRaises(gw.ModelCrashed):
             _judge.judge_scores(*self.ARGS)
 

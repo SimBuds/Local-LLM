@@ -212,6 +212,33 @@ FIT_TIMEOUT="${FIT_TIMEOUT:-300}"
 
 PROBE_PID=""
 
+# The live router, read so the probe never runs beside a model it holds.
+LLM_URL="${LLM_URL:-http://localhost:8080}"
+
+# Refuse to probe while the router has a model loaded or loading. The fitter
+# sizes the split from free VRAM, so a resident model would shrink it and the
+# pinned value would starve every later load. A sleeping or unloaded model frees
+# its VRAM (6226 down to 242 MiB, measured 2026-09-15), so the always-on service
+# alone is no reason to stop. Same rule as service_busy() in scripts/verify-build.
+refuse_if_router_busy() {
+  local body code busy
+  body="$(mktemp "${TMPDIR:-/tmp}/add-model-router-XXXXXX.json")"
+  code="$(curl -s -o "$body" -w '%{http_code}' --max-time 5 "$LLM_URL/models" || true)"
+  case "$code" in
+    000|"") rm -f "$body"; echo "No router answering at $LLM_URL, so none holds VRAM."; return ;;
+    200) ;;
+    *) rm -f "$body"; die "the router at $LLM_URL answered /models with HTTP $code, so whether it holds VRAM is unknown" ;;
+  esac
+  busy="$(jq -r '.data[] | select(.status.value == "loaded" or .status.value == "loading") | .id' "$body")" \
+    || { rm -f "$body"; die "the router at $LLM_URL returned a /models listing that is not JSON, so whether it holds VRAM is unknown"; }
+  rm -f "$body"
+  if [ -n "$busy" ]; then
+    die "the router at $LLM_URL holds $(echo $busy) in VRAM, which would shrink the probed split.
+  Free it first:  llm unload
+  (A sleeping model is fine, it has already released its VRAM.)"
+  fi
+}
+
 probe_cleanup() {
   if [ -n "$PROBE_PID" ] && kill -0 "$PROBE_PID" 2>/dev/null; then
     kill "$PROBE_PID" 2>/dev/null || true
@@ -244,11 +271,20 @@ probe_fit() {
   local log port elapsed=0
   log="$(mktemp "${TMPDIR:-/tmp}/add-model-fit-XXXXXX.log")"
 
+  # The compute buffer grows with the physical batch, so the probe must use the
+  # one the router serves at. Until 2026-10-09 it passed none, and every split it
+  # derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
+  # server.ini has only the [*] section, so the first match is the shared value.
+  local ini="$AI_ROOT/server.ini" ub
+  [ -f "$ini" ] || die "no server.ini at $ini. The probe needs its ubatch-size to size the split the router will serve."
+  ub="$(sed -n 's/^[[:space:]]*ubatch-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
+
   local -a cmd=(llama-server -m "$gguf" -c 65536 -np 1 -fa on -ctk q4_0 -ctv q4_0
                 --no-mmproj --fit-target 2048 --port "$(free_port)" -lv 4)
+  [ -n "$ub" ] && cmd+=(-ub "$ub")
   [ "$mtp" = yes ] && cmd+=(--spec-type draft-mtp)
 
-  echo "Probing the GPU/CPU split (--fit-target 2048$([ "$mtp" = yes ] && echo ', MTP on'))."
+  echo "Probing the GPU/CPU split (--fit-target 2048$([ -n "$ub" ] && echo ", -ub $ub")$([ "$mtp" = yes ] && echo ', MTP on'))."
   echo "  Loading the model once. Close anything holding VRAM: the split is sized"
   echo "  from what is free right now, and that is why it gets pinned."
 
@@ -474,6 +510,17 @@ elif [ $# -gt 0 ]; then
 else
   pick_gguf
 fi
+
+# The menu hides claimed files, and a file named outright, or reached through
+# ORG/REPO, gets the same rule. A second builder on one GGUF serves the same
+# weights under two router names with two pinned splits.
+if claimed | grep -qxF "$GGUF_NAME"; then
+  owner="$(grep -lF "BASE_MODEL=\"$GGUF_NAME\"" "$AI_ROOT"/build-* | xargs -n1 basename | paste -sd' ')"
+  die "$GGUF_NAME already has a builder: $owner. Edit that file instead of adding a second one."
+fi
+
+# Before the name prompt, so a busy router is reported before anything is typed.
+[ "$PROBE" = yes ] && refuse_if_router_busy
 
 read_name
 

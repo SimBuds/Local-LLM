@@ -12,6 +12,7 @@ they format counts/rates a runner already computed, they don't decide pass/fail.
 from __future__ import annotations
 
 import argparse
+import atexit
 import http.client
 import json
 import math
@@ -406,7 +407,8 @@ class ModelCrashed(SystemExit):
     """The model instance a run was calling died, so its results so far are void."""
 
 
-def after_failure(model: str, exc: BaseException, streak: int) -> None:
+def after_failure(model: str, exc: BaseException, streak: int,
+                  settle: bool | None = None) -> None:
     """Classify a failed call. Raises when the run must stop, returns otherwise.
 
     Runners call this from their per-attempt exception handler with the model's
@@ -415,10 +417,21 @@ def after_failure(model: str, exc: BaseException, streak: int) -> None:
     connection makes it poll the router: `failed: true` raises ModelCrashed, a
     router that does not answer falls back to check_alive(), and a model that
     stays loaded (or is reloading) returns, so the attempt counts as the model's.
+
+    `settle` decides whether to wait out CRASH_SETTLE_S or read the router once.
+    By default only a streak's first failure waits: a task that 500s on every
+    attempt used to pay the window per attempt, and the first poll has already
+    seen the model stay loaded. A crash not yet recorded at a later single read
+    is counted as the model's answer, which Casey accepted on 2026-10-09. The
+    judge passes settle=True, because its streak is the dead-server threshold
+    rather than a count, and the 2026-09-17 crash it must catch was recorded
+    about 5 s after the error.
     """
     if isinstance(exc, TimeoutError):
         return
-    deadline = time.monotonic() + CRASH_SETTLE_S
+    if settle is None:
+        settle = streak <= 1
+    deadline = time.monotonic() + (CRASH_SETTLE_S if settle else 0.0)
     while True:
         try:
             status = _router_status(model)
@@ -434,7 +447,7 @@ def after_failure(model: str, exc: BaseException, streak: int) -> None:
                 f"ERROR: aborting — model {model!r} crashed in the router "
                 f"(exit code {status.get('exit_code')}).\n"
                 f"  Results so far would count that crash as the model's answers, "
-                f"so no results or summary were written (the run folder stays empty).\n"
+                f"so no results or summary were written (the empty run folder is removed on exit).\n"
                 f"  Check the GPU log:  journalctl -k -b | grep -i xid") from exc
         if time.monotonic() >= deadline:
             return
@@ -460,7 +473,26 @@ def new_run_dir(out_root: Path) -> Path:
         run_dir = out_root / f"{stamp}-{n}"
         n += 1
     run_dir.mkdir(parents=True)
+    atexit.register(_prune_empty_dirs, run_dir)
     return run_dir
+
+
+def _prune_empty_dirs(run_dir: Path) -> None:
+    """Remove the folders under `run_dir` (and `run_dir` itself) that hold no file.
+
+    Registered at exit by new_run_dir(). An aborted run (crash, dead server,
+    Ctrl-C) used to leave `<UTC>/<suite>/<model>/` with nothing in it, which
+    promote.py skipped but which cluttered eval/runs/. rmdir() refuses a folder
+    with anything in it, so written results are never touched, and the walk never
+    climbs above `run_dir` to the out_root the caller passed.
+    """
+    dirs = sorted((d for d in run_dir.rglob("*") if d.is_dir()),
+                  key=lambda d: len(d.parts), reverse=True)
+    for d in [*dirs, run_dir]:
+        try:
+            d.rmdir()
+        except OSError:
+            pass  # not empty, or already gone
 
 
 def rel_path(p: Path) -> str:

@@ -65,7 +65,8 @@ def judge_scores(judge_model: str, topic: str, response: str, timeout: int,
         # 53 calls were recorded as unparseable. The streak is passed at the
         # threshold because a judge call has no loop of its own to count in, so
         # a router that is down is confirmed and reported on the first failure.
-        after_failure(jname, e, DEAD_SERVER_STREAK)
+        # That streak would skip the crash-settle wait, so it is asked for.
+        after_failure(jname, e, DEAD_SERVER_STREAK, settle=True)
         return {d: 0 for d in rubric} | {"_parsed": False}
     m = JSON_RE.search(text)
     if not m:

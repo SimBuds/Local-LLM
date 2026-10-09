@@ -33,6 +33,10 @@ PRESETS := $(addprefix models/,$(addsuffix /preset.ini,$(MODELS)))
 # Attempts per persona task in `make check`. Low by default so the hook stays
 # usable as a gate; the real measurement is ./eval/run-profile.py.
 ATTEMPTS ?= 3
+# Where the persona runs write. Empty means the runner's default, eval/runs/,
+# which promote.py reads as the leaderboard. A run that only checks the code
+# works passes a scratch dir: make check OUT_ROOT=/tmp/scratch
+OUT_ROOT ?=
 PORT     ?= 8080
 # The llama-server user service (systemd/llama-server.service) reads its preset
 # from here. Override to deploy somewhere else, e.g. a scratch dir for testing.
@@ -82,10 +86,10 @@ serve: models/models.ini
 
 check: build
 	@echo "=== persona suite: does the rebuilt stack still hold? ==="
-	./eval/run-persona.py --models $(MODELS) --attempts $(ATTEMPTS)
+	./eval/run-persona.py --models $(MODELS) --attempts $(ATTEMPTS)$(if $(OUT_ROOT), --out-root $(OUT_ROOT))
 
 persona:
-	./eval/run-persona.py --models $(MODELS) --attempts $(ATTEMPTS)
+	./eval/run-persona.py --models $(MODELS) --attempts $(ATTEMPTS)$(if $(OUT_ROOT), --out-root $(OUT_ROOT))
 
 hook:
 	@printf '%s\n' \

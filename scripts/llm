@@ -303,6 +303,11 @@ def main(argv: list[str] | None = None) -> int:
     except CliError as e:
         print(f"llm: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # 130 is what a shell reports for a command stopped by SIGINT. The newline
+        # ends a partial answer's line so the prompt does not land after it.
+        print(file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

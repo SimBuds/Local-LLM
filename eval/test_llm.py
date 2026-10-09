@@ -387,6 +387,44 @@ Sep 15 15:05:28 Caseys-PC llama-server[1449]: [49823] 0.01.236.655 I srv  llama_
 KEPT = [l for l in JOURNAL.splitlines(keepends=True) if "load:   " not in l]
 
 
+class InterruptedStream(FakeResponse):
+    """Yields its lines, then raises what Ctrl-C raises mid-read."""
+
+    def __iter__(self):
+        yield from iter(self.readline, b"")
+        raise KeyboardInterrupt
+
+
+class CtrlCTests(CliCase):
+    """Ctrl-C ends any command with the shell's interrupt status and no traceback."""
+
+    def interrupted(self, *argv):
+        try:
+            return self.run_cli(*argv)
+        except KeyboardInterrupt:
+            self.fail("KeyboardInterrupt escaped main(), which prints a traceback")
+
+    def test_ctrl_c_while_waiting_for_the_answer_exits_130(self):
+        self.serve(listing(lite="loaded"), KeyboardInterrupt())
+        code, _, err = self.interrupted("chat", "lite", "hi")
+        self.assertEqual(code, 130)
+        self.assertEqual(err, "\n")
+
+    def test_ctrl_c_mid_answer_keeps_the_partial_text(self):
+        body = sse({"content": "Partial"}).getvalue().replace(b"data: [DONE]\n\n", b"")
+        body = body[:body.index(b'data: {"choices": [{"finish_reason": "stop"')]
+        self.serve(listing(lite="loaded"), InterruptedStream(body))
+        code, out, _ = self.interrupted("chat", "lite", "hi")
+        self.assertEqual(code, 130)
+        self.assertIn("Partial", out)
+
+    def test_ctrl_c_during_the_load_wait_exits_130(self):
+        self.serve(listing(lite="unloaded"), {"success": True}, listing(lite="loading"))
+        with mock.patch.object(llm.time, "sleep", side_effect=KeyboardInterrupt):
+            code, _, _ = self.interrupted("load", "lite")
+        self.assertEqual(code, 130)
+
+
 class FakeJournal:
     """Stands in for the journalctl child: yields lines, optionally Ctrl-C part way."""
 

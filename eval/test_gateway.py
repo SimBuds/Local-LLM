@@ -566,6 +566,36 @@ class AfterFailureTests(GatewayCase):
         gw.after_failure("gemma", http_500(), streak=1)  # no exception
         self.assertLessEqual(self.clock, gw.CRASH_SETTLE_S + gw.CRASH_POLL_S)
 
+    def test_first_failure_of_a_streak_polls_the_whole_window(self):
+        steady = router_listing("gemma", "loaded")
+        polls = int(gw.CRASH_SETTLE_S / gw.CRASH_POLL_S) + 5
+        self.serve(*[steady] * polls)
+        gw.after_failure("gemma", http_500(), streak=1)
+        self.assertGreaterEqual(self.clock, gw.CRASH_SETTLE_S)
+
+    def test_later_failure_in_a_streak_reads_the_router_once(self):
+        # A task that 500s on every attempt cost CRASH_SETTLE_S per attempt. The
+        # streak's first failure already waited out the window with the model
+        # still loaded, so later ones take a single read.
+        self.serve(router_listing("gemma", "loaded"))
+        gw.after_failure("gemma", http_500(), streak=2)
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.clock, 0.0)
+
+    def test_crash_recorded_by_a_later_failure_still_aborts(self):
+        self.serve(router_listing("gemma", "unloaded", failed=True, exit_code=134))
+        with self.assertRaises(gw.ModelCrashed):
+            gw.after_failure("gemma", http_500(), streak=3)
+
+    def test_settle_keeps_the_whole_window_at_any_streak(self):
+        # The judge passes the dead-server threshold as its streak and has no
+        # loop to count in, so it asks for the window explicitly.
+        steady = router_listing("gemma", "loaded")
+        polls = int(gw.CRASH_SETTLE_S / gw.CRASH_POLL_S) + 5
+        self.serve(*[steady] * polls)
+        gw.after_failure("gemma", http_500(), streak=gw.DEAD_SERVER_STREAK, settle=True)
+        self.assertGreaterEqual(self.clock, gw.CRASH_SETTLE_S)
+
     def test_model_mid_reload_counts_as_its_own_failure(self):
         loading = router_listing("gemma", "loading")
         polls = int(gw.CRASH_SETTLE_S / gw.CRASH_POLL_S) + 5

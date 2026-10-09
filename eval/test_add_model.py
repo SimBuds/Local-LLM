@@ -19,6 +19,7 @@ Run with:
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import subprocess
@@ -84,7 +85,8 @@ class AddModelTestCase(unittest.TestCase):
 
         # A working tree that looks like the real one: the script under test,
         # the shared assembly it references, and one builder that claims a GGUF.
-        for name, src in (("add-model", ADD_MODEL), ("build-common.sh", REPO / "build-common.sh")):
+        for name, src in (("add-model", ADD_MODEL), ("build-common.sh", REPO / "build-common.sh"),
+                          ("server.ini", REPO / "server.ini")):
             if src.exists():
                 dst = self.repo / name
                 dst.write_bytes(src.read_bytes())
@@ -114,7 +116,10 @@ class AddModelTestCase(unittest.TestCase):
         args = list(args or [])
         if not probe and "--no-probe" not in args:
             args = ["--no-probe", *args]
-        env = dict(os.environ, GGUF_DIR=str(self.gguf_dir), **(env_extra or {}))
+        # A dead port, so the probe's busy-router check never reads the live
+        # service on 8080. Tests that want a busy router put a fake curl on PATH.
+        env = dict(os.environ, GGUF_DIR=str(self.gguf_dir), LLM_URL="http://127.0.0.1:9")
+        env.update(env_extra or {})
         return subprocess.run(
             [str(self.repo / "add-model"), *args],
             input=stdin, capture_output=True, text=True, env=env, cwd=self.repo, timeout=60,
@@ -169,6 +174,23 @@ class MenuTests(AddModelTestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn(missing, r.stderr)
         self.assertIn("does not exist", r.stderr)
+
+
+class ClaimedGgufTests(AddModelTestCase):
+    """A second builder on one GGUF serves the same weights under two names and
+    splits them between two pinned values. The menu already hides claimed files,
+    and a file named outright gets the same refusal."""
+
+    def test_claimed_filename_is_refused_naming_its_builder(self):
+        r = self.run_add_model(stdin="dup\n", args=["claimed.gguf"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("build-taken", r.stderr)
+        self.assertFalse((self.repo / "build-dup").exists())
+
+    def test_unclaimed_filename_still_scaffolds(self):
+        r = self.run_add_model(stdin="fresh\n", args=["free-plain.gguf"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.repo / "build-fresh").exists())
 
 
 class NameValidationTests(AddModelTestCase):
@@ -380,6 +402,31 @@ class ProbeFitTests(AddModelTestCase):
         self.probe_run("spill", "nomtp\n", "free-plain.gguf")
         self.assertNotIn("--spec-type", self.spawned_args())
 
+    def test_probe_sends_the_physical_batch_server_ini_sets(self):
+        # The compute buffer grows with the physical batch, so a split probed at
+        # the default 512 under-counts VRAM for a router that serves at 1024.
+        (self.repo / "server.ini").write_text("[*]\nfit = off\nubatch-size = 1024\n")
+        r = self.probe_run("spill", "batched\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertIn("-ub", args)
+        self.assertEqual(args[args.index("-ub") + 1], "1024")
+
+    def test_probe_sends_no_batch_when_server_ini_sets_none(self):
+        # The router then serves at its own default, and so does the probe.
+        (self.repo / "server.ini").write_text("[*]\nfit = off\n")
+        r = self.probe_run("spill", "unbatched\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("-ub", self.spawned_args())
+
+    def test_missing_server_ini_fails_before_probing(self):
+        (self.repo / "server.ini").unlink()
+        r = self.probe_run("spill", "noini\n", "free-plain.gguf")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("server.ini", r.stderr)
+        self.assertFalse(self.args_file.exists(), "probed without knowing the batch")
+        self.assertFalse((self.repo / "build-noini").exists())
+
     def test_probe_leaves_no_server_running_on_success(self):
         self.probe_run("spill", "tidy\n", "free-plain.gguf")
         left = subprocess.run(["pgrep", "-f", "FAKE_MODE|llama-server -m"],
@@ -443,6 +490,72 @@ printf '%s
 printf '%s' "${FAKE_CODE:-200}"
 exit 0
 """
+
+
+class BusyRouterTests(AddModelTestCase):
+    """The probe sizes the split from free VRAM, so a model the live router holds
+    would shrink it. Same rule as scripts/verify-build's service_busy()."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "llama-server"
+        fake.write_text(FAKE_SERVER)
+        fake.chmod(0o755)
+        self.args_file = Path(self.tmp.name) / "argv.txt"
+
+    def listing(self, *states: str) -> str:
+        return json.dumps({"data": [{"id": f"m{i}", "status": {"value": s}}
+                                    for i, s in enumerate(states)]})
+
+    def busy_run(self, body: str, name: str, code: str = "200", args: list[str] | None = None):
+        curl = self.bin / "curl"
+        curl.write_text(FAKE_CURL)
+        curl.chmod(0o755)
+        self.urls_file = Path(self.tmp.name) / "urls.txt"
+        self.urls_file.touch()
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": "spill",
+               "FAKE_ARGS": str(self.args_file), "FIT_TIMEOUT": "10",
+               "FAKE_BODY": body, "FAKE_CODE": code, "FAKE_URLS": str(self.urls_file),
+               "LLM_URL": "http://router.test:8080"}
+        return self.run_add_model(stdin=f"{name}\n", args=args or ["free-plain.gguf"],
+                                  probe=True, env_extra=env)
+
+    def test_loaded_model_refuses_the_probe_naming_it(self):
+        r = self.busy_run(self.listing("unloaded", "loaded"), "busy")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("m1", r.stderr)
+        self.assertIn("llm unload", r.stderr)
+        self.assertFalse(self.args_file.exists(), "probed beside a loaded model")
+        self.assertFalse((self.repo / "build-busy").exists())
+
+    def test_loading_model_refuses_the_probe(self):
+        r = self.busy_run(self.listing("loading"), "loady")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("m0", r.stderr)
+        self.assertFalse(self.args_file.exists())
+
+    def test_sleeping_and_unloaded_models_do_not_block(self):
+        r = self.busy_run(self.listing("sleeping", "unloaded"), "idle")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("http://router.test:8080/models", self.urls_file.read_text())
+        self.assertTrue(self.args_file.exists())
+
+    def test_router_that_is_down_does_not_block(self):
+        r = self.busy_run("", "down", code="000")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.args_file.exists())
+
+    def test_unreadable_listing_refuses_rather_than_guessing(self):
+        r = self.busy_run("<html>not json</html>", "garbled")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(self.args_file.exists())
+
+    def test_no_probe_does_not_ask_the_router(self):
+        r = self.busy_run(self.listing("loaded"), "skipped", args=["--no-probe", "free-plain.gguf"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.urls_file.read_text(), "")
 
 
 class HuggingFaceLookupTests(AddModelTestCase):
@@ -638,6 +751,29 @@ class FitProvenanceTests(AddModelTestCase):
         line = self.fit_comment("dense", "provd")
         self.assertIn("12 layers", line)
         self.assertIn("2150 MiB free", line)
+
+
+class StagedRepoPickTests(HuggingFaceLookupTests):
+    """ORG/REPO carries straight on into the scaffold when the pick is staged."""
+
+    def stage(self, claimed_by: str | None) -> None:
+        write_gguf(self.gguf_dir / "Model-IQ2_M.gguf")
+        if claimed_by:
+            (self.repo / f"build-{claimed_by}").write_text(
+                f'MODEL_NAME="{claimed_by}"\nBASE_MODEL="Model-IQ2_M.gguf"\n')
+
+    def test_staged_pick_claimed_by_a_builder_is_refused(self):
+        self.stage(claimed_by="owner")
+        r = self.lookup("Org/Some-GGUF", stdin="1\ndup\n")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("build-owner", r.stderr)
+        self.assertFalse((self.repo / "build-dup").exists())
+
+    def test_staged_unclaimed_pick_carries_on(self):
+        self.stage(claimed_by=None)
+        r = self.lookup("Org/Some-GGUF", stdin="1\nfresh\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.repo / "build-fresh").exists())
 
 
 class ChecksumHandoffTests(HuggingFaceLookupTests):

@@ -184,6 +184,9 @@ to interrupt. Re-run `add-model` once the
 file is staged and it carries on into the scaffold. A gated repo, a missing one,
 and one with no GGUF each stop with the reason rather than a menu.
 
+A GGUF that a builder already names in `BASE_MODEL` is refused with that
+builder's name, whether it was given as a filename or reached through a repo.
+
 It asks for the router name, refusing one that is malformed, already taken, or
 part of the `gemma` / `qwen` / `lite` contract other repos depend on. It reads
 the GGUF header to decide whether the model carries MTP heads, and emits
@@ -194,7 +197,11 @@ Then it derives the GPU/CPU split, by loading the model once with
 `--fit-target 2048` on a spare port and reading what llama.cpp's fitter chose.
 That number goes into `LOAD` as `n-cpu-moe`, with the fit line and the date
 recorded beside it. **Close anything holding VRAM first.** The split is sized
-from what is free at that moment, which is exactly why it is then pinned. A model
+from what is free at that moment, which is exactly why it is then pinned. It
+refuses to probe while the router at `LLM_URL` (default `http://localhost:8080`)
+lists a model as loaded or loading, and names the model. Free it with
+`llm unload`. A sleeping model has already released its VRAM and does not block
+the probe. The probe also passes `server.ini`'s `ubatch-size` as `-ub`. A model
 that fits entirely gets no `n-cpu-moe` and says so. `--no-probe` skips the probe
 and leaves the split for you to fill in.
 
@@ -322,7 +329,9 @@ The `echo` must print a numeric pid. A line ending
 `n-cpu-moe = 34`. Drop `--spec-type draft-mtp` for `gemma`, which has no MTP
 layer. `-ub 1024` matches `server.ini`, because the compute buffer grows with the
 physical batch. Use `-ub 512` for `lite`, or for any model whose `LOAD` pins 512.
-`./add-model` does not pass `-ub` yet, so a split it derives is sized for 512. A model that fits entirely prints no overflow and needs no `n-cpu-moe`.
+`./add-model` reads `ubatch-size` from `server.ini` and passes it as `-ub`, so a
+new builder's split is sized for the batch the router serves at. A model that
+fits entirely prints no overflow and needs no `n-cpu-moe`.
 The count moves with the VRAM free at that moment, which is why it is pinned
 rather than re-fitted per run, so close apps that hold VRAM before deriving one.
 
@@ -370,6 +379,11 @@ Every target:
 
 `make deploy` writes outside the repo and the service needs restarting
 afterwards, so both are yours to run (see *Serving other apps*).
+
+`make check` and `make persona` write their run to `eval/runs/`, which the
+leaderboard is built from. When a run only checks that the code works, send it
+to a scratch directory with `OUT_ROOT`, which becomes the runner's `--out-root`:
+`make check OUT_ROOT=/tmp/scratch`.
 
 Editing a single `build-*` script rebuilds only that model. Editing anything
 under `prompts/`, or `memory/` rebuilds every model, because they
