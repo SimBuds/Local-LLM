@@ -833,24 +833,25 @@ Winner is `tie` where the runner flagged the margin as within its close-result t
 
 ### Current picks
 
-From the llama.cpp `standard` pass of 2026-09-17, on build 11022.
+From the llama.cpp `standard` pass of 2026-10-20, on build 11768. The tool rows use
+the `run-tools.py` rerun of the same day.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local general use | `lite` | 114 tok/s, the only model fully on GPU. 2.1× `qwen` (55), 2.5× `gemma` (45). |
-| Agentic tools (Cline) | `lite` for speed, `qwen` for reliability | Two numbers pull apart. Prompt ingest: `lite` 3021 tok/s vs `gemma` 1545 and `qwen` 1020. Tool calling: `qwen` 39/39, `lite` 36/39, `gemma` 27/39. Pick `lite` for volume, `qwen` when a wrong call costs more than the wait. |
-| Tool calling / agent loops | `qwen` | 39/39 vs `lite` 36/39 and `gemma` 27/39. `gemma` skipped the tool on 9 attempts and got an argument wrong on 3. |
-| Coding | `gemma` or `qwen` (tie) | `qwen` 26/27, `gemma` 25/27, `lite` 24/27. The top two are inside the tie threshold, and their order flipped from 2026-09-15. |
-| Content / SEO / copy | `gemma` | 9/9 clean vs `lite` 8/9 and `qwen` 7/9. `qwen` still runs over word limits. |
-| Socratic tutoring (no spoilers) | `gemma` | Fewest leaks: 2/15 vs `lite` 4/15 and `qwen` 7/15. Teach 8.1/10 vs 6.9 and 5.1. |
+| Fast local general use | `lite` | 133.5 tok/s, the only model fully on GPU. 2.2× `qwen` (60.2), 2.8× `gemma` (47.4). |
+| Agentic tools (Cline) | `lite` | Leads on both counts. Prompt ingest: `lite` 3407 tok/s vs `gemma` 1599 and `qwen` 1077. Tool calling: `lite` 39/39, `qwen` 37/39, `gemma` 27/39. |
+| Tool calling / agent loops | `lite` | 39/39 vs `qwen` 37/39 and `gemma` 27/39. `qwen`'s two misses are one behavior (it will not trust a result from an `example.org` domain). `gemma` skipped the tool on 9 attempts and got an argument wrong on 3. |
+| Coding | `gemma` | 27/27 vs `lite` 26/27 and `qwen` 25/27. The runner flags a tie, so the pick rests on consistency: `gemma` has scored 25 to 27 in every pass since 2026-09-15. |
+| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. `lite` matched it (9/9) for the first time. `qwen` 7/9, still over word limits. |
+| Socratic tutoring (no spoilers) | `gemma` | No leaks: 0/15 vs 5/15 for `qwen` and `lite`. Teach 9.5/10 vs 6.2 and 6.0. |
 | Learning explanations | `qwen` or `gemma` (tie) | Both 9.8/10 with 12/12 on the code gate. |
-| Structured JSON / app smoke tests | `lite` | All three scored 100%. `lite` averages 2.5s against `gemma` 5.3s and `qwen` 7.3s. |
-| Prompt-stack fidelity | `qwen` | 100% clean vs 57% for both others. If the stack's rules have to be obeyed, this is the model that obeys them. |
+| Structured JSON / app smoke tests | `lite` | All three scored 100%. `lite` averages 2.3s against `gemma` 5.2s and `qwen` 7.1s. |
+| Prompt-stack fidelity | `qwen` | 90% clean vs 57% (`gemma`) and 52% (`lite`). If the stack's rules have to be obeyed, this is the model that obeys them. |
 
-No single model wins. `gemma` takes content and tutoring, `lite` takes everything
-speed-shaped, `qwen` takes the prompt stack and tool calling, and coding and
-learning are ties between `gemma` and `qwen`. The tool suite is the one place
-`gemma` is clearly weakest, which matters if you point an agent at it.
+No single model wins. `lite` takes everything speed-shaped and both tool rows,
+`gemma` takes content, tutoring, and coding, and `qwen` takes the prompt stack and
+ties `gemma` on learning. The tool suite is the one place `gemma` is clearly
+weakest, which matters if you point an agent at it.
 
 Two caveats before leaning hard on the small gaps. Samples are small (n = 9 to 27
 per model), so a few points either way is noise, while failures and the leak-rate
