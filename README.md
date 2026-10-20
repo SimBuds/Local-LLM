@@ -928,13 +928,19 @@ the same build.
   benchmark history, and detailed results.
 - [`AGENTS.md`](AGENTS.md): the working rules an AI coding agent follows in this
   repo. Everything above its `## Project-specific rules` section is portable
-  across repos, and the section at the end is this project's own.
-  `apply-universal.py` copies that portable half into another repo's `AGENTS.md`
-  while keeping that repo's project rules byte for byte:
+  across repos, and the section at the end is this project's own. This repo's
+  copy is the master. `apply-universal.py` copies its portable half into every
+  other `AGENTS.md` in or one folder below `~/Apps` and `~/Documents/Projects`,
+  keeping each repo's project rules byte for byte:
 
   ```bash
-  # Runs in: local terminal. Names every file it touches, writes nothing else.
-  ./apply-universal.py AGENTS.md ../other-repo/AGENTS.md
+  # Runs in: local terminal, from this repo.
+  ./apply-universal.py --check AGENTS.md   # "in sync" or a diff per file, writes nothing, exit 1 on drift
+  ./apply-universal.py AGENTS.md           # writes every file that differs
+  ./apply-universal.py AGENTS.md ../other-repo/AGENTS.md   # only the files named
   ```
 
-  It is safe to re-run, and it never commits.
+  Read the `--check` diff before writing: a universal-rule edit made in another
+  repo shows up as drift and would be overwritten, so copy it here first. A file
+  without the `## Project-specific rules` header or its intro comment stops the
+  run with nothing written. It is safe to re-run, and it never commits.

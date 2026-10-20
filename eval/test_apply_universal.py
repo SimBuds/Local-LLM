@@ -54,6 +54,18 @@ class Repos:
         return path
 
 
+def isolate(case: unittest.TestCase, root: Path) -> None:
+    """Point the script's default search at the scratch tree for this test.
+
+    Without this, any code path that falls back to discovery searches the real
+    ~/Apps and ~/Documents/Projects. On 2026-10-20 a mutant that ignored named
+    targets did exactly that, and the write-mode tests overwrote the universal
+    half of every real AGENTS.md with this file's fixture."""
+    patch = mock.patch.object(au, "ROOTS", (root,))
+    patch.start()
+    case.addCleanup(patch.stop)
+
+
 def run(*argv: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -65,10 +77,14 @@ class SyncTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repos = Repos(self._tmp.name)
+        isolate(self, self.repos.root)
         self.t = str(self.repos.template)
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def test_default_search_is_the_scratch_tree(self):
+        self.assertEqual(au.ROOTS, (self.repos.root,))
 
     def test_in_sync_target_reports_in_sync_and_is_not_rewritten(self):
         target = self.repos.write("A/AGENTS.md",
@@ -133,16 +149,14 @@ class SyncTests(unittest.TestCase):
     def test_named_targets_skip_discovery(self):
         elsewhere = self.repos.write("Other/AGENTS.md", agents("Old.", "- O.\n"))
         named = self.repos.write("A/AGENTS.md", agents("Old.", "- A.\n"))
-        with mock.patch.object(au, "ROOTS", (self.repos.root,)):
-            code, out, _ = run(self.t, str(named))
+        code, out, _ = run(self.t, str(named))
         self.assertEqual(code, 0, out)
         self.assertIn("Universal rule, version two.", named.read_text())
         self.assertEqual(elsewhere.read_text(), agents("Old.", "- O.\n"))
 
     def test_no_targets_discovers_under_roots(self):
         drifted = self.repos.write("A/AGENTS.md", agents("Old.", "- A.\n"))
-        with mock.patch.object(au, "ROOTS", (self.repos.root,)):
-            code, out, _ = run("--check", self.t)
+        code, out, _ = run("--check", self.t)
         self.assertEqual(code, 1, out)
         self.assertIn(str(drifted), out)
         self.assertNotIn(f"{self.t}: ", out)
@@ -152,6 +166,7 @@ class DiscoverTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repos = Repos(self._tmp.name)
+        isolate(self, self.repos.root)
 
     def tearDown(self):
         self._tmp.cleanup()

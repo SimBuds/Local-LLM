@@ -1340,6 +1340,21 @@ repos, and one ended in a colon with no template after it.)
   the probe server) landed in `b9638cb` and had to be repaired in the next commit.
   Casey edits and commits between turns, so any in-place rewrite of a tracked file
   is a race the agent will eventually lose. (2026-09-15)
+  The scratch copy protects the script, not what the script writes. The tests
+  must also isolate every real path the script reaches by default, in `setUp`
+  rather than per test, and a mutation run sets `HOME` to the scratchpad as a
+  second guard. On 2026-10-20 a mutant of `apply-universal.py` that ignored its
+  named targets fell back to the real `~/Apps` and `~/Documents/Projects`, and the
+  write-mode tests overwrote the universal half of all 10 real AGENTS.md files
+  with the test fixture. They were restored from git and a VS Code backup.
+  (2026-10-20)
+- **This repo's `AGENTS.md` is the master universal body.** A universal-rule
+  change is made here first and reaches the other repos through
+  `./apply-universal.py AGENTS.md`, which finds every `AGENTS.md` in or one folder
+  below `~/Apps` and `~/Documents/Projects` and leaves each repo's project rules
+  byte for byte. Run `--check` first and read its diff: an edit made to the
+  universal body in another repo shows up there as drift and would be
+  overwritten, so port it here before writing. (2026-10-20)
 - **The `llama-server` user service is the live server. Verify beside it, never
   replace it.** It holds port 8080 and serves the deployed
   `~/.config/llama.cpp/models.ini`, so `make serve` on 8080 exits with a bind
