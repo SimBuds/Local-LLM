@@ -474,8 +474,11 @@ sys.excepthook = _quiet_interrupt
 
 
 def tok_per_s(meta: dict) -> float:
+    # A one-token reply has no measurable speed: llama-server reports
+    # predicted_ms near 0 for it, and the quotient reads as ~500,000 tok/s.
     n = meta.get("eval_count", 0)
-    return n / (meta.get("eval_duration", 1) / 1e9) if n else 0.0
+    d = meta.get("eval_duration", 0)
+    return n / (d / 1e9) if n >= 2 and d else 0.0
 
 
 def prompt_tok_per_s(meta: dict) -> float:

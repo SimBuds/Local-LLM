@@ -229,10 +229,11 @@ def _eval_unverified(text: str) -> dict:
 UNVERIFIED = PersonaTask(
     key="unverified",
     rule="prompts/system.md — mark exact CLI/env/path facts not in context as `Unverified:`",
-    # Deliberately NOT about Ollama. prompts/system.md carries a worked example
-    # using OLLAMA_MAX_QUEUE / `ollama serve --help`; asking about that same fact
-    # measures whether the model can copy the example, not whether it learned the
-    # rule. Verified 2026-07-27: with the Ollama phrasing both models scored 10/10,
+    # Deliberately NOT about llama-server. prompts/system.md carries a worked
+    # example using `--cache-reuse` / `llama-server --help`; asking about that same
+    # fact measures whether the model can copy the example, not whether it learned
+    # the rule. Verified 2026-07-27 against the then-current Ollama example
+    # (OLLAMA_MAX_QUEUE): with the Ollama phrasing both models scored 10/10,
     # but only 5/8 on unrelated exact-fact questions. Keep this task's subject
     # disjoint from whatever example the prompt stack uses.
     prompt=("What is the exact git config key that sets the default branch name for "

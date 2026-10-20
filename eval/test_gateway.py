@@ -198,6 +198,13 @@ class GenerateTests(GatewayCase):
         self.assertEqual(gw.tok_per_s(meta), 0.0)
         self.assertEqual(gw.prompt_tok_per_s(meta), 0.0)
 
+    def test_one_token_reply_has_no_speed(self):
+        # 2026-10-20: a qwen reply that stopped on its first token reported
+        # predicted_ms near 0 and about 500,000 tok/s, which swamped the average.
+        self.assertEqual(gw.tok_per_s({"eval_count": 1, "eval_duration": 0.002e6}), 0.0)
+        self.assertEqual(gw.tok_per_s({"eval_count": 5}), 0.0)
+        self.assertEqual(gw.tok_per_s({"eval_count": 5, "eval_duration": 0}), 0.0)
+
     def test_missing_built_prompt_raises_instead_of_sending_no_stack(self):
         self.serve(CHAT_RESPONSE)
         with self.assertRaises(FileNotFoundError):

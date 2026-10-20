@@ -251,7 +251,8 @@ class GeneratedBuilderTests(AddModelTestCase):
         self.assertTrue(os.access(self.repo / "build-checked", os.X_OK))
 
     def test_generated_builder_declares_no_params(self):
-        """PARAMS is the shared baseline in build-common.sh since Phase 21."""
+        """The shared sampler baseline is server.ini's [*] section (moved from
+        build-common.sh on 2026-10-09)."""
         self.run_add_model(stdin="checked\n", args=["free-plain.gguf"])
         self.assertNotIn("PARAMS=(", self.builder("checked"))
 

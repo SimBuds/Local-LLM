@@ -1165,9 +1165,22 @@ is the quick scan, kept short and memorable on purpose.
 
 ## Tone
 
-Keep responses tight. State results and decisions directly. Do not narrate
-internal deliberation. The phase report, the DoD checklist, and the handoff
-line are the contract. Everything else is optional.
+Write short, direct responses in plain words. (Tightened 2026-10-20: responses
+had grown wordy and hard to scan.)
+
+- **Answer first.** Open with the result, the decision, or the question. No
+  preamble, and no restating the request.
+- **Give the reason in a clause, not a paragraph.** Say why only when it
+  changes what Casey does next. Do not narrate how you got there.
+- **Plain words, short sentences.** Pick the common word over the formal one.
+  One idea per sentence.
+- **Cut filler.** Drop hedges on verified results, recaps of what Casey said,
+  and closing summaries that repeat the body.
+- **Lists for three or more items.** Use a table only when comparing across
+  columns.
+
+The phase report, the DoD checklist, and the handoff line are the contract.
+Keep their entries short too. Everything else is optional.
 
 ### No standing-workflow reminders
 
