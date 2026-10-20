@@ -159,7 +159,6 @@ one to the lineup goes through `./add-model`.
 ├── Makefile              # see the target table below
 ├── AGENTS.md             # working rules for AI agents in this repo
 ├── PLAN.md               # the blueprint and the reasoning behind decisions
-├── Instructions.md       # plain-language handbook: setup, daily use, new models
 └── TESTING.md            # testing source of truth and benchmark history
 ```
 
@@ -925,10 +924,6 @@ the same build.
   architecture decisions and the reasoning behind them, the locked decisions with
   their dates, and the open questions. Read it before changing anything
   structural.
-- [`Instructions.md`](Instructions.md): the handbook, written for developers and
-  everyday users alike. It runs from first setup through daily use to downloading
-  a new model from HuggingFace and running it, with a troubleshooting table. It
-  links here for the detail rather than repeating it.
 - [`TESTING.md`](TESTING.md): testing source of truth, runner docs, safety notes,
   benchmark history, and detailed results.
 - [`AGENTS.md`](AGENTS.md): the working rules an AI coding agent follows in this

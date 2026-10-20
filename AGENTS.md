@@ -2,7 +2,7 @@
 
 Standing rules for any AI coding agent working on Casey's projects. Everything
 above the final `## Project-specific rules` section is **project-agnostic and
-portable**. Drop this file into the repo and the universal body applies as-is. 
+portable**. Drop this file into the repo and the universal body applies as-is.
 Nothing project-specific belongs in the universal body: stack,
 build commands, domain rules, and paths live only in the
 `## Project-specific rules` section at the end, which each repo owns and fills
