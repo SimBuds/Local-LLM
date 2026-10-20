@@ -565,7 +565,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 11188 (`e85e15cf6`) installed 2026-09-25, not yet benchmarked. The current snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
+| llama.cpp | build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (the README leaderboard). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The *Current Benchmark Snapshot* above and the tuning sweep are still from build 11022 (`f172be756`, 2026-09-17), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses

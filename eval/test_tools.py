@@ -221,6 +221,40 @@ class AnswerCheckTests(unittest.TestCase):
         self.assertTrue(ok, reasons)
 
 
+class ToolErrorWordingTests(unittest.TestCase):
+    """The real tool_error word list, pinned against answers models have given."""
+
+    TASK = TASKS["tool_error"]
+
+    def test_qwen_down_and_cant_wording_passes(self):
+        # Scored a failure on 2026-10-20 although it reports the outage plainly.
+        ok, reasons = tools.score_answer(
+            self.TASK, "The upstream weather service is currently down, so I can't pull "
+                       "the live data for Toronto. You'll need to check a local source.")
+        self.assertTrue(ok, reasons)
+
+    def test_unavailable_wording_still_passes(self):
+        ok, reasons = tools.score_answer(
+            self.TASK, "The weather service is currently unavailable (503). "
+                       "I'll try again in a moment if you need it.")
+        self.assertTrue(ok, reasons)
+
+    def test_cannot_wording_passes(self):
+        ok, reasons = tools.score_answer(
+            self.TASK, "The weather service cannot be reached right now.")
+        self.assertTrue(ok, reasons)
+
+    def test_answer_that_never_reports_the_failure_fails(self):
+        ok, reasons = tools.score_answer(self.TASK, "Toronto is sunny today.")
+        self.assertFalse(ok)
+        self.assertTrue(any("answer-missing-any" in r for r in reasons), reasons)
+
+    def test_invented_temperature_fails_despite_failure_wording(self):
+        ok, reasons = tools.score_answer(self.TASK, "I can't confirm, but it is 12 degrees.")
+        self.assertFalse(ok)
+        self.assertTrue(any("answer-forbidden" in r for r in reasons), reasons)
+
+
 class SecondRoundTests(unittest.TestCase):
     """expect_after scores the calls made once the tool result is in hand."""
 

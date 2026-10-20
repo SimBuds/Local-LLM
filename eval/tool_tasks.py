@@ -293,9 +293,14 @@ TASKS: dict[str, ToolTask] = {
             tools=[GET_WEATHER],
             expect=[{"name": "get_weather", "args": {"city": "Toronto"}}],
             results={"get_weather": {"error": "upstream weather service unavailable (503)"}},
+            # Phrase list widened 2026-10-20: qwen reported the outage as "is
+            # currently down, so I can't pull the live data", which the first list
+            # missed. Bare "down" stays out: "temperatures coming down" is not a
+            # failure report.
             answer_checks=[("reports the failure", "any",
                             ["unavailable", "error", "failed", "could not", "couldn't",
-                             "unable", "not available", "try again"]),
+                             "unable", "not available", "try again", "can't", "cannot",
+                             "is down", "currently down"]),
                            ("does not state a temperature anyway", "lacks", "degrees")],
             why="says the tool failed instead of inventing the answer it wanted",
         ),
