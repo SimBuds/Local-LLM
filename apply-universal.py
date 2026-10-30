@@ -77,6 +77,21 @@ def discover(roots, template: Path) -> tuple[list[Path], list[Path]]:
     return found, missing
 
 
+def show_trailing_ws(line: str) -> tuple[str, bool]:
+    """(diff line with trailing spaces and tabs drawn as · and →, whether any were).
+
+    Only +/- lines are marked. A whitespace-only drift otherwise prints as two
+    lines that look identical, which is how the 2026-10-20 trailing space hid."""
+    if line[:1] not in "+-":
+        return line, False
+    body = line.rstrip("\n")
+    kept = body.rstrip(" \t")
+    if kept == body:
+        return line, False
+    tail = body[len(kept):].replace(" ", "·").replace("\t", "→")
+    return kept + tail + line[len(body):], True
+
+
 def write(path: Path, text: str) -> None:
     """Replace path through a temp file in the same folder, keeping its mode."""
     mode = path.stat().st_mode & 0o7777
@@ -140,9 +155,16 @@ def main(argv: list[str]) -> int:
         drifted += 1
         if check:
             print(f"{path}: differs from {template_path} ({kept} project lines)")
-            sys.stdout.writelines(difflib.unified_diff(
+            diff = list(difflib.unified_diff(
                 old.splitlines(keepends=True), out.splitlines(keepends=True),
                 fromfile=str(path), tofile=f"{path} (after write)"))
+            # The first two lines are the ---/+++ headers. A removed "---"
+            # separator also starts with "---", so skip by position, not prefix.
+            marked = [show_trailing_ws(line) if i >= 2 else (line, False)
+                      for i, line in enumerate(diff)]
+            sys.stdout.writelines(line for line, _ in marked)
+            if any(hit for _, hit in marked):
+                print("  (· is a trailing space, → is a trailing tab)")
         else:
             write(path, out)
             print(f"{path}: written, kept {kept} project lines, "

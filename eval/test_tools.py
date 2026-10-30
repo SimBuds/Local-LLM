@@ -244,6 +244,18 @@ class ToolErrorWordingTests(unittest.TestCase):
             self.TASK, "The weather service cannot be reached right now.")
         self.assertTrue(ok, reasons)
 
+    def test_curly_apostrophe_wording_passes(self):
+        # Models and editors emit U+2019 for "can't"; the word list is straight.
+        ok, reasons = tools.score_answer(
+            self.TASK, "Sorry, I can’t get Toronto’s forecast right now.")
+        self.assertTrue(ok, reasons)
+
+    def test_norm_treats_curly_and_straight_apostrophes_alike(self):
+        self.assertEqual(tools._norm("can’t"), tools._norm("can't"))
+        self.assertEqual(tools._norm("‘quoted’"), tools._norm("'quoted'"))
+        self.assertIs(tools._norm(True), True)
+        self.assertEqual(tools._norm(3), 3.0)
+
     def test_answer_that_never_reports_the_failure_fails(self):
         ok, reasons = tools.score_answer(self.TASK, "Toronto is sunny today.")
         self.assertFalse(ok)

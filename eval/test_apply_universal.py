@@ -103,9 +103,27 @@ class SyncTests(unittest.TestCase):
         target = self.repos.write("A/AGENTS.md", drifted)
         code, out, _ = run("--check", self.t, str(target))
         self.assertEqual(code, 1, out)
-        self.assertIn("-Universal rule, version two. \n", out)
+        self.assertIn("-Universal rule, version two.·\n", out)
         self.assertIn("+Universal rule, version two.\n", out)
+        self.assertIn("· is a trailing space", out)
         self.assertEqual(target.read_text(), drifted)
+
+    def test_check_marks_a_trailing_tab(self):
+        target = self.repos.write("A/AGENTS.md",
+                                  agents("Universal rule, version two.\t", "- A rule.\n"))
+        code, out, _ = run("--check", self.t, str(target))
+        self.assertEqual(code, 1, out)
+        self.assertIn("-Universal rule, version two.→\n", out)
+
+    def test_check_leaves_unchanged_and_whitespace_free_lines_alone(self):
+        self.repos.template.write_text(agents("Kept line. \nNew rule.", "- T.\n"))
+        target = self.repos.write("A/AGENTS.md", agents("Kept line. \nOld rule.", "- A.\n"))
+        code, out, _ = run("--check", self.t, str(target))
+        self.assertEqual(code, 1, out)
+        self.assertIn(" Kept line. \n", out)
+        self.assertIn("-Old rule.\n", out)
+        self.assertNotIn("·", out)
+        self.assertNotIn("trailing space", out)
 
     def test_write_replaces_universal_part_and_keeps_project_rules(self):
         rules = "- A rule.\n\n- Another, with a ``` fence.\n"

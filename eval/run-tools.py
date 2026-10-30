@@ -54,8 +54,10 @@ CLOSE_PTS = 0.05  # pass-rate gaps within 5 points are a tie, not a win
 
 def _norm(value):
     """Normalize a scalar for comparison: strings case- and space-insensitive,
-    numbers by value. bool stays bool so True never equals 1."""
+    numbers by value. bool stays bool so True never equals 1. Curly apostrophes
+    become straight ones, so "can’t" in a reply matches "can't" in a word list."""
     if isinstance(value, str):
+        value = value.replace("’", "'").replace("‘", "'")
         return " ".join(value.split()).casefold()
     if isinstance(value, bool):
         return value
