@@ -481,6 +481,15 @@ def tok_per_s(meta: dict) -> float:
     return n / (d / 1e9) if n >= 2 and d else 0.0
 
 
+def avg_tps(rows: list[dict]) -> float:
+    """Mean `tok_per_s` over the rows that have one. tok_per_s() gives 0.0 when a
+    reply has no measurable speed, and averaging those in pulls the mean down by
+    1/n and can flip the speed tie-break in a runner's ranking."""
+    speeds = [r.get("tok_per_s", 0) for r in rows]
+    speeds = [s for s in speeds if s > 0]
+    return sum(speeds) / len(speeds) if speeds else 0.0
+
+
 def prompt_tok_per_s(meta: dict) -> float:
     n = meta.get("prompt_eval_count", 0)
     d = meta.get("prompt_eval_duration", 0)

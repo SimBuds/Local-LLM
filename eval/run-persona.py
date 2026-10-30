@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, avg_tps, ci_str, close_call_note,
     generate, get_effective_think, new_run_dir, positive_int, preflight, rel_path,
     resolve_model, sample_caveat, seed_opts, spread_note, tok_per_s,
 )
@@ -172,7 +172,7 @@ def write_summary(run_dir: Path, summary: dict[str, list[dict]],
             "clean_rate": n_clean / len(ok) if ok else -1.0,
             "n_clean": n_clean, "n_ok": len(ok), "total": len(rs),
             "avg_s": sum(r["elapsed_s"] for r in ok) / len(ok) if ok else 0.0,
-            "avg_tps": sum(r["tok_per_s"] for r in ok) / len(ok) if ok else 0.0,
+            "avg_tps": avg_tps(ok),
             "bytask": bytask, "flags": flags,
         })
     ranked.sort(key=lambda r: (-r["clean_rate"], -r["avg_tps"]))

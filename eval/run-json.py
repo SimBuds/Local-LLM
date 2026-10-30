@@ -56,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, avg_tps, ci_str, close_call_note,
     generate, get_effective_think, new_run_dir, positive_int, preflight, rel_path,
     resolve_model, sample_caveat, seed_opts, served_ctx, spread_note, tok_per_s,
 )
@@ -324,7 +324,7 @@ def write_summary(run_dir, summary, args, tasks) -> None:
             "schema_rate": sum(1 for r in ok if r["schema_ok"]) / n,
             "fact_rate": sum(r["n_pass"] for r in ok) / sum(r["n_checks"] for r in ok),
             "avg_s": sum(r["elapsed_s"] for r in ok) / n,
-            "avg_tps": sum(r["tok_per_s"] for r in ok) / n,
+            "avg_tps": avg_tps(ok),
             "n_ok": n, "total": len(all_r), "by_task": by_task,
         })
     ranked.sort(key=lambda r: (-r["score"], -r.get("schema_rate", 0), -r.get("avg_tps", 0)))

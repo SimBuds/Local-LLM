@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
+    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, avg_tps, ci_str, close_call_note,
     extract_code, generate, get_effective_think, new_run_dir, positive_int, preflight,
     rel_path, resolve_model, run_program, sample_caveat, sandbox_note, seed_opts,
     spread_note, tok_per_s,
@@ -148,14 +148,13 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
     for model, rs in results.items():
         npass = sum(1 for r in rs if r["passed"])
         rate = npass / len(rs) if rs else 0.0
-        ok = [r for r in rs if r.get("eval_count")]
-        avg_tps = sum(r.get("tok_per_s", 0) for r in ok) / len(ok) if ok else 0.0
+        tps = avg_tps(rs)
         avg_s = sum(r["elapsed_s"] for r in rs) / len(rs) if rs else 0.0
         # per-task pass count (out of `attempts`)
         bytask = {tn: sum(1 for r in rs if r["task"] == tn and r["passed"])
                   for tn in task_names}
         ranked.append({"model": model, "rate": rate, "npass": npass,
-                       "total": len(rs), "avg_tps": avg_tps, "avg_s": avg_s,
+                       "total": len(rs), "avg_tps": tps, "avg_s": avg_s,
                        "bytask": bytask})
     ranked.sort(key=lambda r: (-r["rate"], -r["avg_tps"]))
 

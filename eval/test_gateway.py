@@ -205,6 +205,16 @@ class GenerateTests(GatewayCase):
         self.assertEqual(gw.tok_per_s({"eval_count": 5}), 0.0)
         self.assertEqual(gw.tok_per_s({"eval_count": 5, "eval_duration": 0}), 0.0)
 
+    def test_avg_tps_skips_replies_with_no_speed(self):
+        # A 0.0 from tok_per_s() means "not measurable", not "infinitely slow".
+        self.assertEqual(gw.avg_tps([{"tok_per_s": 40.0}, {"tok_per_s": 0.0},
+                                     {"tok_per_s": 60.0}]), 50.0)
+        self.assertEqual(gw.avg_tps([{"tok_per_s": 30.0}, {}]), 30.0)
+
+    def test_avg_tps_is_zero_with_no_measurable_reply(self):
+        self.assertEqual(gw.avg_tps([{"tok_per_s": 0.0}, {"tok_per_s": 0.0}]), 0.0)
+        self.assertEqual(gw.avg_tps([]), 0.0)
+
     def test_missing_built_prompt_raises_instead_of_sending_no_stack(self):
         self.serve(CHAT_RESPONSE)
         with self.assertRaises(FileNotFoundError):
