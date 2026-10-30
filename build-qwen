@@ -20,8 +20,13 @@ BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"
 # 35 since 2026-09-16, for the same reason as build-gemma's 22: 65536 context
 # doubled the KV cache and 34 no longer leaves the 2 GB margin. --fit chose 35 at
 # 65536 with MTP on: 42 layers (35 overflowing), 6168 MiB used, 2218 MiB free.
+#
+# 37 since 2026-10-30: context went from 65536 to 131072. --fit chose 37 at
+# 131072 with MTP on, build 12009: 42 layers (37 overflowing), 6158 MiB used,
+# 2120 MiB free. No measurable speed cost against 35 (48.6 to 56.4 tok/s across
+# 3 requests, against 48.7 to 51.1).
 LOAD=(
-  'n-cpu-moe = 35'
+  'n-cpu-moe = 37'
   'spec-type = draft-mtp'
 )
 

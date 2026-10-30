@@ -19,6 +19,10 @@ BASE_MODEL="qwen3.5-9b-mtp-q4_K_M.gguf"
 # stays all-GPU only at 512 (build 11022, 2026-09-17: 1024 gave "offloaded
 # 31/34 layers", 2048 gave 28/34). With fit = off it would instead load all 34
 # layers with less than 2 GB free.
+# At 131072 context (2026-10-30, build 12009) all-GPU leaves only about 0.4 GB
+# free with ~1.4 GB held by the desktop, and the 2 GB margin would keep just
+# 22 of 34 layers on the GPU at ~42 tok/s instead of ~130. Casey chose all-GPU
+# at 131072 anyway. A desktop VRAM spike can now crash lite with out of memory.
 LOAD=(
   'spec-type = draft-mtp'
   'ubatch-size = 512'

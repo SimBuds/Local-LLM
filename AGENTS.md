@@ -1104,7 +1104,7 @@ repos, and one ended in a colon with no template after it.)
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with the README recipe after a model or
   hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: pinned splits keep a 2 GB fit margin (gemma 22, qwen 35 at 65536
+- **Locked: pinned splits keep a 2 GB fit margin (gemma 24, qwen 37 at 131072
   context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
   coding runner scored that crash as a model failure. A new value is derived with
@@ -1123,6 +1123,12 @@ repos, and one ended in a colon with no template after it.)
   spare at 65536 context, short of the 2 GB margin (the fitter would keep 29 of
   34 on the GPU). Casey chose to keep it all-GPU for its speed on 2026-10-09. Do
   not pin layers to the CPU to restore the margin without asking. (2026-10-09)
+  Context rose to 131072 on 2026-10-30 (build 12009), and the fitter chose 24
+  and 37 at the 2 GB margin. Casey accepted gemma's cost of about 5 to 8%
+  generation speed. qwen showed none. Neither pair has had the spike test. `lite`
+  stays all-GPU at 131072 by Casey's choice, with only about 0.4 GB free (the
+  margin would keep 22 of 34 layers on the GPU at about 42 tok/s instead of 130),
+  so a desktop VRAM spike can crash it with out of memory. (2026-10-30)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and

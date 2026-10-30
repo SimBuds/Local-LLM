@@ -123,7 +123,7 @@ repos, not a local edit.
 - `POST http://localhost:8080/v1/chat/completions`, OpenAI format.
 - `model` is one of `gemma`, `qwen`, `lite`.
 - The caller sends its own system message.
-- Context is fixed at 65536 tokens by the preset. There is no per-request
+- Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30). There is no per-request
   context size, and an oversized prompt returns HTTP 400 rather than being
   silently truncated.
 
@@ -177,13 +177,13 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 22, `qwen` 35 at 65536 context) | 2026-09-14, values updated 2026-09-16 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09): all-GPU with about 1.7 GB spare, kept for speed. |
+| 2 GB fit margin (`gemma` 24, `qwen` 37 at 131072 context) | 2026-09-14, values updated 2026-09-16 and 2026-10-30 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |
 | The router endpoint, model names, and context size | 2026-09-15 | Jobhunt and SEO-LLM depend on them. |
 | `cache-type-k/v = q4_0` | 2026-09-17 | Measured against `q8_0` with the tool suite: no accuracy difference in totals, and `q8_0` costs 0.3 to 0.5 GiB of VRAM per model. |
-| `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays at 512, where it is all-GPU with about 1.7 GB spare (see the margin row). |
+| `load-mode = none`, `ubatch-size = 1024` (`lite` 512) | 2026-09-17 | Prompt ingest 2.4× (`gemma`) and 2.7× (`qwen`) on build 11022, with model VRAM within 0.2 GiB of the spike-tested values. 2048 was faster but gave up about 400 MiB of that headroom. `lite` stays at 512, where it is all-GPU (see the margin row for its spare VRAM). |
 
 The pinned splits are not guesses. `./add-model` re-derives one by loading the
 model once with `--fit-target 2048` and reading llama.cpp's own fit line, and on

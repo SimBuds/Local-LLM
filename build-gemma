@@ -19,8 +19,13 @@ BASE_MODEL="gemma4-26b-a4b-it-qat.gguf"
 # --fit chose at 65536 with --fit-target 2048 and ~1.3 GB desktop VRAM:
 # 31 layers (22 overflowing), 6272 MiB used, 2175 MiB free. Not spike-tested at
 # ~3.0 GB the way 21 was; the fitter's own 2048 MiB target is the evidence.
+#
+# 24 since 2026-10-30: context went from 65536 to 131072. --fit chose 24 at
+# 131072 with --fit-target 2048 on build 12009 at ~1.4 GB desktop VRAM:
+# 31 layers (24 overflowing), 6098 MiB used, 2160 MiB free. Generation was
+# about 5-8% slower than 22 at 65536 (48.7 to ~45 tok/s, 3 requests each).
 LOAD=(
-  'n-cpu-moe = 22'
+  'n-cpu-moe = 24'
 )
 
 # Shared assembly — see build-common.sh.

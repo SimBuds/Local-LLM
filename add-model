@@ -283,7 +283,7 @@ probe_fit() {
   [ -f "$ini" ] || die "no server.ini at $ini. The probe needs its ubatch-size to size the split the router will serve."
   ub="$(sed -n 's/^[[:space:]]*ubatch-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
 
-  local -a cmd=(llama-server -m "$gguf" -c 65536 -np 1 -fa on -ctk q4_0 -ctv q4_0
+  local -a cmd=(llama-server -m "$gguf" -c 131072 -np 1 -fa on -ctk q4_0 -ctv q4_0
                 --no-mmproj --fit-target 2048 --port "$(free_port)" -lv 4)
   [ -n "$ub" ] && cmd+=(-ub "$ub")
   [ "$mtp" = yes ] && cmd+=(--spec-type draft-mtp)

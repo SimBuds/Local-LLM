@@ -228,7 +228,7 @@ The only model-specific part of a builder is the top config block:
 MODEL_NAME="qwen"
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"   # filename under $GGUF_DIR
 LOAD=(
-  'n-cpu-moe = 35'           # expert layers kept in system RAM, pinned (see below)
+  'n-cpu-moe = 37'           # expert layers kept in system RAM, pinned (see below)
   'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
 )
 ```
@@ -254,7 +254,7 @@ measure model × sampler instead of model. That mistake invalidated the
 
 ```ini
 ; server.ini, [*] section (each value carries its reason in the file)
-ctx-size = 65536
+ctx-size = 131072
 temp = 0.2
 top-p = 0.95
 top-k = 40
@@ -285,10 +285,13 @@ on this box. The 2 GB-margin values at 32768 context (gemma 21, qwen 34) were
 then checked with 5 load-and-request cycles each while 3.0 GB of the card was
 held by other processes: all passed. The cost against the old values was about
 13% generation speed for `gemma` and 9% for `qwen` (details in
-[`TESTING.md`](TESTING.md) under *Offload headroom*). The current values (gemma
-22, qwen 35) are what the fitter chose at the same 2 GB margin after context rose
-to 65536 on 2026-09-16, which roughly doubled the KV cache. They have not yet had
-the 3.0 GB spike test.
+[`TESTING.md`](TESTING.md) under *Offload headroom*). The values were then
+re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
+35 at 65536 on 2026-09-16, and the current gemma 24 and qwen 37 at 131072 on
+2026-10-30 (build 12009). Neither later pair has had the 3.0 GB spike test. At
+131072, gemma generates about 5 to 8% slower than at 22, and qwen showed no
+measurable change. `lite` stays all-GPU by Casey's choice, with only about
+0.4 GB free at 131072, so a desktop VRAM spike can crash it.
 
 Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
 reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB
@@ -326,7 +329,7 @@ report `model loaded`, whichever comes first.
 ```bash
 # Runs in: local terminal, with nothing else holding the GPU. Safe to re-run.
 LOG="$(mktemp)"
-llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 65536 -np 1 -fa on \
+llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 131072 -np 1 -fa on \
   -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --fit-target 2048 \
   -ub 1024 --port 8081 -lv 4 > "$LOG" 2>&1 &
 PID=$!
@@ -411,13 +414,11 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-The installed build is 11768 (commit `1ba568c5a`), swapped in on 2026-10-20
+The installed build is 12009 (commit `e216f4ec8`), swapped in on 2026-10-30
 through `scripts/llama-update` after `scripts/verify-build` passed it: at every
-pinned split it needed exactly the VRAM 11537 did (+0 MiB for all three models),
-the smoke profile passed at unchanged speeds, and no GPU fault was logged. One
-`qwen` reply in that smoke stopped on its first token and did not recur in six
-repeats on either build. Build 11537 (commit `8e2d31e0e`) ran from 2026-10-09
-and is now the rollback target. The
+pinned split it needed at most 12 MiB more VRAM than 11768 (gemma +12, lite +4,
+qwen +4), the smoke profile passed, and no GPU fault was logged. Build 11768
+(commit `1ba568c5a`) ran from 2026-10-20 and is now the rollback target. The
 current leaderboard was measured on build 11768 on 2026-10-20. The one before it
 came from build 11022 (commit `f172be756`, 2026-09-17), and results from
 2026-09-14 to 2026-09-16 came from build 10968 (commit `41abbfd59`). llama.cpp is built from
@@ -634,8 +635,8 @@ any of them is a coordinated change across repos, not a local edit:
 - `model` is one of `gemma`, `qwen`, `lite`.
 - The app sends its own system message. Nothing is baked into the model, so a
   request without one gets the bare base model.
-- Context is fixed at 65536 tokens by the preset. There is no per-request
-  context size, and a longer prompt returns HTTP 400 `exceed_context_size_error`
+- Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30).
+  There is no per-request context size, and a longer prompt returns HTTP 400 `exceed_context_size_error`
   instead of being truncated.
 - Structured output: `response_format: {"type": "json_schema", "json_schema":
   {"name": "...", "schema": {...}}}`. The top-level `schema` shape shown in the
@@ -693,7 +694,7 @@ is what the benchmark exists to replace.
 
 In Cline's settings, set **API Provider** to `OpenAI Compatible`, **Base URL** to
 `http://localhost:8080/v1`, **API Key** to any value, **Model ID** to `qwen`,
-`gemma`, or `lite`, and the context window to `65536`. Cline sends its own system
+`gemma`, or `lite`, and the context window to `131072`. Cline sends its own system
 prompt, and its docs describe no way to replace it, so Cline runs without this
 repo's prompt stack. Cline ingests large prompts, so prompt-eval throughput
 matters more here than generation speed. `run-speed.py` reports both, and the
@@ -914,9 +915,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
 Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
-model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 11768
-(`1ba568c5a`) with CUDA 13.4, from 2026-10-20. The published numbers are from
-the same build.
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 12009
+(`e216f4ec8`) with CUDA 13.4, from 2026-10-30. The published numbers are from
+build 11768 (`1ba568c5a`, 2026-10-20).
 
 ## Docs
 
