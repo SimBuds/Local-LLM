@@ -22,12 +22,14 @@ Usage:
   ./eval/run-json.py --models gemma qwen lite --context-pressure medium   # longer docs
   ./eval/run-json.py --models gemma --tasks needle_recall --position all  # early/mid/late
 
---num-ctx is the minimum context each model must be serving (default 65536, the
-context jobhunt's gateway was built around). llama.cpp fixes context size when a
-model loads (ctx-size in its build-* preset), so it is checked against the router
-before the run starts rather than sent per request; a model below it aborts the
-run. A prompt that still overflows is rejected by the server with an HTTP 400, not
-truncated. Temperature is forced to 0 for deterministic extraction.
+--num-ctx is the minimum context each model must be serving (default 65536, room
+for the high preset's largest prompt, 51307 tokens). The consumer apps need less:
+SEO-LLM requires 32768 and Jobhunt sizes its prompts to fit 32768. llama.cpp
+fixes context size when a model loads (ctx-size in its build-* preset), so it is
+checked against the router before the run starts rather than sent per request; a
+model below it aborts the run. A prompt that still overflows is rejected by the
+server with an HTTP 400, not truncated. Temperature is forced to 0 for
+deterministic extraction.
 
 --context-pressure scales document length to test true long-context degradation:
 normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high

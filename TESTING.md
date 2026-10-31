@@ -381,163 +381,205 @@ deciding what to cut.
 
 ## Current Benchmark Snapshot
 
-Full `standard` pass on llama.cpp build 12009 (`e216f4ec8`), 2026-10-30 (started
-10:23 UTC, about 70 minutes). Three models, 3 attempts per task, the shared
+Two full `standard` passes on llama.cpp build 12009 (`e216f4ec8`) at one config:
+2026-10-30 (started 10:23 UTC, about 70 minutes) and a repeat on 2026-10-31
+(started 09:31 UTC, 72.3 minutes). Three models, 3 attempts per task, the shared
 sampler baseline in `server.ini` `[*]`, one model loaded at a time, pinned
 offload (gemma 24 and qwen 37 MoE layers on CPU, lite all GPU), 131072 context,
 `load-mode = none`, `ubatch-size = 1024` (lite 512), prompt caching off, on a
-scratch router on port 8081 over the repo preset.
+scratch router on port 8081 over the repo preset. The README leaderboard is
+promoted from the 2026-10-31 repeat. Each table shows both passes, so the gap
+between the two columns is run-to-run spread, not a config effect. Rows are
+ranked by the repeat.
 
-The prompt-stack suite did not finish in that pass. At 10:35:41 UTC, 19 seconds
+The 2026-10-30 prompt-stack suite did not finish. At 10:35:41 UTC, 19 seconds
 into it, `gemma`'s model process hit NVIDIA Xid 31 during a decode and aborted
-(see *GPU faults* under *Hardware*). The other seven suites ran to completion for
-all three models, `gemma` included. The prompt-stack suite was rerun alone at
-17:23 UTC on the same build and preset, with no fault. Casey reports a Brave
-video and VS Code were using the GPU during the main pass. The profile and
-router logs were lost to a reboot, so the failure messages behind individual
-misses are not available, and only the per-task counts below are.
+(see *GPU faults* under *Hardware*). It was rerun alone at 17:23 UTC with no
+fault, and that rerun is its 2026-10-30 column. Casey reports a Brave video and
+VS Code were using the GPU during that pass. Its profile and router logs were
+lost to a reboot, so only its per-task counts survive. The 2026-10-31 repeat had
+no GPU fault, no core dump, and no error-level line in the router log.
+
+What the repeat shows:
+
+- Unchanged task by task: `qwen` and `gemma` on tool calling (all 13 tasks),
+  all three on JSON, `gemma` on coding, content, and the prompt stack, and
+  `qwen` on the prompt stack.
+- `lite` moved most. Coding rose from 22 to 25 of 27, so the 2026-10-30 drop was
+  noise. On tool calling, three of its tasks flipped between 0/3 and 3/3 with
+  nothing changed.
+- Tutor leaks went 1 then 0 for `gemma`, 7 then 5 for `qwen`, and 7 both times
+  for `lite`. Against 5 each for `qwen` and `lite` on 2026-10-20, the intervals
+  overlap, so a rise is not shown.
 
 What changed since the 2026-10-20 pass: the llama.cpp build (11768 to 12009),
 context (65536 to 131072), and the pinned splits (gemma 22 to 24, qwen 35 to
 37). A difference against that pass cannot be assigned to any one of them.
-Samples are small (n = 9 to 27 per model), so a few points either way is noise.
+Samples are small (n = 9 to 27 per model), and the repeat confirms that a few
+points either way is noise.
 
 ### Speed (`run-speed.py`)
 
-Run: `eval/runs/20261030T102303Z/speed/summary.md`
+Runs: `eval/runs/20261030T102303Z/speed/summary.md` and
+`eval/runs/20261031T093146Z/speed/summary.md`. Load and VRAM are from the repeat.
 
-| Rank | Model | Gen tok/s | Prompt tok/s | Load | GGUF | VRAM | GPU/CPU split |
-|---|---|---:|---:|---:|---:|---:|---|
-| 1 | `lite` | 134.7 | 3391 | 4.1s | 5.5 GiB | 8.1 GiB | all GPU, MTP |
-| 2 | `qwen` | 60.4 | 1008 | 13.8s | 20.2 GiB | 6.1 GiB | 37 MoE layers on CPU, MTP |
-| 3 | `gemma` | 46.1 | 1517 | 7.9s | 13.4 GiB | 6.2 GiB | 24 MoE layers on CPU |
+| Rank | Model | Gen tok/s 10-30 | Gen tok/s 10-31 | Prompt tok/s 10-30 | Prompt tok/s 10-31 | Load | GGUF | VRAM | GPU/CPU split |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | `lite` | 134.7 | 132.5 | 3391 | 3354 | 4.4s | 5.5 GiB | 7.9 GiB | all GPU, MTP |
+| 2 | `qwen` | 60.4 | 61.5 | 1008 | 1015 | 14.0s | 20.2 GiB | 5.9 GiB | 37 MoE layers on CPU, MTP |
+| 3 | `gemma` | 46.1 | 43.0 | 1517 | 1462 | 8.0s | 13.4 GiB | 6.0 GiB | 24 MoE layers on CPU |
 
-Finding: generation held. `lite` and `qwen` moved by 1.2 and 0.2 tok/s, and
-`gemma` lost 1.3 tok/s (3%) for its two extra CPU layers, inside the ±3 tok/s
-repeat spread. Prompt ingest fell 6% for `qwen` and 5% for `gemma`. `lite`'s VRAM
-reads 8.1 GiB against 6.7 GiB, which is the larger KV cache at 131072.
+Finding: `lite` and `qwen` moved by 2.2 and 1.1 tok/s between the passes.
+`gemma` read 3.1 tok/s (7%) lower, while its rate in the coding suite held at 44
+then 45 tok/s, so the speed suite's two short prompts carry about ±3 tok/s of
+spread on their own. Prompt ingest moved 4% or less. Against 2026-10-20 (47.4
+tok/s), `gemma` read 1.3 and 4.4 tok/s lower with its two extra CPU layers, and
+`lite`'s VRAM (7.9 to 8.1 GiB against 6.7) is the larger KV cache at 131072.
 
 ### Coding (`run-code.py`)
 
-Run: `eval/runs/20261030T102358Z/code/summary.md`
+Runs: `eval/runs/20261030T102358Z/code/summary.md` and
+`eval/runs/20261031T093242Z/code/summary.md`. Avg s and tok/s are from the repeat.
 
-| Rank | Model | Pass rate | Passed | Avg s | Tok/s |
+| Rank | Model | Passed 10-30 | Passed 10-31 | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|
-| 1 | `gemma` | 96% | 26/27 | 7.5 | 44 |
-| 2 | `qwen` | 89% | 24/27 | 7.2 | 64 |
-| 3 | `lite` | 81% | 22/27 | 2.4 | 155 |
+| 1 | `gemma` | 26/27 | 26/27 | 7.4 | 45 |
+| 2 | `lite` | 22/27 | 25/27 | 2.0 | 164 |
+| 3 | `qwen` | 24/27 | 25/27 | 6.1 | 72 |
 
-Finding: `gemma` stays in its 25 to 27 range, with one `calc` miss. `qwen` failed
-`decode_string` on all 3 attempts (1 of 3 on 2026-10-20). `lite` fell from 26 to
-22: `calc` 1 of 3, `decode_string` 1 of 3, `lru_cache` 2 of 3. Its 95% interval
-(63 to 92%) still overlaps its 2026-10-20 score, so this is worth a repeat before
-reading it as a regression.
+Finding: `gemma` missed one `calc` attempt in both passes, inside its 25 to 27
+range. `lite` went from 22 to 25: `calc` and `lru_cache` passed 3/3 this time,
+and `decode_string` stayed at 1 of 3. That is back near its 26 of 2026-10-20, so
+the 2026-10-30 drop was not a regression. `qwen` passed `decode_string` once (0
+of 3 on 2026-10-30), with a `TypeError` and a wrong answer on the other two.
+`decode_string` is now the hardest task for both `qwen` and `lite`.
 
 ### Content (`run-content.py`)
 
-Run: `eval/runs/20261030T103148Z/content/summary.md`
+Runs: `eval/runs/20261030T103148Z/content/summary.md` and
+`eval/runs/20261031T093944Z/content/summary.md`. Avg s, tok/s, and words are from
+the repeat.
 
-| Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words |
+| Rank | Model | Clean 10-30 | Clean 10-31 | Avg s | Tok/s | Avg words |
 |---|---|---:|---:|---:|---:|---:|
-| 1 | `gemma` | 100% | 9/9 | 9.3 | 43 | 214 |
-| 2 | `lite` | 89% | 8/9 | 3.5 | 111 | 195 |
-| 3 | `qwen` | 89% | 8/9 | 10.9 | 46 | 230 |
+| 1 | `gemma` | 9/9 | 9/9 | 8.7 | 45 | 211 |
+| 2 | `lite` | 8/9 | 8/9 | 3.6 | 112 | 194 |
+| 3 | `qwen` | 8/9 | 7/9 | 10.8 | 49 | 245 |
 
-Finding: `gemma` is 9/9, as in every pass since 2026-07-28. `qwen`'s miss is
-`tech_explain` again (216 words in attempt 3, against a 200 limit). `lite` missed
-one `seo_product` attempt, after 9/9 on 2026-10-20.
+Finding: `gemma` is 9/9, as in every pass since 2026-07-28. Every `qwen` miss is
+`tech_explain` running long (216 words on 2026-10-30, then 207 and 206, against a
+120 to 200 range). `lite` missed one `seo_product` attempt in each pass, after
+9/9 on 2026-10-20. In the repeat that miss used the keyword 6 times against an
+allowed 2 to 5. None of the 18 `qwen` replies on build 12009 came back empty
+(148 to 402 words), the shape watched for since 2026-10-20.
 
 ### Learning (`run-learn.py`)
 
-Run: `eval/runs/20261030T104838Z/learn/summary.md`
+Runs: `eval/runs/20261030T104838Z/learn/summary.md` and
+`eval/runs/20261031T095937Z/learn/summary.md`. Explanation is from the repeat.
 
-| Rank | Model | Teach /10 | Code pass | Explanation /10 | Explanation when correct |
-|---|---|---:|---:|---:|---:|
-| 1 | `qwen` | 9.8 | 12/12 | 9.8 | 9.8 |
-| 2 | `gemma` | 9.8 | 12/12 | 9.8 | 9.8 |
-| 3 | `lite` | 8.0 | 10/12 | 9.6 | 9.7 |
+| Rank | Model | Teach 10-30 | Teach 10-31 | Code pass 10-30 | Code pass 10-31 | Explanation /10 |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `qwen` | 9.8 | 9.9 | 12/12 | 12/12 | 9.9 |
+| 2 | `gemma` | 9.8 | 9.8 | 12/12 | 12/12 | 9.8 |
+| 3 | `lite` | 8.0 | 9.0 | 10/12 | 11/12 | 9.8 |
 
-Finding: `qwen` and `gemma` tie again. `lite` passed the code gate 10 of 12 (11 on
-2026-10-20), and those misses are its whole gap. Judges parsed 216/216 calls,
-within-judge spread 0.12/10. The rubric is still saturated.
+Finding: `qwen` and `gemma` tie again, and the runner flags the 0.1 gap as inside
+its tie threshold. `lite` passed the code gate 11 of 12 (an `lru_cache` attempt
+used an undefined `Node` class), and that miss is its whole gap. In the repeat,
+judges parsed 216/216 calls, within-judge spread 0.07/10 (0.12 on 2026-10-30).
+The rubric is still saturated.
 
 ### Tutor (`run-tutor.py`, leak-gated)
 
-Run: `eval/runs/20261030T110633Z/tutor/summary.md`
+Runs: `eval/runs/20261030T110633Z/tutor/summary.md` and
+`eval/runs/20261031T101805Z/tutor/summary.md`. Explanation is from the repeat.
 
-| Rank | Model | Teach /10 | Leaks | Explanation /10 |
-|---|---|---:|---:|---:|
-| 1 | `gemma` | 8.9 | **1/15** | 9.5 |
-| 2 | `qwen` | 5.1 | 7/15 | 9.5 |
-| 3 | `lite` | 4.9 | 7/15 | 9.2 |
+| Rank | Model | Teach 10-30 | Teach 10-31 | Leaks 10-30 | Leaks 10-31 | Explanation /10 |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `gemma` | 8.9 | 9.1 | 1/15 | **0/15** | 9.1 |
+| 2 | `qwen` | 5.1 | 6.0 | 7/15 | 5/15 | 9.0 |
+| 3 | `lite` | 4.9 | 4.9 | 7/15 | 7/15 | 8.9 |
 
-Finding: `gemma` leaked once (95% interval 1 to 30%), after 0/15 on 2026-10-20.
-`qwen` and `lite` both leaked 7 of 15 (25 to 70%), up from 5 each, which is
-inside the overlap of the two passes' intervals. The leak gate is deterministic.
-Judges parsed 270/270 calls, within-judge spread 0.33/10.
+Finding: `gemma` leaked 1 of 30 attempts across the two passes. `two_sum` leaked
+on all 3 attempts for `qwen` and `lite` in the repeat, and for `lite` on
+2026-10-30 too (`qwen` 2 of 3). The other leaks moved between tasks. Against 5
+of 15 each on 2026-10-20, `qwen` (7, then 5) and `lite` (7, then 7) stay inside
+overlapping intervals, so a rise is not shown. The leak gate is deterministic.
+In the repeat, judges parsed 270/270 calls, within-judge spread 0.50/10 (0.33 on
+2026-10-30).
 
 ### JSON / long-context (`run-json.py`)
 
-Run: `eval/runs/20261030T103637Z/json/summary.md`
+Runs: `eval/runs/20261030T103637Z/json/summary.md` and
+`eval/runs/20261031T094725Z/json/summary.md`. Columns after the scores are from
+the repeat.
 
-| Rank | Model | Score | Schema OK | Fact rate | Avg s | Tok/s |
-|---|---|---:|---:|---:|---:|---:|
-| 1 | `lite` | 100% | 100% | 100% | 2.3 | 140 |
-| 2 | `qwen` | 100% | 100% | 100% | 7.3 | 65 |
-| 3 | `gemma` | 100% | 100% | 100% | 5.5 | 45 |
+| Rank | Model | Score 10-30 | Score 10-31 | Schema OK | Fact rate | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 1 | `lite` | 100% | 100% | 100% | 100% | 2.3 | 134 |
+| 2 | `qwen` | 100% | 100% | 100% | 100% | 7.3 | 62 |
+| 3 | `gemma` | 100% | 100% | 100% | 100% | 5.5 | 43 |
 
-Finding: a three-way 100% in every pass since 2026-09-15. The tasks still top out
-at about 51k prompt tokens, so this pass did not exercise the extra context.
+Finding: a three-way 100% in every pass since 2026-09-15. The tasks top out at
+about 51k prompt tokens even at high pressure, and this profile runs them at
+normal pressure (about 6k to 7k), so neither pass exercised the extra context.
 
 ### Prompt stack (`run-persona.py`)
 
-Run: `eval/runs/20261030T172326Z/persona/summary.md` (the 17:23 UTC rerun,
-stacked only)
+Runs: `eval/runs/20261030T172326Z/persona/summary.md` (the 17:23 UTC rerun,
+stacked only) and `eval/runs/20261031T094312Z/persona/summary.md`.
 
-| Rank | Model | Clean rate | Clean |
-|---|---|---:|---:|
-| 1 | `qwen` | 90% | 19/21 |
-| 2 | `gemma` | 57% | 12/21 |
-| 3 | `lite` | 48% | 10/21 |
+| Rank | Model | Clean 10-30 | Clean 10-31 | Clean rate 10-31 |
+|---|---|---:|---:|---:|
+| 1 | `qwen` | 19/21 | 19/21 | 90% |
+| 2 | `lite` | 10/21 | 12/21 | 57% |
+| 3 | `gemma` | 12/21 | 12/21 | 57% |
 
-Finding: the same picture as 2026-10-20. `qwen` again missed `unverified` twice.
-`gemma` and `lite` fail `unverified` and `fields_echo` 0/3, `gemma` fails
-`model_origin` 0/3, and `lite` fails `model_origin` 0/3 and passes
-`familiar_skill` 1 of 3.
+Finding: the same picture as 2026-10-20. `qwen` and `gemma` repeated task for
+task: `qwen` missed `unverified` twice, and `gemma` failed `model_origin`,
+`unverified`, and `fields_echo` 0/3. `lite` still fails `unverified` and
+`fields_echo` 0/3 and passed `familiar_skill` 1 of 3 both times. Its only move
+was `model_origin`, 0 then 2 of 3.
 
 ### Tool calling (`run-tools.py`)
 
-Run: `eval/runs/20261030T104153Z/tools/summary.md` (13 tasks × 3 attempts)
+Runs: `eval/runs/20261030T104153Z/tools/summary.md` and
+`eval/runs/20261031T095244Z/tools/summary.md` (13 tasks × 3 attempts). Avg s and
+failed tasks are from the repeat.
 
-| Rank | Model | Pass rate | Passed | Avg s | Failure shapes |
+| Rank | Model | Passed 10-30 | Passed 10-31 | Avg s | Failed tasks (0/3 each) |
 |---|---|---:|---:|---:|---|
-| 1 | `qwen` | 100% | 39/39 | 5.4 | none |
-| 2 | `lite` | 92% | 36/39 | 1.7 | unwanted-call ×3 |
-| 3 | `gemma` | 77% | 30/39 | 3.3 | no-call ×6, wrong-arg ×3 |
+| 1 | `qwen` | 39/39 | 39/39 | 5.5 | none |
+| 2 | `lite` | 36/39 | 33/39 | 1.7 | `result_beats_prior` (no-call), `tool_error` (unwanted-call) |
+| 3 | `gemma` | 30/39 | 30/39 | 3.4 | `enum_arg` (wrong-arg), `result_beats_prior` and `empty_results` (no-call) |
 
-Finding: `qwen` passed `grounded_answer` this time, the task it declined on all
-three 2026-10-20 runs. `lite` failed `empty_results` on all 3 attempts, the task
-it passed on 2026-10-20 and failed on 2026-09-17. `gemma` failed `enum_arg`,
-`result_beats_prior`, and `empty_results` 0/3, and passed `chain_lookup` this
-time. Every task still scored 0/3 or 3/3. A same-config repeat is still
-missing: build, context, and splits all changed since 2026-10-20, so these flips
-cannot be split between those changes and run-to-run variation.
+Finding: this is the same-config repeat the tool suite lacked. `qwen` and `gemma`
+matched task for task, `qwen` including `grounded_answer`, the task it declined
+on all three 2026-10-20 runs. `lite` flipped three tasks with nothing changed:
+`empty_results` went 0/3 to 3/3, and `result_beats_prior` and `tool_error` went
+3/3 to 0/3. Every task still scored 0/3 or 3/3 within a pass, so at temperature
+0 `lite` is consistent inside one pass but not between passes. Its earlier swaps
+of first place with `qwen` (`lite` 39 on 2026-10-20, then 36 and 33) fit
+run-to-run variation and need not come from the build or config changes. Why
+`lite` varies between passes is not traced.
 
 ## Current Picks
 
-From the 2026-10-30 `standard` pass above, on build 12009 at 131072 context.
+From the 2026-10-31 repeat above, on build 12009 at 131072 context, with the
+2026-10-30 pass as a check. No pick changed between the two passes.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `lite` | 134.7 tok/s fully on GPU, 2.2× `qwen` (60.4) and 2.9× `gemma` (46.1). |
-| Agentic tools (Cline) | `lite` | Prompt ingest 3391 tok/s vs `gemma` 1517 and `qwen` 1008. On tool calling `qwen` led this pass (39/39 vs 36/39), so pick `qwen` when accuracy matters more than ingest speed. |
-| Tool calling / agent loops | `qwen` | 39/39 vs `lite` 36/39 and `gemma` 30/39. `lite` and `qwen` have traded first place between passes, so either is a reasonable default. |
-| Coding puzzles / small functions | `gemma` | 26/27 vs `qwen` 24/27 and `lite` 22/27, and 25 to 27 in every pass since 2026-09-15. |
+| Fast local default | `lite` | 132.5 tok/s fully on GPU, 2.2× `qwen` (61.5) and 3.1× `gemma` (43.0). |
+| Agentic tools (Cline) | `lite` | Prompt ingest 3354 tok/s vs `gemma` 1462 and `qwen` 1015. On tool calling `qwen` led both passes (39/39 vs `lite` 36 then 33), so pick `qwen` when accuracy matters more than ingest speed. |
+| Tool calling / agent loops | `qwen` | 39/39 in both passes vs `lite` 33/39 and `gemma` 30/39. `lite`'s score moved by 3 between two identical passes. |
+| Coding puzzles / small functions | `gemma` | 26/27 vs 25/27 for `qwen` and `lite`, and 25 to 27 in every pass since 2026-09-15. The runner calls this pass a tie, so the pick rests on that record. |
 | Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. |
-| Leak-gated tutoring | `gemma` | 1/15 leaks vs 7/15 for both others. Deterministic, not judge-scored. |
-| Learning explanations | `qwen` or `gemma` (tie) | Both 9.8 with 12/12 on the code gate. |
+| Leak-gated tutoring | `gemma` | 0/15 leaks vs 5/15 (`qwen`) and 7/15 (`lite`), and 1 in 30 across both passes. Deterministic, not judge-scored. |
+| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8 with 12/12 on the code gate, inside the runner's tie threshold. |
 | Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.3s against 5.5s and 7.3s. |
-| Prompt-stack fidelity | `qwen` | 90% clean vs 57% (`gemma`) and 48% (`lite`). |
+| Prompt-stack fidelity | `qwen` | 90% clean in both passes vs 57% for `gemma` and `lite`. |
 
 ## Hardware
 
