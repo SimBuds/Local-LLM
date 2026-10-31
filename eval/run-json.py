@@ -32,8 +32,9 @@ truncated. Temperature is forced to 0 for deterministic extraction.
 --context-pressure scales document length to test true long-context degradation:
 normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high
 lengthen them (~15-19k and ~39-52k tok). high was resized on 2026-10-09 to
-fill most of the 64k context (it was ~21-27k, sized for the old 32k), so high
-results before that date are not comparable. It is a manual stress sweep, kept
+fill most of the 64k context served until 2026-10-30 (it was ~21-27k, sized for
+the old 32k), so high results before that date are not comparable. At today's
+131072 context it fills about 40%. It is a manual stress sweep, kept
 out of the
 default full comparison. --position moves the buried needle to the
 start/middle/end so position bias can be measured.
@@ -68,7 +69,8 @@ CLOSE_PTS = 0.05  # score gaps within 5 points are a tie, not a quality win
 # Context-pressure presets: multiplier on each task's normal document length.
 # normal reproduces the default docs exactly; medium/high lengthen them to stress
 # long-context recall. Measured on lite, 2026-10-09: high at 12.0 gives 39196 to
-# 51307 prompt tokens across the tasks, about 14k under the 65536 served context.
+# 51307 prompt tokens across the tasks, about 14k under the 65536 context served
+# then. Served context is 131072 since 2026-10-30, so high now fills about 40%.
 # It was 6.0 (21016 to 27067), sized for the 32k context served until 2026-09-16.
 PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 12.0}
 # Needle placement for single-needle tasks under --position (multi-needle tasks
@@ -250,7 +252,7 @@ def main() -> int:
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",
                     help="document length preset: normal (default, current docs), "
-                         "medium (~15-19k prompt tok), high (~39-52k, most of the "
+                         "medium (~15-19k prompt tok), high (~39-52k, sized for a "
                          "64k context). high is a manual stress sweep, not part of "
                          "the default run.")
     ap.add_argument("--position", choices=["default", *POSITIONS, "all"], default="default",

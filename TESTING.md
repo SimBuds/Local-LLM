@@ -204,8 +204,10 @@ thinking mode for content runs unless explicitly testing it.
 long-context degradation: `normal` (default) is the standard ~6-7k-token
 prompts, `medium` lands ~15-19k, and `high` ~39-52k. `high` was resized on
 2026-10-09 from a 6.0 to a 12.0 multiplier: at 6.0 it measured 21016 to 27067
-prompt tokens, under half the 64k context served since 2026-09-16, and at 12.0 it
-measured 39196 to 51307 on `lite` with no context error and a 100% score. `high`
+prompt tokens, under half the 64k context served from 2026-09-16 to 2026-10-30,
+and at 12.0 it measured 39196 to 51307 on `lite` with no context error and a 100%
+score. At the 131072 context served since 2026-10-30, `high` fills about 40% of
+the window. `high`
 results from before 2026-10-09 used half-length documents and are not comparable
 with later ones. A prompt that does overflow gets an HTTP 400 from
 llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
@@ -379,196 +381,163 @@ deciding what to cut.
 
 ## Current Benchmark Snapshot
 
-Full `standard` pass on llama.cpp build 11768 (`1ba568c5a`), 2026-10-20 (started
-15:11 UTC, 69.7 minutes, `run-profile.py` exit 0). Three models, 3 attempts per
-task, the shared sampler baseline in `server.ini` `[*]`, one model loaded at a
-time, pinned offload (gemma 22 and qwen 35 MoE layers on CPU, lite all GPU),
-65536 context, `load-mode = none`, `ubatch-size = 1024` (lite 512), prompt
-caching off, `vm.swappiness = 10`, on a boot from earlier the same day. The
-tool-calling numbers are from a `run-tools.py` rerun at 16:29 UTC, after the
-`tool_error` check was widened (see *Tool calling* below).
+Full `standard` pass on llama.cpp build 12009 (`e216f4ec8`), 2026-10-30 (started
+10:23 UTC, about 70 minutes). Three models, 3 attempts per task, the shared
+sampler baseline in `server.ini` `[*]`, one model loaded at a time, pinned
+offload (gemma 24 and qwen 37 MoE layers on CPU, lite all GPU), 131072 context,
+`load-mode = none`, `ubatch-size = 1024` (lite 512), prompt caching off, on a
+scratch router on port 8081 over the repo preset.
 
-The kernel log had no NVIDIA Xid lines, the service journal had no error-level,
-`out of memory` or CUDA error lines, and all 33 model process exits during the
-pass were normal swaps (status 0). No runner logged a connection error, HTTP
-error, or traceback, and every judge call parsed. The pass took 69.7 minutes
-against 63.1 on 2026-09-17, although generation and prompt ingest are both
-faster. The difference has not been traced.
+The prompt-stack suite did not finish in that pass. At 10:35:41 UTC, 19 seconds
+into it, `gemma`'s model process hit NVIDIA Xid 31 during a decode and aborted
+(see *GPU faults* under *Hardware*). The other seven suites ran to completion for
+all three models, `gemma` included. The prompt-stack suite was rerun alone at
+17:23 UTC on the same build and preset, with no fault. Casey reports a Brave
+video and VS Code were using the GPU during the main pass. The profile and
+router logs were lost to a reboot, so the failure messages behind individual
+misses are not available, and only the per-task counts below are.
 
-What changed since the 2026-09-17 pass: the llama.cpp build (11022 to 11768,
-three builds later), the worked example in the `unverified` rule of
-`prompts/system.md` (`OLLAMA_MAX_QUEUE` became `--cache-reuse` on 2026-10-09),
-the sampler baseline's location (moved from `build-common.sh` to `server.ini`
-`[*]` on 2026-10-09, with each model's effective settings byte-identical), and
-the `tool_error` word list (2026-10-20). Context, the pinned splits, and the
-preset keys are unchanged. Samples are small (n = 9 to 27 per model), so a few
-points either way is noise, while failures and the leak-rate gap are strong
-signal.
+What changed since the 2026-10-20 pass: the llama.cpp build (11768 to 12009),
+context (65536 to 131072), and the pinned splits (gemma 22 to 24, qwen 35 to
+37). A difference against that pass cannot be assigned to any one of them.
+Samples are small (n = 9 to 27 per model), so a few points either way is noise.
 
 ### Speed (`run-speed.py`)
 
-Run: `eval/runs/20261020T151126Z/speed/summary.md`
+Run: `eval/runs/20261030T102303Z/speed/summary.md`
 
 | Rank | Model | Gen tok/s | Prompt tok/s | Load | GGUF | VRAM | GPU/CPU split |
 |---|---|---:|---:|---:|---:|---:|---|
-| 1 | `lite` | 133.5 | 3407 | 4.4s | 5.5 GiB | 6.7 GiB | all GPU, MTP |
-| 2 | `qwen` | 60.2 | 1077 | 13.1s | 20.2 GiB | 6.1 GiB | 35 MoE layers on CPU, MTP |
-| 3 | `gemma` | 47.4 | 1599 | 7.9s | 13.4 GiB | 6.0 GiB | 22 MoE layers on CPU |
+| 1 | `lite` | 134.7 | 3391 | 4.1s | 5.5 GiB | 8.1 GiB | all GPU, MTP |
+| 2 | `qwen` | 60.4 | 1008 | 13.8s | 20.2 GiB | 6.1 GiB | 37 MoE layers on CPU, MTP |
+| 3 | `gemma` | 46.1 | 1517 | 7.9s | 13.4 GiB | 6.2 GiB | 24 MoE layers on CPU |
 
-Finding: every model is faster on 11768. Against 2026-09-17, generation rose
-17% for `lite` (114.3), 9% for `qwen` (55.0), and 5% for `gemma` (45.1), and
-prompt ingest rose 13%, 6%, and 3%. Part of `lite`'s gain is its low 2026-09-17
-reading: against the 125 to 126 it read in the tuning sweep with the same
-settings, the gain is about 6%. `gemma`'s 2.3 tok/s is inside the ±3 tok/s repeat
-spread. `qwen`'s 5.2 is just outside it, and the `verify-build` smoke the same
-morning read 60.1, so that gain repeated. VRAM is unchanged: `verify-build`
-measured every model at exactly the 11537 footprint (+0 MiB). Each prompt is a
-single attempt.
+Finding: generation held. `lite` and `qwen` moved by 1.2 and 0.2 tok/s, and
+`gemma` lost 1.3 tok/s (3%) for its two extra CPU layers, inside the ±3 tok/s
+repeat spread. Prompt ingest fell 6% for `qwen` and 5% for `gemma`. `lite`'s VRAM
+reads 8.1 GiB against 6.7 GiB, which is the larger KV cache at 131072.
 
 ### Coding (`run-code.py`)
 
-Run: `eval/runs/20261020T151220Z/code/summary.md`
+Run: `eval/runs/20261030T102358Z/code/summary.md`
 
 | Rank | Model | Pass rate | Passed | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|
-| 1 | `gemma` | 100% | 27/27 | 7.8 | 46 |
-| 2 | `lite` | 96% | 26/27 | 1.9 | 166 |
-| 3 | `qwen` | 93% | 25/27 | 6.0 | 76 |
+| 1 | `gemma` | 96% | 26/27 | 7.5 | 44 |
+| 2 | `qwen` | 89% | 24/27 | 7.2 | 64 |
+| 3 | `lite` | 81% | 22/27 | 2.4 | 155 |
 
-Finding: a tie, flagged by the runner. Every miss is `decode_string`: `qwen`
-passed 1 of 3 (both failures the same `TypeError`, multiplying a string by a
-string) and `lite` 2 of 3 (`IndexError`). `gemma` has scored 27, 26, 25, and 27
-across the passes since 2026-09-15, so its 27/27 is its usual range rather than a
-step up. Its average time rose from 5.6 to 7.8s at the same 46 tok/s, which
-points to longer answers.
+Finding: `gemma` stays in its 25 to 27 range, with one `calc` miss. `qwen` failed
+`decode_string` on all 3 attempts (1 of 3 on 2026-10-20). `lite` fell from 26 to
+22: `calc` 1 of 3, `decode_string` 1 of 3, `lru_cache` 2 of 3. Its 95% interval
+(63 to 92%) still overlaps its 2026-10-20 score, so this is worth a repeat before
+reading it as a regression.
 
 ### Content (`run-content.py`)
 
-Run: `eval/runs/20261020T151927Z/content/summary.md`
+Run: `eval/runs/20261030T103148Z/content/summary.md`
 
 | Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words |
 |---|---|---:|---:|---:|---:|---:|
-| 1 | `lite` | 100% | 9/9 | 3.5 | 111 | 191 |
-| 2 | `gemma` | 100% | 9/9 | 8.4 | 47 | 207 |
-| 3 | `qwen` | 78% | 7/9 | 10.1 | 50 | 232 |
+| 1 | `gemma` | 100% | 9/9 | 9.3 | 43 | 214 |
+| 2 | `lite` | 89% | 8/9 | 3.5 | 111 | 195 |
+| 3 | `qwen` | 89% | 8/9 | 10.9 | 46 | 230 |
 
-Finding: `gemma` is 9/9, as in every pass since 2026-07-28, and `lite` is clean on every
-task for the first time (8/9 on 2026-09-17). `qwen`'s two misses are again both
-`tech_explain` running long: 210 and 218 words against a 200 limit. Its average
-length rose from 218 to 232 words. No `qwen` reply was empty here, against the
-one first-token stop seen in the same morning's smoke.
+Finding: `gemma` is 9/9, as in every pass since 2026-07-28. `qwen`'s miss is
+`tech_explain` again (216 words in attempt 3, against a 200 limit). `lite` missed
+one `seo_product` attempt, after 9/9 on 2026-10-20.
 
 ### Learning (`run-learn.py`)
 
-Run: `eval/runs/20261020T153834Z/learn/summary.md`
+Run: `eval/runs/20261030T104838Z/learn/summary.md`
 
 | Rank | Model | Teach /10 | Code pass | Explanation /10 | Explanation when correct |
 |---|---|---:|---:|---:|---:|
-| 1 | `gemma` | 9.8 | 12/12 | 9.8 | 9.8 |
-| 2 | `qwen` | 9.8 | 12/12 | 9.8 | 9.8 |
-| 3 | `lite` | 8.9 | 11/12 | 9.7 | 9.7 |
+| 1 | `qwen` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 2 | `gemma` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 3 | `lite` | 8.0 | 10/12 | 9.6 | 9.7 |
 
-Finding: `gemma` and `qwen` tie again, now in the other order. `lite` rose from
-9/12 to 11/12 on the code gate, and its one miss (`lru_cache`, wrong answer) is
-the whole gap. Judges parsed 216/216 calls, inter-judge σ 0.18/10. The rubric is
-still saturated, so `--judge-rubric strict` remains the way to get a real ranking.
+Finding: `qwen` and `gemma` tie again. `lite` passed the code gate 10 of 12 (11 on
+2026-10-20), and those misses are its whole gap. Judges parsed 216/216 calls,
+within-judge spread 0.12/10. The rubric is still saturated.
 
 ### Tutor (`run-tutor.py`, leak-gated)
 
-Run: `eval/runs/20261020T155601Z/tutor/summary.md`
+Run: `eval/runs/20261030T110633Z/tutor/summary.md`
 
 | Rank | Model | Teach /10 | Leaks | Explanation /10 |
 |---|---|---:|---:|---:|
-| 1 | `gemma` | 9.5 | **0/15** | 9.5 |
-| 2 | `qwen` | 6.2 | 5/15 | 9.1 |
-| 3 | `lite` | 6.0 | 5/15 | 9.1 |
+| 1 | `gemma` | 8.9 | **1/15** | 9.5 |
+| 2 | `qwen` | 5.1 | 7/15 | 9.5 |
+| 3 | `lite` | 4.9 | 7/15 | 9.2 |
 
-Finding: `gemma` is back to zero leaks (Wilson 0 to 20%), as on 2026-09-15, after
-2/15 on 2026-09-17. `qwen` and `lite` both leaked 5 of 15 (15 to 58%) and
-swapped places on teach score, which is inside their overlap. The leak gate is
-deterministic. Judges parsed 270/270 calls, σ 0.36/10.
+Finding: `gemma` leaked once (95% interval 1 to 30%), after 0/15 on 2026-10-20.
+`qwen` and `lite` both leaked 7 of 15 (25 to 70%), up from 5 each, which is
+inside the overlap of the two passes' intervals. The leak gate is deterministic.
+Judges parsed 270/270 calls, within-judge spread 0.33/10.
 
 ### JSON / long-context (`run-json.py`)
 
-Run: `eval/runs/20261020T152648Z/json/summary.md`
+Run: `eval/runs/20261030T103637Z/json/summary.md`
 
 | Rank | Model | Score | Schema OK | Fact rate | Avg s | Tok/s |
 |---|---|---:|---:|---:|---:|---:|
-| 1 | `lite` | 100% | 100% | 100% | 2.3 | 134 |
-| 2 | `qwen` | 100% | 100% | 100% | 7.1 | 65 |
-| 3 | `gemma` | 100% | 100% | 100% | 5.2 | 47 |
+| 1 | `lite` | 100% | 100% | 100% | 2.3 | 140 |
+| 2 | `qwen` | 100% | 100% | 100% | 7.3 | 65 |
+| 3 | `gemma` | 100% | 100% | 100% | 5.5 | 45 |
 
-Finding: a three-way 100% in every pass since 2026-09-15. Times moved by 0.2s or less.
+Finding: a three-way 100% in every pass since 2026-09-15. The tasks still top out
+at about 51k prompt tokens, so this pass did not exercise the extra context.
 
 ### Prompt stack (`run-persona.py`)
 
-Run: `eval/runs/20261020T152245Z/persona/summary.md` (stacked only, no baseline pass)
+Run: `eval/runs/20261030T172326Z/persona/summary.md` (the 17:23 UTC rerun,
+stacked only)
 
 | Rank | Model | Clean rate | Clean |
 |---|---|---:|---:|
 | 1 | `qwen` | 90% | 19/21 |
 | 2 | `gemma` | 57% | 12/21 |
-| 3 | `lite` | 52% | 11/21 |
+| 3 | `lite` | 48% | 10/21 |
 
-Finding: `qwen` missed `unverified` twice. Both answers stated the git config key
-and its default with no `Unverified:` marker, while the third opened with one.
-The rule's worked example changed on 2026-10-09, but the task asks about a git
-config key, which is disjoint from both the old example and the new one, and 2
-misses in 3 is within the measured noise floor. `gemma` and `lite` still fail
-`unverified` and `fields_echo` 0/3. `gemma` also failed `model_origin` 0/3 (named
-the maker each time), and `lite` passed `model_origin` and `familiar_skill` 1 of
-3 each.
+Finding: the same picture as 2026-10-20. `qwen` again missed `unverified` twice.
+`gemma` and `lite` fail `unverified` and `fields_echo` 0/3, `gemma` fails
+`model_origin` 0/3, and `lite` fails `model_origin` 0/3 and passes
+`familiar_skill` 1 of 3.
 
 ### Tool calling (`run-tools.py`)
 
-Run: `eval/runs/20261020T162940Z/tools/summary.md` (rerun after the `tool_error`
-fix, 13 tasks × 3 attempts)
+Run: `eval/runs/20261030T104153Z/tools/summary.md` (13 tasks × 3 attempts)
 
 | Rank | Model | Pass rate | Passed | Avg s | Failure shapes |
 |---|---|---:|---:|---:|---|
-| 1 | `lite` | 100% | 39/39 | 1.8 | none |
-| 2 | `qwen` | 95% | 37/39 | 5.6 | answer-missing ×2 |
-| 3 | `gemma` | 69% | 27/39 | 3.2 | no-call ×9, wrong-arg ×3 |
+| 1 | `qwen` | 100% | 39/39 | 5.4 | none |
+| 2 | `lite` | 92% | 36/39 | 1.7 | unwanted-call ×3 |
+| 3 | `gemma` | 77% | 30/39 | 3.3 | no-call ×6, wrong-arg ×3 |
 
-Finding: `lite` passed every task, including `empty_results`, where it answered
-from memory on all 3 attempts on 2026-09-17. `qwen`'s two misses are both
-`grounded_answer`: it called the search tool and then declined to report the
-version it returned, because the result came from an `example.org` domain. It
-did the same in the standard pass's own tools run and in the morning's smoke, so
-that is a behavior, not noise. `gemma` failed exactly the tasks it failed on
-2026-09-17: `get_weather` in celsius after being asked for Fahrenheit, and no
-tool call on `chain_lookup`, `result_beats_prior`, and `empty_results`.
-
-The standard pass's own tools run (`eval/runs/20261020T153155Z/tools`) scored
-`qwen` 37/39 too, but one of those misses was a `tool_error` answer ("the
-upstream weather service is currently down, so I can't pull the live data") that
-the old word list rejected. The list now accepts "can't", "cannot", "is down",
-and "currently down", and `test_qwen_down_and_cant_wording_passes` pins it. This
-is the suite's second full run, and the 0/3 or 3/3 pattern held for every task
-except `qwen`'s `grounded_answer`.
+Finding: `qwen` passed `grounded_answer` this time, the task it declined on all
+three 2026-10-20 runs. `lite` failed `empty_results` on all 3 attempts, the task
+it passed on 2026-10-20 and failed on 2026-09-17. `gemma` failed `enum_arg`,
+`result_beats_prior`, and `empty_results` 0/3, and passed `chain_lookup` this
+time. Every task still scored 0/3 or 3/3. A same-config repeat is still
+missing: build, context, and splits all changed since 2026-10-20, so these flips
+cannot be split between those changes and run-to-run variation.
 
 ## Current Picks
 
-From the 2026-10-20 `standard` pass above, on build 11768. The tool-calling rows
-use the rerun of the same day.
+From the 2026-10-30 `standard` pass above, on build 12009 at 131072 context.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `lite` | 133.5 tok/s fully on GPU, 2.2× `qwen` (60.2) and 2.8× `gemma` (47.4). |
-| Agentic tools (Cline) | `lite` | Leads both numbers that matter: prompt ingest 3407 tok/s vs `gemma` 1599 and `qwen` 1077, and tool calling 39/39 vs `qwen` 37/39 and `gemma` 27/39. |
-| Tool calling / agent loops | `lite` | 39/39 vs `qwen` 37/39 and `gemma` 27/39, deterministic scoring. `qwen`'s two misses are one behavior: it will not trust a result from an `example.org` domain. |
-| Coding puzzles / small functions | `gemma` | 27/27 vs `lite` 26/27 and `qwen` 25/27. The runner flags a tie, so the pick rests on consistency: `gemma` has scored 25 to 27 in every pass since 2026-09-15. |
-| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. `lite` matched it for the first time. `qwen` 7/9, still over the word limit on `tech_explain`. |
-| Leak-gated tutoring | `gemma` | 0/15 leaks vs 5/15 for both others. Deterministic, not judge-scored. |
+| Fast local default | `lite` | 134.7 tok/s fully on GPU, 2.2× `qwen` (60.4) and 2.9× `gemma` (46.1). |
+| Agentic tools (Cline) | `lite` | Prompt ingest 3391 tok/s vs `gemma` 1517 and `qwen` 1008. On tool calling `qwen` led this pass (39/39 vs 36/39), so pick `qwen` when accuracy matters more than ingest speed. |
+| Tool calling / agent loops | `qwen` | 39/39 vs `lite` 36/39 and `gemma` 30/39. `lite` and `qwen` have traded first place between passes, so either is a reasonable default. |
+| Coding puzzles / small functions | `gemma` | 26/27 vs `qwen` 24/27 and `lite` 22/27, and 25 to 27 in every pass since 2026-09-15. |
+| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. |
+| Leak-gated tutoring | `gemma` | 1/15 leaks vs 7/15 for both others. Deterministic, not judge-scored. |
 | Learning explanations | `qwen` or `gemma` (tie) | Both 9.8 with 12/12 on the code gate. |
-| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.3s against 5.2s and 7.1s. |
-| Prompt-stack fidelity | `qwen` | 90% clean vs 57% (`gemma`) and 52% (`lite`). |
-
-The split moved. `lite` now takes everything speed-shaped and both tool rows,
-`gemma` takes content, tutoring, and coding, and `qwen` keeps the prompt stack
-and ties learning. `gemma` remains the weakest tool caller by a wide margin,
-which is worth knowing before pointing an agent at the model that wins the
-quality suites.
+| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.3s against 5.5s and 7.3s. |
+| Prompt-stack fidelity | `qwen` | 90% clean vs 57% (`gemma`) and 48% (`lite`). |
 
 ## Hardware
 
@@ -580,7 +549,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), not yet benchmarked. Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (the *Current Benchmark Snapshot* above and the README leaderboard). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
+| llama.cpp | build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), and benchmarked the same day at 131072 context (the *Current Benchmark Snapshot* above and the README leaderboard). Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (under *Historical Notes*). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -619,6 +588,7 @@ fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 | 2026-09-17 18:31 | scratch router, build 11022, `q8_0` KV | `gemma` | all | 22 | no | unknown (1) |
 | 2026-09-22 07:36 | service, build 11022 | `qwen` | all | 35 | no | 2478 s |
 | 2026-09-26 14:10 | service, build 11188 | `qwen` | all | 35 | no | about 1900 s (2) |
+| 2026-10-30 06:35 | scratch router, build 12009, 131072 context | `gemma` | all | 24 | no | about 19 s (3) |
 
 (1) This one ran on a scratch router whose log went to a file, not the journal.
 The model comes from the KV cache note above, and the journal's nearest service
@@ -630,6 +600,12 @@ log line (which named `lite`) is not this process.
 fault at `GPC4 GPCCLIENT_T1_9`, address `0x7f82_0b5de000`. Measured from the
 start of the load (13:39:09), because the router log has no load-finished line
 for that instance.
+
+(3) During the 2026-10-30 `standard` pass, 19 seconds into the prompt-stack
+suite, measured from the suite's start because the router log was lost to a
+reboot. Same signature as (2): abort in `ggml_backend_cuda_synchronize` during a
+decode, MMU fault at `GPC4 GPCCLIENT_T1_9`, `FAULT_PDE`, host-range address
+`0x7f30_156dc000`.
 
 What the table settles:
 
@@ -706,6 +682,15 @@ investigation on the quiet window. **Reopen trigger: any new Xid 31.** Capture t
 `nvidia-smi` and `journalctl` lines above before restarting anything, and add the
 row to the table.
 
+**Triggered, 2026-10-30.** One fault, row (3) above, the first in 34 days. The
+`nvidia-smi` capture was missed: the scratchpad holding the run logs was wiped by
+a reboot before the crash was found, and only the kernel journal and the core
+dump survived. Casey reports a Brave video and VS Code were using the GPU at the
+time, which fits the 2026-09-25 working explanation (other GPU work running
+alongside) and remains untested. The prompt-stack suite then reran in full on the
+same build and preset with no fault. Whether to resume the investigation is
+Casey's call.
+
 ## Models Tested
 
 | Model | Status | Notes |
@@ -730,6 +715,199 @@ row to the table.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### llama.cpp standard pass on build 11768 (2026-10-20)
+
+Full `standard` pass on llama.cpp build 11768 (`1ba568c5a`), 2026-10-20 (started
+15:11 UTC, 69.7 minutes, `run-profile.py` exit 0). Three models, 3 attempts per
+task, the shared sampler baseline in `server.ini` `[*]`, one model loaded at a
+time, pinned offload (gemma 22 and qwen 35 MoE layers on CPU, lite all GPU),
+65536 context, `load-mode = none`, `ubatch-size = 1024` (lite 512), prompt
+caching off, `vm.swappiness = 10`, on a boot from earlier the same day. The
+tool-calling numbers are from a `run-tools.py` rerun at 16:29 UTC, after the
+`tool_error` check was widened (see *Tool calling* below).
+
+The kernel log had no NVIDIA Xid lines, the service journal had no error-level,
+`out of memory` or CUDA error lines, and all 33 model process exits during the
+pass were normal swaps (status 0). No runner logged a connection error, HTTP
+error, or traceback, and every judge call parsed. The pass took 69.7 minutes
+against 63.1 on 2026-09-17, although generation and prompt ingest are both
+faster. The difference has not been traced.
+
+What changed since the 2026-09-17 pass: the llama.cpp build (11022 to 11768,
+three builds later), the worked example in the `unverified` rule of
+`prompts/system.md` (`OLLAMA_MAX_QUEUE` became `--cache-reuse` on 2026-10-09),
+the sampler baseline's location (moved from `build-common.sh` to `server.ini`
+`[*]` on 2026-10-09, with each model's effective settings byte-identical), and
+the `tool_error` word list (2026-10-20). Context, the pinned splits, and the
+preset keys are unchanged. Samples are small (n = 9 to 27 per model), so a few
+points either way is noise, while failures and the leak-rate gap are strong
+signal.
+
+#### Speed (`run-speed.py`)
+
+Run: `eval/runs/20261020T151126Z/speed/summary.md`
+
+| Rank | Model | Gen tok/s | Prompt tok/s | Load | GGUF | VRAM | GPU/CPU split |
+|---|---|---:|---:|---:|---:|---:|---|
+| 1 | `lite` | 133.5 | 3407 | 4.4s | 5.5 GiB | 6.7 GiB | all GPU, MTP |
+| 2 | `qwen` | 60.2 | 1077 | 13.1s | 20.2 GiB | 6.1 GiB | 35 MoE layers on CPU, MTP |
+| 3 | `gemma` | 47.4 | 1599 | 7.9s | 13.4 GiB | 6.0 GiB | 22 MoE layers on CPU |
+
+Finding: every model is faster on 11768. Against 2026-09-17, generation rose
+17% for `lite` (114.3), 9% for `qwen` (55.0), and 5% for `gemma` (45.1), and
+prompt ingest rose 13%, 6%, and 3%. Part of `lite`'s gain is its low 2026-09-17
+reading: against the 125 to 126 it read in the tuning sweep with the same
+settings, the gain is about 6%. `gemma`'s 2.3 tok/s is inside the ±3 tok/s repeat
+spread. `qwen`'s 5.2 is just outside it, and the `verify-build` smoke the same
+morning read 60.1, so that gain repeated. VRAM is unchanged: `verify-build`
+measured every model at exactly the 11537 footprint (+0 MiB). Each prompt is a
+single attempt.
+
+#### Coding (`run-code.py`)
+
+Run: `eval/runs/20261020T151220Z/code/summary.md`
+
+| Rank | Model | Pass rate | Passed | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|
+| 1 | `gemma` | 100% | 27/27 | 7.8 | 46 |
+| 2 | `lite` | 96% | 26/27 | 1.9 | 166 |
+| 3 | `qwen` | 93% | 25/27 | 6.0 | 76 |
+
+Finding: a tie, flagged by the runner. Every miss is `decode_string`: `qwen`
+passed 1 of 3 (both failures the same `TypeError`, multiplying a string by a
+string) and `lite` 2 of 3 (`IndexError`). `gemma` has scored 27, 26, 25, and 27
+across the passes since 2026-09-15, so its 27/27 is its usual range rather than a
+step up. Its average time rose from 5.6 to 7.8s at the same 46 tok/s, which
+points to longer answers.
+
+#### Content (`run-content.py`)
+
+Run: `eval/runs/20261020T151927Z/content/summary.md`
+
+| Rank | Model | Clean rate | Clean | Avg s | Tok/s | Avg words |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `lite` | 100% | 9/9 | 3.5 | 111 | 191 |
+| 2 | `gemma` | 100% | 9/9 | 8.4 | 47 | 207 |
+| 3 | `qwen` | 78% | 7/9 | 10.1 | 50 | 232 |
+
+Finding: `gemma` is 9/9, as in every pass since 2026-07-28, and `lite` is clean on every
+task for the first time (8/9 on 2026-09-17). `qwen`'s two misses are again both
+`tech_explain` running long: 210 and 218 words against a 200 limit. Its average
+length rose from 218 to 232 words. No `qwen` reply was empty here, against the
+one first-token stop seen in the same morning's smoke.
+
+#### Learning (`run-learn.py`)
+
+Run: `eval/runs/20261020T153834Z/learn/summary.md`
+
+| Rank | Model | Teach /10 | Code pass | Explanation /10 | Explanation when correct |
+|---|---|---:|---:|---:|---:|
+| 1 | `gemma` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 2 | `qwen` | 9.8 | 12/12 | 9.8 | 9.8 |
+| 3 | `lite` | 8.9 | 11/12 | 9.7 | 9.7 |
+
+Finding: `gemma` and `qwen` tie again, now in the other order. `lite` rose from
+9/12 to 11/12 on the code gate, and its one miss (`lru_cache`, wrong answer) is
+the whole gap. Judges parsed 216/216 calls, inter-judge σ 0.18/10. The rubric is
+still saturated, so `--judge-rubric strict` remains the way to get a real ranking.
+
+#### Tutor (`run-tutor.py`, leak-gated)
+
+Run: `eval/runs/20261020T155601Z/tutor/summary.md`
+
+| Rank | Model | Teach /10 | Leaks | Explanation /10 |
+|---|---|---:|---:|---:|
+| 1 | `gemma` | 9.5 | **0/15** | 9.5 |
+| 2 | `qwen` | 6.2 | 5/15 | 9.1 |
+| 3 | `lite` | 6.0 | 5/15 | 9.1 |
+
+Finding: `gemma` is back to zero leaks (Wilson 0 to 20%), as on 2026-09-15, after
+2/15 on 2026-09-17. `qwen` and `lite` both leaked 5 of 15 (15 to 58%) and
+swapped places on teach score, which is inside their overlap. The leak gate is
+deterministic. Judges parsed 270/270 calls, σ 0.36/10.
+
+#### JSON / long-context (`run-json.py`)
+
+Run: `eval/runs/20261020T152648Z/json/summary.md`
+
+| Rank | Model | Score | Schema OK | Fact rate | Avg s | Tok/s |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | `lite` | 100% | 100% | 100% | 2.3 | 134 |
+| 2 | `qwen` | 100% | 100% | 100% | 7.1 | 65 |
+| 3 | `gemma` | 100% | 100% | 100% | 5.2 | 47 |
+
+Finding: a three-way 100% in every pass since 2026-09-15. Times moved by 0.2s or less.
+
+#### Prompt stack (`run-persona.py`)
+
+Run: `eval/runs/20261020T152245Z/persona/summary.md` (stacked only, no baseline pass)
+
+| Rank | Model | Clean rate | Clean |
+|---|---|---:|---:|
+| 1 | `qwen` | 90% | 19/21 |
+| 2 | `gemma` | 57% | 12/21 |
+| 3 | `lite` | 52% | 11/21 |
+
+Finding: `qwen` missed `unverified` twice. Both answers stated the git config key
+and its default with no `Unverified:` marker, while the third opened with one.
+The rule's worked example changed on 2026-10-09, but the task asks about a git
+config key, which is disjoint from both the old example and the new one, and 2
+misses in 3 is within the measured noise floor. `gemma` and `lite` still fail
+`unverified` and `fields_echo` 0/3. `gemma` also failed `model_origin` 0/3 (named
+the maker each time), and `lite` passed `model_origin` and `familiar_skill` 1 of
+3 each.
+
+#### Tool calling (`run-tools.py`)
+
+Run: `eval/runs/20261020T162940Z/tools/summary.md` (rerun after the `tool_error`
+fix, 13 tasks × 3 attempts)
+
+| Rank | Model | Pass rate | Passed | Avg s | Failure shapes |
+|---|---|---:|---:|---:|---|
+| 1 | `lite` | 100% | 39/39 | 1.8 | none |
+| 2 | `qwen` | 95% | 37/39 | 5.6 | answer-missing ×2 |
+| 3 | `gemma` | 69% | 27/39 | 3.2 | no-call ×9, wrong-arg ×3 |
+
+Finding: `lite` passed every task, including `empty_results`, where it answered
+from memory on all 3 attempts on 2026-09-17. `qwen`'s two misses are both
+`grounded_answer`: it called the search tool and then declined to report the
+version it returned, because the result came from an `example.org` domain. It
+did the same in the standard pass's own tools run and in the morning's smoke, so
+that is a behavior, not noise. `gemma` failed exactly the tasks it failed on
+2026-09-17: `get_weather` in celsius after being asked for Fahrenheit, and no
+tool call on `chain_lookup`, `result_beats_prior`, and `empty_results`.
+
+The standard pass's own tools run (`eval/runs/20261020T153155Z/tools`) scored
+`qwen` 37/39 too, but one of those misses was a `tool_error` answer ("the
+upstream weather service is currently down, so I can't pull the live data") that
+the old word list rejected. The list now accepts "can't", "cannot", "is down",
+and "currently down", and `test_qwen_down_and_cant_wording_passes` pins it. This
+is the suite's second full run, and the 0/3 or 3/3 pattern held for every task
+except `qwen`'s `grounded_answer`.
+
+#### Picks from that pass
+
+From the 2026-10-20 `standard` pass above, on build 11768. The tool-calling rows
+use the rerun of the same day.
+
+| Use | Pick | Basis |
+|---|---|---|
+| Fast local default | `lite` | 133.5 tok/s fully on GPU, 2.2× `qwen` (60.2) and 2.8× `gemma` (47.4). |
+| Agentic tools (Cline) | `lite` | Leads both numbers that matter: prompt ingest 3407 tok/s vs `gemma` 1599 and `qwen` 1077, and tool calling 39/39 vs `qwen` 37/39 and `gemma` 27/39. |
+| Tool calling / agent loops | `lite` | 39/39 vs `qwen` 37/39 and `gemma` 27/39, deterministic scoring. `qwen`'s two misses are one behavior: it will not trust a result from an `example.org` domain. |
+| Coding puzzles / small functions | `gemma` | 27/27 vs `lite` 26/27 and `qwen` 25/27. The runner flags a tie, so the pick rests on consistency: `gemma` has scored 25 to 27 in every pass since 2026-09-15. |
+| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. `lite` matched it for the first time. `qwen` 7/9, still over the word limit on `tech_explain`. |
+| Leak-gated tutoring | `gemma` | 0/15 leaks vs 5/15 for both others. Deterministic, not judge-scored. |
+| Learning explanations | `qwen` or `gemma` (tie) | Both 9.8 with 12/12 on the code gate. |
+| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.3s against 5.2s and 7.1s. |
+| Prompt-stack fidelity | `qwen` | 90% clean vs 57% (`gemma`) and 52% (`lite`). |
+
+The split moved. `lite` now takes everything speed-shaped and both tool rows,
+`gemma` takes content, tutoring, and coding, and `qwen` keeps the prompt stack
+and ties learning. `gemma` remains the weakest tool caller by a wide margin,
+which is worth knowing before pointing an agent at the model that wins the
+quality suites.
 
 ### KV cache q4_0 vs q8_0 for tool calling (2026-09-17)
 
@@ -796,7 +974,9 @@ What the first design exposed, and still stands:
   6.8 GiB, and the fitter at the 2 GB margin keeps only 29 of its 34 layers on the
   GPU on 11022. It runs all-GPU with roughly 1.7 GB to spare on a typical
   desktop. The 2 GB rule was written for the MoE splits, and `lite` was never
-  probed against it at this context.
+  probed against it at this context. At 131072 context (2026-10-30, build 12009)
+  all-GPU leaves only about 0.4 GB free, and the margin would keep 22 of 34
+  layers on the GPU. Casey kept it all-GPU.
 - **At the desktop VRAM use of 2026-09-25, `qwen`'s pinned 35 is one layer short
   of the 2 GB margin** on both builds (the fitter chose 36). The pins assume
   about 1.1 GB held by desktop apps. This is the same question the owed spike

@@ -3,7 +3,8 @@ set -euo pipefail
 
 MODEL_NAME="lite"
 # Dense ~9B, ~6.6 GB — the only model in the lineup that fits entirely in the
-# 3080's 10 GB alongside a 32k KV cache, so it anchors the leaderboard with a
+# 3080's 10 GB alongside its KV cache (at 131072 context with only about 0.4 GB
+# to spare, see LOAD below), so it anchors the leaderboard with a
 # no-CPU-spillover speed baseline. It is also the third judge: with only two
 # models, leave-one-out grading leaves exactly one judge per response and
 # inter-judge disagreement can never be computed.
