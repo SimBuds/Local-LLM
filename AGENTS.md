@@ -1133,7 +1133,10 @@ repos, and one ended in a colon with no template after it.)
   24 and 37 passed the spike test on 2026-10-31: 5 of 5 load-and-request cycles
   each at 2979 to 2981 MiB of other GPU use, with 1.1 GB (gemma) and 1.2 GB
   (qwen) still free at peak. `lite` failed to load at 2837 MiB, as expected.
-  Details in `TESTING.md`, *Spike test at 131072 context*. (2026-10-31)
+  A step test then put `lite`'s limit at about 1.7 GB of other GPU use: 3 of 3
+  at 1705 MiB, while at 1805 MiB it loaded and then crashed with CUDA out of
+  memory on its first request. Details in `TESTING.md`, *Spike test at 131072
+  context*. (2026-10-31)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and

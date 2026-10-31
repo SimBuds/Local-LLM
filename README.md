@@ -213,7 +213,8 @@ from what is free at that moment, which is exactly why it is then pinned. It
 refuses to probe while the router at `LLM_URL` (default `http://localhost:8080`)
 lists a model as loaded or loading, and names the model. Free it with
 `llm unload`. A sleeping model has already released its VRAM and does not block
-the probe. The probe also passes `server.ini`'s `ubatch-size` as `-ub`. A model
+the probe. The probe also passes `server.ini`'s `ctx-size` as `-c` and its
+`ubatch-size` as `-ub`, and stops if `ctx-size` is missing. A model
 that fits entirely gets no `n-cpu-moe` and says so. `--no-probe` skips the probe
 and leaves the split for you to fill in.
 
@@ -292,9 +293,11 @@ re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
 spike test. 24 and 37 passed it on 2026-10-31, 5 of 5 cycles each, with about
 1.1 GB (gemma) and 1.2 GB (qwen) still free at peak. At 131072, gemma generates
 about 5 to 8% slower than at 22, and qwen showed no measurable change. `lite`
-stays all-GPU by Casey's choice, with only about 0.4 GB free at 131072, so a
-desktop VRAM spike can crash it. In the same test it failed to load at 2.8 GB of
-other GPU use.
+stays all-GPU by Casey's choice, with only about 0.4 GB free at 131072 while the
+desktop holds 1.4 GB, so a desktop VRAM spike can crash it. It runs with up to
+about 1.7 GB of other GPU use, about 0.75 GB above the 0.94 GB the desktop held
+when that was measured (2026-10-31). At 1.8 GB it loaded and then crashed on its
+first request, which a client sees as an HTTP 500.
 
 Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
 reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB
@@ -347,8 +350,9 @@ The `echo` must print a numeric pid. A line ending
 `n-cpu-moe = 34`. Drop `--spec-type draft-mtp` for `gemma`, which has no MTP
 layer. `-ub 1024` matches `server.ini`, because the compute buffer grows with the
 physical batch. Use `-ub 512` for `lite`, or for any model whose `LOAD` pins 512.
-`./add-model` reads `ubatch-size` from `server.ini` and passes it as `-ub`, so a
-new builder's split is sized for the batch the router serves at. A model that
+`./add-model` reads `ctx-size` and `ubatch-size` from `server.ini` and passes
+them as `-c` and `-ub`, so a new builder's split is sized for the context and
+batch the router serves at. A model that
 fits entirely prints no overflow and needs no `n-cpu-moe`.
 The count moves with the VRAM free at that moment, which is why it is pinned
 rather than re-fitted per run, so close apps that hold VRAM before deriving one.
@@ -651,8 +655,10 @@ any of them is a coordinated change across repos, not a local edit:
 - One model is loaded at a time. An app asking for a different model unloads the
   current one, so two apps using different models take turns paying the load.
 - After 10 idle minutes a loaded model goes to sleep and frees its VRAM. The next
-  request wakes it without any change on the client side: `lite` answered in
-  about 1 to 2 seconds in testing (gemma and qwen wake times were not measured).
+  request wakes it without any change on the client side. `lite` answered in
+  about 1 to 2 seconds in testing. `gemma` took 11.0 s and `qwen` 17.6 s for a
+  short request that takes 2.4 s and 3.1 s awake, so waking costs them about as
+  much as a cold load (2026-10-31, see [`TESTING.md`](TESTING.md)).
   While it sleeps, `GET /models` reports `sleeping`.
 
 ## Use In VSCode (Continue / Cline)

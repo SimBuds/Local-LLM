@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -406,7 +407,8 @@ class ProbeFitTests(AddModelTestCase):
     def test_probe_sends_the_physical_batch_server_ini_sets(self):
         # The compute buffer grows with the physical batch, so a split probed at
         # the default 512 under-counts VRAM for a router that serves at 1024.
-        (self.repo / "server.ini").write_text("[*]\nfit = off\nubatch-size = 1024\n")
+        (self.repo / "server.ini").write_text(
+            "[*]\nfit = off\nubatch-size = 1024\nctx-size = 131072\n")
         r = self.probe_run("spill", "batched\n", "free-plain.gguf")
         self.assertEqual(r.returncode, 0, r.stderr)
         args = self.spawned_args()
@@ -415,10 +417,38 @@ class ProbeFitTests(AddModelTestCase):
 
     def test_probe_sends_no_batch_when_server_ini_sets_none(self):
         # The router then serves at its own default, and so does the probe.
-        (self.repo / "server.ini").write_text("[*]\nfit = off\n")
+        (self.repo / "server.ini").write_text("[*]\nfit = off\nctx-size = 131072\n")
         r = self.probe_run("spill", "unbatched\n", "free-plain.gguf")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("-ub", self.spawned_args())
+
+    def test_probe_sends_the_context_server_ini_sets(self):
+        # The KV cache, the largest VRAM term after the weights, is sized from the
+        # context, so a split probed at another context is sized for another cache.
+        (self.repo / "server.ini").write_text("[*]\nfit = off\nctx-size = 65536\n")
+        r = self.probe_run("spill", "ctxed\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertEqual(args.count("-c"), 1, args)
+        self.assertEqual(args[args.index("-c") + 1], "65536")
+
+    def test_probe_context_matches_the_repo_server_ini(self):
+        served = re.search(r"^\s*ctx-size\s*=\s*(\d+)",
+                           (REPO / "server.ini").read_text(), re.MULTILINE).group(1)
+        r = self.probe_run("spill", "realctx\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertEqual(args[args.index("-c") + 1], served)
+
+    def test_missing_ctx_size_fails_before_probing(self):
+        # llama-server's default is the trained context (262144 for this lineup),
+        # which would size the split for a cache twice the one the router serves.
+        (self.repo / "server.ini").write_text("[*]\nfit = off\nubatch-size = 1024\n")
+        r = self.probe_run("spill", "noctx\n", "free-plain.gguf")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ctx-size", r.stderr)
+        self.assertFalse(self.args_file.exists(), "probed without knowing the context")
+        self.assertFalse((self.repo / "build-noctx").exists())
 
     def test_missing_server_ini_fails_before_probing(self):
         (self.repo / "server.ini").unlink()

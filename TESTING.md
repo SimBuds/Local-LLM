@@ -213,7 +213,9 @@ with later ones. A prompt that does overflow gets an HTTP 400 from
 llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
 moves the buried needle to measure position bias. Both are manual sweeps, not
 part of the default comparison. `--judge-rubric strict` on the learn/tutor
-runners pushes judges to reserve top marks when default grading saturates.
+runners pushes judges to reserve top marks when default grading saturates. On
+the learn suite it did not: measured 2026-10-31, answers whose code passed still
+scored 9.8 to 10.0 (*Strict-rubric learn run* under Historical Notes).
 
 ### Offline unit tests
 
@@ -488,7 +490,8 @@ Finding: `qwen` and `gemma` tie again, and the runner flags the 0.1 gap as insid
 its tie threshold. `lite` passed the code gate 11 of 12 (an `lru_cache` attempt
 used an undefined `Node` class), and that miss is its whole gap. In the repeat,
 judges parsed 216/216 calls, within-judge spread 0.07/10 (0.12 on 2026-10-30).
-The rubric is still saturated.
+The rubric is still saturated, and a strict-rubric run the same day scored 9.8 to
+10.0 too, so the tie is the rubric's ceiling rather than a measured equality.
 
 ### Tutor (`run-tutor.py`, leak-gated)
 
@@ -605,7 +608,7 @@ active parameters per token does.
 
 ### GPU faults (NVIDIA Xid 31)
 
-`llama-server` has crashed 19 times since 2026-07-28 with `CUDA error: an illegal
+`llama-server` has crashed 21 times since 2026-07-28 with `CUDA error: an illegal
 memory access`, logged by the kernel as `NVRM: Xid 31` (a GPU MMU fault). Every
 fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 
@@ -631,6 +634,7 @@ fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 | 2026-09-22 07:36 | service, build 11022 | `qwen` | all | 35 | no | 2478 s |
 | 2026-09-26 14:10 | service, build 11188 | `qwen` | all | 35 | no | about 1900 s (2) |
 | 2026-10-30 06:35 | scratch router, build 12009, 131072 context | `gemma` | all | 24 | no | about 19 s (3) |
+| 2026-10-31 11:55 | scratch router, build 12009, 131072 context | `gemma` | all | 24 | no | 108 s (4) |
 
 (1) This one ran on a scratch router whose log went to a file, not the journal.
 The model comes from the KV cache note above, and the journal's nearest service
@@ -649,6 +653,17 @@ reboot. Same signature as (2): abort in `ggml_backend_cuda_synchronize` during a
 decode, MMU fault at `GPC4 GPCCLIENT_T1_9`, `FAULT_PDE`, host-range address
 `0x7f30_156dc000`.
 
+(4) During a `run-learn.py --judge-rubric strict` run, while `gemma` was judging,
+108 s after its load finished. Abort in `ggml_backend_cuda_synchronize` called
+from `ggml_backend_sched_copy_input` (an input copy between the CPU and GPU
+backends), MMU fault at `GPC4 GPCCLIENT_T1_9`, `FAULT_PDE`, `VIRT_READ`,
+host-range address `0x7f6b_61586000`. No VRAM holder was running. GPU use read
+938 MiB just before the run, and the process list four minutes before that held
+only kwin, Brave's GPU process, and VS Code, so about 3 GB was free. The
+`nvidia-smi` capture after the crash came 20 minutes late, after the next
+measurement had run, and showed the same three desktop processes. The core dump
+(9.6 GB) is in systemd-coredump.
+
 What the table settles:
 
 - **The CPU-offloaded expert path is not required.** Five crashes had the dense
@@ -661,13 +676,13 @@ What the table settles:
 - **The vision projector is not required.** Every Ollama crash had one loaded
   and none of the router crashes did.
 - **Under Ollama, every crash came within 67 s of a model load**, mostly on the
-  first request. The router crashes came later (34 s to 41 minutes). Ollama
+  first request. The router crashes came later (19 s to 41 minutes). Ollama
   reloaded models far more often than the router does, so this may reflect how
   often each loaded rather than a load-time trigger. It is not established.
 - **Something other than llama.cpp hits the same fault.** A game (`Sand.exe`)
   logged Xid 31 on 2026-08-24, and games have logged Xid 32 (2026-08-10) and
   Xid 109 context-switch timeouts (four times on 2026-08-31).
-- **18 of the 19 fault addresses are in the host program-memory range**
+- **20 of the 21 fault addresses are in the host program-memory range**
   (`0x7f..`), including crashes with the model fully on the GPU. The game's
   fault and one router fault were at GPU-range addresses.
 - **Not measured:** crash rate per model. The journal records crashes, not hours
@@ -733,6 +748,16 @@ alongside) and remains untested. The prompt-stack suite then reran in full on th
 same build and preset with no fault. Whether to resume the investigation is
 Casey's call.
 
+**Triggered again, 2026-10-31.** Row (4), the day after (3), again `gemma` and
+the same signature. This time nothing was known to be loading the GPU: no holder
+was running and other GPU use was about 0.94 GB, so VRAM pressure is not needed
+for the fault. Whether Brave was playing video is not recorded. Earlier the same
+day the full `standard` pass (72 minutes) and 20 `gemma` and `qwen` spike-test
+cycles under about 3.0 GB held ran clean. After a reboot, the same suite reran in
+full at 13:22 with no fault (about 18 minutes, `gemma` included), with only
+kwin and VS Code on the GPU at its start. Whether to resume the investigation is
+Casey's call.
+
 ## Models Tested
 
 | Model | Status | Notes |
@@ -757,6 +782,49 @@ Casey's call.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Strict-rubric learn run (2026-10-31)
+
+`run-learn.py --judge-rubric strict`, three models, 3 attempts per task, on a
+scratch router on port 8081 over the repo preset (build 12009, 131072 context),
+written to the scratchpad so `promote.py` never sees it. It started at 17:22 UTC,
+after a first attempt aborted on a `gemma` GPU fault (*GPU faults* row (4)).
+Default-rubric figures are the 2026-10-31 `standard` pass.
+
+| Model | Teach default | Teach strict | Code pass default | Code pass strict | Explanation when correct (default, strict) |
+|---|---:|---:|---:|---:|---:|
+| `gemma` | 9.8 | 9.8 | 12/12 | 12/12 | 9.8, 9.8 |
+| `qwen` | 9.9 | 8.3 | 12/12 | 10/12 | 9.9, 10.0 |
+| `lite` | 9.0 | 8.2 | 11/12 | 10/12 | 9.8, 9.8 |
+
+Finding: the strict rubric does not lift the ceiling. Answers whose code passed
+scored 9.8 to 10.0, as under the default rubric. Judges parsed 216/216 calls,
+within-judge spread 0.08/10, inter-judge σ 0.10. `gemma` ranks first here only
+because `qwen` failed `lru_cache` twice (`NameError: name 'lru' is not defined`)
+after 12/12 that morning, and `lite` gave two wrong `lru_cache` answers. So the
+`qwen` and `gemma` tie on explanations is the rubric's ceiling, and the order
+between them follows code-gate noise. Telling them apart needs a different
+rubric, which is a prompt change.
+
+### Wake from sleep (2026-10-31)
+
+`server.ini` sets `sleep-idle-seconds = 600`. Measured on a scratch router on
+port 8081 over the repo preset, build 12009, through `eval/_gateway.py`: load,
+two awake requests (a short prompt, 32-token cap), wait until `/models` reports
+`sleeping`, the same request from sleep, then one more awake.
+
+| Model | Cold load | Awake request | From sleep | Wake cost | GPU use asleep |
+|---|---:|---:|---:|---:|---:|
+| `gemma` | 12.5 s | 2.42 s | 10.99 s | 8.6 s | 1375 MiB |
+| `qwen` | 12.6 s | 3.12 s | 17.61 s | 14.5 s | 1407 MiB |
+
+Both reported `sleeping` about 600 s after their last request (polled every
+5 s). Wake cost is
+the from-sleep wall time minus the awake one, which is close to a cold load, so
+sleep frees VRAM at the price of a reload. The request after waking was back to
+awake speed (2.41 s and 3.17 s). GPU use asleep includes the desktop, which read
+938 MiB before the run and 1088 MiB after it. `lite` was not re-measured (about
+1 to 2 s in earlier testing).
 
 ### Spike test at 131072 context (2026-10-31)
 
@@ -787,6 +855,25 @@ run's router log had no out-of-memory line.
 `cudaMalloc failed: out of memory` while allocating 704 MiB, the only
 out-of-memory line in either run. This is the accepted all-GPU exception
 behaving as recorded: a desktop spike of this size stops `lite` from loading.
+
+Later the same day, `lite`'s limit was found by raising the hold in 100 MiB
+steps of other GPU use, with 3 load-and-request cycles per step through the same
+holder and gateway path:
+
+| Other GPU use | `lite` | Peak GPU use | Min free |
+|---:|---|---:|---:|
+| 937 MiB (desktop only) | 1/1 | 9021 MiB | 1219 MiB |
+| 1300 to 1700 MiB | 3/3 at every step | 9391 to 9791 MiB | 849 to 449 MiB |
+| 1805 MiB | **0/1** | 9867 MiB | crashed |
+
+`lite` itself peaks at about 8085 MiB. It runs with up to about 1.7 GB of other
+GPU use, which is about 0.75 GB above this boot's desktop use (0.94 GB) and
+about 0.3 GB above the 1.4 GB the desktop held on 2026-10-30. At 1805 MiB it did
+not fail at load. It loaded, then aborted on its first request with
+`CUDA error: out of memory` when the CUDA memory pool grew during a matrix
+multiply (exit 1, core dump). So a spike while `lite` is loaded kills the request
+in flight and the model process with it, which a client sees as an HTTP 500.
+At 2837 MiB the failure came earlier, at load.
 
 The first run held too little. Desktop use fell from 1042 to 984 MiB between
 calibrating the holder and starting it, and Brave's GPU process exited during
@@ -1031,6 +1118,12 @@ Findings:
   excluded them, which is why `gemma` shows 27/36. This is the same signature as
   the two crashes of 2026-09-17 morning, and it happened with `load-mode = none`
   in effect, so memory-mapped weights are not the cause. Unresolved.
+- **`lite`'s `tool_error` 0/3 at `q8_0` cannot be rescored.** It was scored with
+  the word list from before 2026-10-20, which missed refusals phrased "can't" or
+  "is down". The `q8_0` runs were on a scratch router and are gone. `lite` also
+  failed `tool_error` 0/3 at `q4_0` on 2026-10-31, and its tool tasks flip
+  between identical passes, so that 0/3 says nothing about the cache type.
+  (Checked 2026-10-31.)
 
 ### Build check and margin findings (2026-09-25)
 

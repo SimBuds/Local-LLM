@@ -279,16 +279,22 @@ probe_fit() {
   # one the router serves at. Until 2026-10-09 it passed none, and every split it
   # derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
   # server.ini has only the [*] section, so the first match is the shared value.
-  local ini="$AI_ROOT/server.ini" ub
-  [ -f "$ini" ] || die "no server.ini at $ini. The probe needs its ubatch-size to size the split the router will serve."
+  # The context is read the same way, so the probe cannot drift from the served
+  # one (it was hardcoded until 2026-10-31). Unlike the batch it is required:
+  # llama-server's default is the trained context, 262144 for this lineup, which
+  # sizes the split for a KV cache twice the one the router serves.
+  local ini="$AI_ROOT/server.ini" ub ctx
+  [ -f "$ini" ] || die "no server.ini at $ini. The probe needs its ubatch-size and ctx-size to size the split the router will serve."
   ub="$(sed -n 's/^[[:space:]]*ubatch-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
+  ctx="$(sed -n 's/^[[:space:]]*ctx-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
+  [ -n "$ctx" ] || die "no ctx-size in $ini. The probe sizes the KV cache from it, so it will not guess."
 
-  local -a cmd=(llama-server -m "$gguf" -c 131072 -np 1 -fa on -ctk q4_0 -ctv q4_0
+  local -a cmd=(llama-server -m "$gguf" -c "$ctx" -np 1 -fa on -ctk q4_0 -ctv q4_0
                 --no-mmproj --fit-target 2048 --port "$(free_port)" -lv 4)
   [ -n "$ub" ] && cmd+=(-ub "$ub")
   [ "$mtp" = yes ] && cmd+=(--spec-type draft-mtp)
 
-  echo "Probing the GPU/CPU split (--fit-target 2048$([ -n "$ub" ] && echo ", -ub $ub")$([ "$mtp" = yes ] && echo ', MTP on'))."
+  echo "Probing the GPU/CPU split (--fit-target 2048, -c $ctx$([ -n "$ub" ] && echo ", -ub $ub")$([ "$mtp" = yes ] && echo ', MTP on'))."
   echo "  Loading the model once. Close anything holding VRAM: the split is sized"
   echo "  from what is free right now, and that is why it gets pinned."
 
