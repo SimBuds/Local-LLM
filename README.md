@@ -288,10 +288,13 @@ held by other processes: all passed. The cost against the old values was about
 [`TESTING.md`](TESTING.md) under *Offload headroom*). The values were then
 re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
 35 at 65536 on 2026-09-16, and the current gemma 24 and qwen 37 at 131072 on
-2026-10-30 (build 12009). Neither later pair has had the 3.0 GB spike test. At
-131072, gemma generates about 5 to 8% slower than at 22, and qwen showed no
-measurable change. `lite` stays all-GPU by Casey's choice, with only about
-0.4 GB free at 131072, so a desktop VRAM spike can crash it.
+2026-10-30 (build 12009). 22 and 35 were replaced before they had the 3.0 GB
+spike test. 24 and 37 passed it on 2026-10-31, 5 of 5 cycles each, with about
+1.1 GB (gemma) and 1.2 GB (qwen) still free at peak. At 131072, gemma generates
+about 5 to 8% slower than at 22, and qwen showed no measurable change. `lite`
+stays all-GPU by Casey's choice, with only about 0.4 GB free at 131072, so a
+desktop VRAM spike can crash it. In the same test it failed to load at 2.8 GB of
+other GPU use.
 
 Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
 reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB

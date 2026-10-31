@@ -591,7 +591,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), and benchmarked the same day at 131072 context (the *Current Benchmark Snapshot* above and the README leaderboard). Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (under *Historical Notes*). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
+| llama.cpp | build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), benchmarked the same day at 131072 context and again on 2026-10-31 (the *Current Benchmark Snapshot* above and the README leaderboard), and spike-tested on 2026-10-31 (under *Historical Notes*). Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (under *Historical Notes*). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -757,6 +757,49 @@ Casey's call.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Spike test at 131072 context (2026-10-31)
+
+The 2026-09-14 method (*Offload headroom* below), applied to the values pinned on
+2026-10-30: gemma 24 and qwen 37 MoE layers on CPU at 131072 context, build
+12009. A scratch CUDA process held a fixed block of VRAM, sized from the desktop
+use read just before it started. Each cycle read other GPU use with no model
+loaded, then ran load, one real request with the full prompt stack (200-token
+cap), and unload through `eval/_gateway.py`, on a scratch router on port 8081
+over the repo preset. GPU use was sampled every 0.25 s through each cycle for the
+peak. Numbers are nvidia-smi MiB, as in the 2026-09-14 table.
+
+| Other GPU use | gemma 24 | qwen 37 | lite (all GPU) |
+|---:|---|---|---|
+| 2979 to 2981 MiB | **5/5**, peak 9115, min free 1125 | **5/5**, peak 9026, min free 1214 | not run |
+| 2792 to 2968 MiB (first run) | 5/5 | 5/5 | **0/1** |
+
+Finding: both pinned values pass, which settles the spike test owed since
+2026-10-30. gemma 22 and qwen 35, owed one since 2026-09-16, were replaced before
+it ran. CUDA reports the card as 9925 MiB, not 10240, so at the peak about 0.8 GB
+(gemma) and 0.9 GB (qwen) could still have been allocated. That puts the
+untested limit near 3.8 and 3.9 GB of other GPU use. Generation under the hold
+stayed in the range the benchmark suites show (gemma 42 to 47 tok/s, qwen 50 to
+60), as expected with `fit = off`, since the hold cannot move layers. The second
+run's router log had no out-of-memory line.
+
+`lite` failed its one load at 2837 MiB of other use with
+`cudaMalloc failed: out of memory` while allocating 704 MiB, the only
+out-of-memory line in either run. This is the accepted all-GPU exception
+behaving as recorded: a desktop spike of this size stops `lite` from loading.
+
+The first run held too little. Desktop use fell from 1042 to 984 MiB between
+calibrating the holder and starting it, and Brave's GPU process exited during
+the run, so 9 of 10 cycles read below the 2958 to 2993 MiB of 2026-09-14. The
+second run sized the hold at start time and stayed at 2979 to 2981 MiB. In the
+first run, one reading taken just after a `qwen` load showed 9515 MiB, about
+700 MiB above the same reading in its other cycles. Not explained. The second
+run's sampling saw no such spike in 10 cycles.
+
+Neither run logged an Xid or a core dump. That is 20 `gemma` and `qwen` loads
+and requests at about 1.1 GB free, which is weak evidence against VRAM pressure
+alone causing the 2026-10-30 fault (*GPU faults*), since each run lasted only
+about 3 minutes.
 
 ### llama.cpp standard pass on build 11768 (2026-10-20)
 

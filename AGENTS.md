@@ -1115,8 +1115,9 @@ repos, and one ended in a colon with no template after it.)
   The values were 21 and 34 at 32768 context, which passed that spike test. The
   context rose to 65536 on 2026-09-16, the KV cache roughly doubled, and the
   fitter then chose 22 and 35. Casey approved the new values without the spike
-  test, which is still owed: 22 and 35 were checked only with one
-  load-and-request each at about 1.1 GB held (7.1 GB used, no out-of-memory).
+  test: 22 and 35 were checked only with one load-and-request each at about
+  1.1 GB held (7.1 GB used, no out-of-memory), and were replaced on 2026-10-30
+  before a spike test ran.
   The values live in the tracked `build-gemma` and `build-qwen`, whose comments
   carry the fit lines. (2026-09-16)
   Accepted exception: `lite` runs all 34 layers on the GPU with about 1.7 GB
@@ -1125,10 +1126,14 @@ repos, and one ended in a colon with no template after it.)
   not pin layers to the CPU to restore the margin without asking. (2026-10-09)
   Context rose to 131072 on 2026-10-30 (build 12009), and the fitter chose 24
   and 37 at the 2 GB margin. Casey accepted gemma's cost of about 5 to 8%
-  generation speed. qwen showed none. Neither pair has had the spike test. `lite`
-  stays all-GPU at 131072 by Casey's choice, with only about 0.4 GB free (the
-  margin would keep 22 of 34 layers on the GPU at about 42 tok/s instead of 130),
-  so a desktop VRAM spike can crash it with out of memory. (2026-10-30)
+  generation speed. qwen showed none. `lite` stays all-GPU at 131072 by Casey's
+  choice, with only about 0.4 GB free (the margin would keep 22 of 34 layers on
+  the GPU at about 42 tok/s instead of 130), so a desktop VRAM spike can crash it
+  with out of memory. (2026-10-30)
+  24 and 37 passed the spike test on 2026-10-31: 5 of 5 load-and-request cycles
+  each at 2979 to 2981 MiB of other GPU use, with 1.1 GB (gemma) and 1.2 GB
+  (qwen) still free at peak. `lite` failed to load at 2837 MiB, as expected.
+  Details in `TESTING.md`, *Spike test at 131072 context*. (2026-10-31)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and
