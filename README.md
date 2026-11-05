@@ -483,7 +483,11 @@ still-running router before any restart.
 
 `build` refuses a checkout with uncommitted changes or a diverged history,
 records a `known-good-b<build>` branch at the commit you are leaving, and always
-configures with `--fresh`. A failed build leaves `build` untouched and
+configures with `--fresh`. It builds `llama-perplexity` beside `llama-server`
+(since 2026-11-05), so a later `verify-build` can compare the two builds' output
+distributions, and a build missing either binary is not swappable. A build folder
+cannot be moved, so builds made before this date have no `llama-perplexity` and
+cannot gain one. A failed build leaves `build` untouched and
 `build-next` unswappable. Then check it against this repo's preset before it
 goes live:
 

@@ -35,6 +35,14 @@ if [ "$1" = "--build" ]; then
   n=$(git -C "$LLAMA_SRC" rev-list --count HEAD); c=$(git -C "$LLAMA_SRC" rev-parse --short=9 HEAD)
   printf '#!/usr/bin/env bash\necho "version: 0.4.1-dev (build %s, commit %s)"\n' "$n" "$c" > "$2/bin/llama-server"
   chmod +x "$2/bin/llama-server"
+  # llama-perplexity only when asked for, unless STUB_NO_PPL plays a build that
+  # finished without it.
+  for t in "$@"; do
+    if [ "$t" = llama-perplexity ] && [ "${STUB_NO_PPL:-0}" != 1 ]; then
+      printf '#!/usr/bin/env bash\necho stub perplexity\n' > "$2/bin/llama-perplexity"
+      chmod +x "$2/bin/llama-perplexity"
+    fi
+  done
   exit 0
 fi
 while [ $# -gt 0 ]; do [ "$1" = "-B" ] && mkdir -p "$2" && touch "$2/CMakeCache.txt"; shift; done
@@ -153,6 +161,31 @@ class BuildTests(UpdateCase):
         self.assertTrue(configure and all("--fresh" in ln for ln in configure), configure)
         self.assertTrue(all("build-next" in ln for ln in configure), configure)
 
+    def test_build_asks_for_the_server_and_perplexity_in_one_call(self):
+        # verify-build compares KL divergence with llama-perplexity from both builds.
+        self.upstream_commit("x")
+        self.run_script("build")
+        builds = [ln for ln in self.log.read_text().splitlines() if ln.startswith("--build")]
+        self.assertEqual(len(builds), 1, builds)
+        self.assertIn("llama-server", builds[0])
+        self.assertIn("llama-perplexity", builds[0])
+
+    def test_build_leaves_both_binaries_and_is_swappable(self):
+        self.upstream_commit("x")
+        self.run_script("build")
+        ppl = self.src / "build-next" / "bin" / "llama-perplexity"
+        self.assertTrue(os.access(ppl, os.X_OK), f"{ppl} missing or not executable")
+        self.assertTrue((self.src / "build-next" / ".llama-update-ok").exists())
+
+    def test_build_without_perplexity_is_not_swappable(self):
+        self.upstream_commit("x")
+        r = self.run_script("build", allow_fail=True, STUB_NO_PPL="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("llama-perplexity", r.stdout + r.stderr)
+        self.assertFalse((self.src / "build-next" / ".llama-update-ok").exists())
+        swap = self.run_script("swap", allow_fail=True)
+        self.assertNotEqual(swap.returncode, 0, "a build without llama-perplexity was swappable")
+
     def test_dirty_tree_is_refused(self):
         self.upstream_commit("x")
         (self.src / "CMakeLists.txt").write_text("# local edit\n", encoding="utf-8")
@@ -194,6 +227,8 @@ class SwapAndRollbackTests(UpdateCase):
         r = self.run_script("swap")
         self.assertIn("build 2", self.version("build"))
         self.assertIn("build 1", self.version("build-prev"))
+        self.assertTrue((self.src / "build" / "bin" / "llama-perplexity").exists(),
+                        "llama-perplexity did not travel with the swap")
         self.assertFalse((self.src / "build-next").exists())
         self.assertIn("systemctl --user restart llama-server", r.stdout)
         self.assertFalse(self.syslog.exists(), "swap must print the restart, not run it")

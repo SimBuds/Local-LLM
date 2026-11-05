@@ -103,12 +103,17 @@ cmd_build() {
   # g++-15 host compiler that no longer existed, and configure failed.
   cmake --fresh -S "$SRC" -B "$NEXT" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$ARCH" \
     -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-  if ! cmake --build "$NEXT" -j "$(nproc)" --target llama-server; then
+  # llama-perplexity is built with the server so verify-build can compare KL
+  # divergence between the live build and this one. A build folder cannot be
+  # moved, so a target missing here cannot be added after the swap.
+  if ! cmake --build "$NEXT" -j "$(nproc)" --target llama-server llama-perplexity; then
     die "the build failed. The live build is untouched and $NEXT is not swappable."
   fi
   local v
   v=$(version_of "$NEXT")
   [ -n "$v" ] || die "the build finished but $NEXT/bin/llama-server does not report a version"
+  [ -x "$NEXT/bin/llama-perplexity" ] \
+    || die "the build finished but $NEXT/bin/llama-perplexity is missing, so $NEXT is not swappable."
   touch "$NEXT/$OK_MARK"
   echo
   echo "Built: $v"
