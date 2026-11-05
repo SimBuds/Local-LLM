@@ -421,11 +421,12 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-The installed build is 12009 (commit `e216f4ec8`), swapped in on 2026-10-30
+The installed build is 12155 (commit `e30ad80fd`), swapped in on 2026-11-05
 through `scripts/llama-update` after `scripts/verify-build` passed it: at every
-pinned split it needed at most 12 MiB more VRAM than 11768 (gemma +12, lite +4,
-qwen +4), the smoke profile passed, and no GPU fault was logged. Build 11768
-(commit `1ba568c5a`) ran from 2026-10-20 and is now the rollback target. The
+pinned split it needed exactly the same VRAM as 12009 (gemma 6066, lite 8038,
+qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. Build
+12009 (commit `e216f4ec8`) ran from 2026-10-30 and is now the rollback target.
+12155 has not been benchmarked yet. The
 current leaderboard was measured on build 12009 on 2026-10-31, repeating the
 2026-10-30 pass at the same config. The ones before it
 came from build 11768 (2026-10-20) and build 11022 (commit `f172be756`,
@@ -927,9 +928,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit 100% on GPU run fast. Dense spillover is usually too slow; MoE
 spillover can remain usable because fewer parameters are active per token.
 Desktop apps hold about 1 GB of the card at idle, so the usable budget for a
-model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 12009
-(`e216f4ec8`) with CUDA 13.4, from 2026-10-30. The published numbers are from
-the same build.
+model plus its KV cache is closer to 8.6 GB. Runtime: llama.cpp build 12155
+(`e30ad80fd`) with CUDA 13.4, from 2026-11-05. The published numbers are from
+build 12009 (`e216f4ec8`).
 
 ## Docs
 
