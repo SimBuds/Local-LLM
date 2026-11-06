@@ -783,6 +783,28 @@ Casey's call.
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
 
+### KL divergence noise floor in verify-build (2026-11-06)
+
+`verify-build` gained a report-only KL divergence row per model (README,
+*Updating llama.cpp*). To learn what an unchanged build reads, it was run twice
+with build 12174 (`18ab62a8e`) as both the live and the candidate build, with
+`--skip-smoke`, 20 chunks of 512 tokens of the wikitext-2 test set, each model at
+its pinned split and q4_0 KV cache.
+
+| Model | Mean KLD (run 1, run 2) | Same top p | Reference file |
+|---|---|---|---|
+| `gemma` | -0.000000, -0.000000 | 100.000 % | 2.67 GB |
+| `lite` | -0.000000, -0.000000 | 100.000 % | 2.53 GB |
+| `qwen` | -0.000000, -0.000000 | 100.000 % | 2.53 GB |
+
+Per-token KLD stayed within about ±0.00006 (a 4-chunk `lite` capture), which is
+the rounding of the stored log-probabilities. Each run took about 3.2 minutes
+including the VRAM loads. So the floor is zero, and any non-zero mean KLD between
+two builds is a real numerical difference. Whether a given difference matters is
+not known yet: a gate needs a few real build-to-build readings first. The live
+12155 build has no `llama-perplexity`, so the first real reading comes at the
+update after 12174.
+
 ### Strict-rubric learn run (2026-10-31)
 
 `run-learn.py --judge-rubric strict`, three models, 3 attempts per task, on a

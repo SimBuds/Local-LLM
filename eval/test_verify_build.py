@@ -66,6 +66,52 @@ SMI = ("1561, /usr/bin/kwin_wayland, 107\n"
        "2295, /opt/brave-bin/brave, 208\n")
 
 
+# The statistics block of a real run: llama-perplexity --kl-divergence, build
+# 12174 (18ab62a8e), lite, 4 chunks, the same binary writing and reading the
+# reference (2026-11-06). Same-binary KLD prints as -0.000000.
+KL_LOG = """====== Perplexity statistics ======
+Mean PPL(Q)                   :   7.593611 ±   0.621541
+Mean PPL(base)                :   7.593604 ±   0.621540
+Cor(ln(PPL(Q)), ln(PPL(base))): 100.00%
+Mean ln(PPL(Q)/PPL(base))     :   0.000001 ±       -nan
+Mean PPL(Q)/PPL(base)         :   1.000001 ±       -nan
+Mean PPL(Q)-PPL(base)         :   0.000008 ±       -nan
+
+====== KL divergence statistics ======
+Mean    KLD:  -0.000000 ±   0.000000
+Maximum KLD:   0.000064
+99.9%   KLD:   0.000050
+99.0%   KLD:   0.000034
+95.0%   KLD:   0.000020
+90.0%   KLD:   0.000016
+Median  KLD:  -0.000000
+10.0%   KLD:  -0.000015
+ 5.0%   KLD:  -0.000024
+ 1.0%   KLD:  -0.000040
+ 0.1%   KLD:  -0.000050
+Minimum KLD:  -0.000052
+
+====== Token probability statistics ======
+Mean    Δp:  0.000 ± 0.000 %
+Maximum Δp:  0.004%
+99.9%   Δp:  0.004%
+99.0%   Δp:  0.003%
+95.0%   Δp:  0.001%
+90.0%   Δp:  0.000%
+75.0%   Δp:  0.000%
+Median  Δp:  0.000%
+25.0%   Δp:  0.000%
+10.0%   Δp: -0.000%
+ 5.0%   Δp: -0.001%
+ 1.0%   Δp: -0.002%
+ 0.1%   Δp: -0.004%
+Minimum Δp: -0.005%
+RMS Δp    :  0.001 ± 0.000 %
+Same top p: 100.000 ± 0.000 %
+
+"""
+
+
 class PresetTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -221,6 +267,22 @@ def fake_run(write_ref=True, live_rc=0, cand_rc=0, cand_log=""):
             stdout.write(cand_log)
         return mock.Mock(returncode=cand_rc if candidate else live_rc)
     return run, calls
+
+
+class ParseKlTests(unittest.TestCase):
+    def test_reads_mean_kld_and_same_top_p_from_a_real_log(self):
+        self.assertEqual(vb.parse_kl(KL_LOG), (-0.0, 100.0))
+
+    def test_reads_a_nonzero_result(self):
+        log = (KL_LOG.replace("Mean    KLD:  -0.000000", "Mean    KLD:   0.003172")
+               .replace("Same top p: 100.000", "Same top p:  98.412"))
+        self.assertEqual(vb.parse_kl(log), (0.003172, 98.412))
+
+    def test_a_log_cut_off_before_the_statistics_reads_none(self):
+        self.assertIsNone(vb.parse_kl(KL_LOG.split("====== KL divergence")[0]))
+
+    def test_a_log_without_same_top_p_reads_none(self):
+        self.assertIsNone(vb.parse_kl(KL_LOG.split("====== Token probability")[0]))
 
 
 class KlCompareTests(unittest.TestCase):

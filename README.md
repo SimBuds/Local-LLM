@@ -501,7 +501,27 @@ It loads each model at its pinned split with the live build and then the new
 one, and fails if the new one needs more than 100 MiB of extra VRAM. It then
 runs the smoke profile on a scratch router on 8081 (results go to a temp folder,
 never `eval/runs/`) and fails on any new GPU fault. It ends with `PASS` or `FAIL`
-and a non-zero exit on failure. On a `PASS`, swap it in and restart:
+and a non-zero exit on failure.
+
+It also prints an `INFO` row per model with the new build's KL divergence from
+the live build: how far the new build's next-token probabilities drift from the
+old one's on the wikitext-2 test set (20 chunks of 512 tokens, at each model's
+pinned split and cache types). `INFO` rows never change the verdict. The same
+binary on both sides gives a mean KLD of 0 and 100 % same top token, so any
+non-zero value is a real numerical change in the build. The row says `skipped`
+when either build has no `llama-perplexity` (builds made before 2026-11-05) or the
+corpus is missing. Fetch the corpus once:
+
+```bash
+# Runs in: local terminal. Writes only ~/models/eval-data. Safe to re-run.
+mkdir -p ~/models/eval-data && cd ~/models/eval-data && sh ~/src/llama.cpp/scripts/get-wikitext-2.sh
+```
+
+The reference logits are 2.5 to 2.7 GB per model. They go to `.scratch/kld/` in
+the repo (gitignored), because `/tmp` is RAM on this box, and each is deleted as
+soon as its model is done. `--skip-kl` turns the report off.
+
+On a `PASS`, swap it in and restart:
 
 ```bash
 # Runs in: local terminal, repo root. The printed restart is yours to run.
