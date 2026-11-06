@@ -22,6 +22,13 @@ spare ports, and stops everything it started. Three checks, all must pass:
      result lands in eval/runs/ (which the README leaderboard is built from).
   3. GPU faults. The kernel's Xid count must not rise during the run.
 
+It also reports, without gating, each model's KL divergence of the candidate
+against the live build: llama-perplexity from the live build writes reference
+logits over the wikitext-2 test set, and the candidate's reads them. The
+reference is written to .scratch/kld/ in the repo, never /tmp, which is tmpfs
+on this box: a reference of a few GB held in RAM beside qwen's CPU experts is the
+same pressure that got the service OOM-killed on 2026-11-04.
+
 Standalone like scripts/llm: stdlib only, no imports from eval/.
 """
 
@@ -48,6 +55,14 @@ DEFAULT_LIVE = Path.home() / "src/llama.cpp/build/bin/llama-server"
 TOLERANCE_MIB = 100
 LOAD_TIMEOUT_S = 240
 ROUTER_TIMEOUT_S = 60
+# llama-perplexity's default chunk. Each chunk scores its second half, and the
+# reference stores every scored token's full distribution over the vocabulary.
+KL_CTX = 512
+KL_CHUNKS = 20
+KL_SCRATCH = REPO / ".scratch" / "kld"
+DEFAULT_CORPUS = Path.home() / "models/eval-data/wikitext-2-raw/wiki.test.raw"
+FETCH_CORPUS = ("mkdir -p ~/models/eval-data && cd ~/models/eval-data "
+                "&& sh ~/src/llama.cpp/scripts/get-wikitext-2.sh")
 
 
 # --- pure parts (unit-tested) -------------------------------------------------
@@ -75,6 +90,36 @@ def footprint_cmd(binary: str, settings: dict[str, str], port: int) -> list[str]
         if settings.get(key):
             cmd += [flag, settings[key]]
     return cmd
+
+
+def kl_cmd(ppl: str, settings: dict[str, str], corpus: str, kld: str, chunks: int,
+           candidate: bool) -> list[str]:
+    """llama-perplexity at the preset's split and cache types. The live run writes
+    the reference logits to `kld`, the candidate run (candidate=True) reads them.
+    Context, ubatch, MTP and mmproj are left out: the chunk is KL_CTX tokens, and
+    the other two are server-only."""
+    cmd = [ppl, "-m", settings["model"], "-f", corpus, "-c", str(KL_CTX),
+           "--chunks", str(chunks), "--fit", "off", "-ngl", "99"]
+    for key, flag in (("n-cpu-moe", "--n-cpu-moe"), ("cache-type-k", "-ctk"),
+                      ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
+                      ("load-mode", "--load-mode")):
+        if settings.get(key):
+            cmd += [flag, settings[key]]
+    cmd += ["--kl-divergence-base", kld]
+    if candidate:
+        cmd.append("--kl-divergence")
+    return cmd
+
+
+def parse_kl(text: str) -> tuple[float, float] | None:
+    """(mean KLD, same top p in %) from a --kl-divergence log, or None."""
+    kld = top = None
+    for line in text.splitlines():
+        if line.startswith("Mean    KLD:"):
+            kld = float(line.split(":", 1)[1].split()[0])
+        elif line.startswith("Same top p:"):
+            top = float(line.split(":", 1)[1].split()[0])
+    return None if kld is None or top is None else (kld, top)
 
 
 def process_vram(pid: int, smi: str) -> int | None:
@@ -168,6 +213,34 @@ def measure(binary: str, name: str, settings: dict[str, str], out: Path,
         stop(proc)
 
 
+def kl_compare(live_ppl: Path, cand_ppl: Path, name: str, settings: dict[str, str],
+               corpus: Path, chunks: int, out: Path, scratch: Path) -> str:
+    """One INFO line: the candidate's KL divergence from the live build, or why not."""
+    for ppl in (live_ppl, cand_ppl):
+        if not os.access(ppl, os.X_OK):
+            return (f"skipped: no llama-perplexity at {ppl} (builds made before "
+                    f"2026-11-05 have none)")
+    if not corpus.is_file():
+        return f"skipped: no corpus at {corpus}. Fetch it: {FETCH_CORPUS}"
+    scratch.mkdir(parents=True, exist_ok=True)
+    kld = scratch / f"{name}.kld"
+    logs = {tag: out / f"kl-{name}-{tag}.log" for tag in ("live", "candidate")}
+    try:
+        for tag, ppl in (("live", live_ppl), ("candidate", cand_ppl)):
+            with open(logs[tag], "w", encoding="utf-8") as log:
+                rc = subprocess.run(kl_cmd(str(ppl), settings, str(corpus), str(kld), chunks,
+                                           candidate=tag == "candidate"),
+                                    stdout=log, stderr=subprocess.STDOUT).returncode
+            if rc != 0:
+                return f"the {tag} run exited {rc} (log: {logs[tag]})"
+        result = parse_kl(logs["candidate"].read_text(encoding="utf-8", errors="replace"))
+        if result is None:
+            return f"no KLD in the candidate log (log: {logs['candidate']})"
+        return f"mean KLD {result[0]:.6f}, same top p {result[1]:.3f} %"
+    finally:
+        kld.unlink(missing_ok=True)
+
+
 def smoke(binary: str, preset: Path, models: list[str], port: int, out: Path) -> tuple[bool, str]:
     router_log = out / "router.log"
     with open(router_log, "w", encoding="utf-8") as log:
@@ -223,6 +296,11 @@ def main() -> int:
     ap.add_argument("--service-url", default="http://localhost:8080")
     ap.add_argument("--port", type=int, default=8081, help="port for the scratch router")
     ap.add_argument("--skip-smoke", action="store_true", help="run only the footprint check")
+    ap.add_argument("--skip-kl", action="store_true", help="skip the KL divergence report")
+    ap.add_argument("--kl-text", type=Path, default=DEFAULT_CORPUS,
+                    help="corpus for the KL report (default: the wikitext-2 test set)")
+    ap.add_argument("--kl-chunks", type=int, default=KL_CHUNKS,
+                    help=f"{KL_CTX}-token chunks to score (default: %(default)s)")
     args = ap.parse_args()
 
     binary = str(Path(args.binary).expanduser())
@@ -244,7 +322,8 @@ def main() -> int:
     print(f"Candidate: {version}\n  {binary}\nLive:      {live_version}\n  {live}\n"
           f"Preset:    {args.preset}\nLogs:      {out}\n")
     xid_before = xid_count()
-    rows: list[tuple[str, bool, str]] = []
+    # ok is None for a report-only row (INFO), which never decides the verdict.
+    rows: list[tuple[str, bool | None, str]] = []
     for name, settings in models.items():
         print(f"  {name}: loading on the live build, then the candidate ...", flush=True)
         live_mib, live_err = measure(live, name, settings, out, "live")
@@ -252,6 +331,12 @@ def main() -> int:
         ok, why = judge_footprint(live_mib, cand_mib, TOLERANCE_MIB)
         detail = "; ".join(e for e in (live_err, cand_err) if e)
         rows.append((f"VRAM {name}", ok, f"{why}{' [' + detail + ']' if detail else ''}"))
+    if not args.skip_kl:
+        ppls = [Path(b).parent / "llama-perplexity" for b in (live, binary)]
+        for name, settings in models.items():
+            print(f"  {name}: KL divergence, live build then candidate ...", flush=True)
+            rows.append((f"KL {name}", None, kl_compare(*ppls, name, settings, args.kl_text,
+                                                       args.kl_chunks, out, KL_SCRATCH)))
     if not args.skip_smoke:
         print("  smoke profile on a scratch router ...", flush=True)
         ok, why = smoke(binary, args.preset, list(models), args.port, out)
@@ -262,8 +347,9 @@ def main() -> int:
 
     print()
     for check, ok, why in rows:
-        print(f"  {'PASS' if ok else 'FAIL'}  {check:<14} {why}")
-    passed = all(ok for _, ok, _ in rows)
+        label = "INFO" if ok is None else "PASS" if ok else "FAIL"
+        print(f"  {label}  {check:<14} {why}")
+    passed = all(ok is not False for _, ok, _ in rows)
     print(f"\n{'PASS' if passed else 'FAIL'}: {version}")
     if passed:
         print("Next: scripts/llama-update swap, then restart the service.")

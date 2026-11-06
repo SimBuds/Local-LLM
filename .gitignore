@@ -2,6 +2,10 @@ __pycache__/
 
 eval/runs/
 
+# Verification scratch on disk (/tmp is tmpfs here). verify-build writes its
+# KL reference logits to .scratch/kld/ and deletes them after each model.
+.scratch/
+
 models/
 
 # The assembled prompt carries a real user profile, so only the templates are

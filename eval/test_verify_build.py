@@ -2,8 +2,9 @@
 """
 Unit tests for scripts/verify-build's pure parts: reading the built preset,
 building the pinned-split load command, reading a process's VRAM from
-nvidia-smi, comparing the live build's footprint with the candidate's, and
-refusing to run while the live service holds a model. No binary is started.
+nvidia-smi, comparing the live build's footprint with the candidate's,
+refusing to run while the live service holds a model, and the KL divergence
+report (command, skips, reference cleanup, INFO rows). No binary is started.
 Run with:
 
     python3 -m unittest eval/test_verify_build.py -v
@@ -11,6 +12,7 @@ Run with:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.machinery
 import importlib.util
 import io
@@ -168,6 +170,153 @@ class ServiceBusyTests(unittest.TestCase):
         with mock.patch.object(vb.urllib.request, "urlopen",
                                side_effect=vb.urllib.error.URLError("refused")):
             self.assertEqual(vb.service_busy("http://localhost:8080"), [])
+
+
+class KlCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        path = Path(self.tmp.name) / "models.ini"
+        path.write_text(PRESET, encoding="utf-8")
+        self.models = vb.read_preset(path)
+
+    def cmd(self, name, candidate):
+        return " ".join(vb.kl_cmd("/b/llama-perplexity", self.models[name], "/c/wiki.test.raw",
+                                  "/s/kld/gemma.kld", 20, candidate))
+
+    def test_live_run_writes_the_reference_at_the_pinned_split(self):
+        live = self.cmd("gemma", candidate=False)
+        self.assertTrue(live.startswith("/b/llama-perplexity "))
+        for want in ("-m /models/gemma.gguf", "-f /c/wiki.test.raw", "-c 512", "--chunks 20",
+                     "--fit off", "-ngl 99", "--n-cpu-moe 22", "-ctk q4_0", "-ctv q4_0",
+                     "-fa on", "--load-mode none", "--kl-divergence-base /s/kld/gemma.kld"):
+            self.assertIn(want, live)
+        self.assertNotIn("--kl-divergence ", live + " ")
+
+    def test_candidate_run_reads_the_reference(self):
+        cand = self.cmd("gemma", candidate=True)
+        self.assertIn("--kl-divergence-base /s/kld/gemma.kld", cand)
+        self.assertIn("--kl-divergence", cand.replace("--kl-divergence-base", ""))
+
+    def test_server_only_and_oversized_settings_are_left_out(self):
+        # The preset's 131072 context and 1024 ubatch exceed the 512-token KL
+        # chunk, and mmproj and MTP drafting do not exist in llama-perplexity.
+        for name in ("gemma", "lite", "qwen"):
+            cmd = self.cmd(name, candidate=False)
+            for flag in ("--ctx-size", "-ub", "--spec-type", "--no-mmproj", "--port", "-np"):
+                self.assertNotIn(flag + " ", cmd + " ", f"{name}: {flag}")
+
+
+def fake_run(write_ref=True, live_rc=0, cand_rc=0, cand_log=""):
+    """subprocess.run stand-in: the live call writes the reference, the candidate logs."""
+    calls = []
+
+    def run(cmd, stdout=None, stderr=None, **kw):
+        calls.append(cmd)
+        candidate = "--kl-divergence" in cmd
+        ref = Path(cmd[cmd.index("--kl-divergence-base") + 1])
+        if not candidate and write_ref:
+            ref.write_bytes(b"x" * 64)
+        if candidate and stdout is not None:
+            stdout.write(cand_log)
+        return mock.Mock(returncode=cand_rc if candidate else live_rc)
+    return run, calls
+
+
+class KlCompareTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.out, self.scratch = root / "out", root / "scratch" / "kld"
+        self.out.mkdir()
+        self.live, self.cand = root / "live" / "llama-perplexity", root / "cand" / "llama-perplexity"
+        for b in (self.live, self.cand):
+            b.parent.mkdir()
+            b.write_text("#!/bin/sh\n")
+            b.chmod(0o755)
+        self.corpus = root / "wiki.test.raw"
+        self.corpus.write_text("text\n")
+        self.settings = {"model": "/models/gemma.gguf", "n-cpu-moe": "22"}
+
+    def compare(self):
+        return vb.kl_compare(self.live, self.cand, "gemma", self.settings, self.corpus, 20,
+                             self.out, self.scratch)
+
+    def test_missing_live_perplexity_is_a_visible_skip(self):
+        self.live.unlink()
+        why = self.compare()
+        self.assertIn("skipped", why)
+        self.assertIn(str(self.live), why)
+
+    def test_missing_candidate_perplexity_is_a_visible_skip(self):
+        self.cand.unlink()
+        why = self.compare()
+        self.assertIn("skipped", why)
+        self.assertIn(str(self.cand), why)
+
+    def test_missing_corpus_skips_with_the_fetch_command(self):
+        self.corpus.unlink()
+        why = self.compare()
+        self.assertIn("skipped", why)
+        self.assertIn("get-wikitext-2.sh", why)
+
+    def test_reference_goes_to_scratch_and_is_removed_after_a_failed_candidate(self):
+        run, calls = fake_run(cand_rc=1)
+        with mock.patch.object(vb.subprocess, "run", side_effect=run):
+            why = self.compare()
+        ref = Path(calls[0][calls[0].index("--kl-divergence-base") + 1])
+        self.assertEqual(ref.parent, self.scratch)
+        self.assertFalse(ref.exists(), "reference left behind")
+        self.assertIn("candidate", why)
+        self.assertIn(str(self.out), why)
+
+    def test_live_failure_names_its_log_and_skips_the_candidate(self):
+        run, calls = fake_run(live_rc=1, write_ref=False)
+        with mock.patch.object(vb.subprocess, "run", side_effect=run):
+            why = self.compare()
+        self.assertEqual(len(calls), 1)
+        self.assertIn("live", why)
+        self.assertIn(str(self.out), why)
+
+    def test_candidate_log_without_kld_says_so(self):
+        run, _ = fake_run(cand_log="llama_model_load: error\n")
+        with mock.patch.object(vb.subprocess, "run", side_effect=run):
+            why = self.compare()
+        self.assertIn("no KLD", why)
+        self.assertEqual(list(self.scratch.glob("*")), [])
+
+
+class MainKlRowTests(unittest.TestCase):
+    def run_main(self, *argv):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            preset = Path(tmp) / "models.ini"
+            preset.write_text(PRESET, encoding="utf-8")
+            stack.enter_context(mock.patch.object(sys, "argv", [
+                "verify-build", "/c/llama-server", "--live", "/l/llama-server",
+                "--preset", str(preset), "--out-root", tmp, "--skip-smoke", *argv]))
+            for name, value in (("version_of", "version: x"), ("service_busy", []),
+                                ("measure", (6000, "")), ("xid_count", 0)):
+                stack.enter_context(mock.patch.object(vb, name, return_value=value))
+            kl = stack.enter_context(mock.patch.object(vb, "kl_compare",
+                                                       return_value="mean KLD 0.000100"))
+            out = stack.enter_context(mock.patch.object(sys, "stdout", io.StringIO()))
+            rc = vb.main()
+            return rc, out.getvalue(), kl.call_count
+
+    def test_kl_rows_are_info_and_do_not_decide_the_verdict(self):
+        rc, out, calls = self.run_main()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, 3)
+        self.assertIn("INFO  KL gemma", out)
+        self.assertIn("mean KLD 0.000100", out)
+        self.assertIn("\nPASS:", out)
+
+    def test_skip_kl_runs_no_comparison(self):
+        rc, out, calls = self.run_main("--skip-kl")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(calls, 0)
+        self.assertNotIn("KL ", out)
 
 
 if __name__ == "__main__":
