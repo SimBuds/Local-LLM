@@ -11,6 +11,13 @@ BASE_MODEL="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
 # Split pinned from --fit-target 2048 on 2026-11-08, with
 # 1233 MiB held by other processes at probe time.
 # Fit line: CUDA0 (NVIDIA GeForce RTX 3080): 41 layers (34 overflowing),   6361 MiB used,   2116 MiB free
+# No MTP heads in this GGUF, so no spec-type, and 34 rather than qwen's 37.
+# Spike test 2026-11-09, build 12155: 5/5 load-and-request cycles at 2961 to
+# 3002 MiB of other GPU use, peak 9170 MiB, about 1.07 GB still free, no
+# out-of-memory (TESTING.md, "Spike test of freedom").
+#
+# Role: the uncensored Qwen3.6 35B A3B for Friends-Hermes, which calls it by
+# this name (the router contract). Held to qwen's standards.
 # server.ini pins fit = off, so this is the split every load uses. Re-derive it
 # with ./add-model on a fresh builder, or the recipe in README.md, after a
 # model or hardware change. Do not turn automatic fitting back on: it would

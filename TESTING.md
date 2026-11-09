@@ -769,6 +769,7 @@ Casey's call.
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
+| `bigqwen` (`qwen3.8-27b-mtp-q4_K_M.gguf`) | added 2026-11-08, retired 2026-11-09 | Added with `./add-model` only to measure its speed. Dense 27B with MTP, 16.8 GB file. At 131072 context and the 2 GB margin only 12 of 66 layers fit on the GPU (6109 MiB used). On build 12155 the 2026-11-08 persona run gave 7 tok/s and 17.7 s per reply, 16/21 clean. MTP took it from the 4 tok/s of the 2026-10-09 load check to 7, which is still too slow for interactive use. |
 | `gemma4:31b-it-qat` | speed-only | Not in the lineup. Dense 31B, 18 GB, 3.1 tok/s under 72% CPU spill. Slowest base measured here; effectively unusable interactively. |
 | `gemma` (`gemma4:12b-it-q4_K_M`) | retired 2026-07-27 | Base no longer installed. Won/tied all six suites on 2026-06-14, but that run was sampler-confounded. |
 | `granite` (`granite4.1:8b-Q5_K_M`) | dropped | Strong prior coding runs, but no longer leads the current lineup. |
@@ -782,6 +783,29 @@ Casey's call.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Spike test of freedom (2026-11-09)
+
+`freedom` was pinned at 34 MoE layers on CPU by `./add-model` on 2026-11-08
+(`--fit-target 2048`, no MTP heads, 1233 MiB held at probe time). It was checked
+with the method of *Spike test at 131072 context* below: a scratch CUDA process
+(a stdlib `ctypes` allocation, since torch and cupy are not installed) held
+1677 MiB, bringing other GPU use to about 3.0 GB. Five cycles of load, one real
+request with the full prompt stack (200-token cap) and unload ran through
+`eval/_gateway.py` on a scratch router on port 8081 over the repo preset, build
+12155, with GPU use sampled every 0.25 s.
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3002 MiB | 9170 MiB | 1070 MiB | 11.6 s | 49.2 tok/s |
+| 2 | 2974 MiB | 9169 MiB | 1071 MiB | 10.9 s | 47.9 tok/s |
+| 3 | 2974 MiB | 9169 MiB | 1071 MiB | 10.8 s | 48.8 tok/s |
+| 4 | 2982 MiB | 9156 MiB | 1084 MiB | 10.5 s | 48.5 tok/s |
+| 5 | 2961 MiB | 9164 MiB | 1076 MiB | 10.5 s | 49.3 tok/s |
+
+Finding: 5/5 with no out-of-memory line in the router log, so 34 keeps the
+2 GB margin. About 1.07 GB stayed free at peak, close to `qwen`'s 1.2 GB at 37
+on 2026-10-31. Generation without MTP stayed in `qwen`'s range.
 
 ### KL divergence noise floor in verify-build (2026-11-06)
 

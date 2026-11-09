@@ -137,7 +137,9 @@ correctly:
 
 These are load checks, not benchmarks. The speeds come from one short reply at a
 small context, and the 27B ran without its MTP heads (no `--spec-type`). Adding
-one to the lineup goes through `./add-model`.
+one to the lineup goes through `./add-model`. The 27B was added that way as
+`bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
+131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
 
 ## Structure
 
