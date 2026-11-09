@@ -1104,8 +1104,8 @@ repos, and one ended in a colon with no template after it.)
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with the README recipe after a model or
   hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: pinned splits keep a 2 GB fit margin (gemma 24, qwen 37 at 131072
-  context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
+- **Locked: pinned splits keep a 2 GB fit margin (gemma 24, qwen 37, freedom 34
+  at 131072 context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
   coding runner scored that crash as a model failure. A new value is derived with
   `--fit-target 2048` and must pass load-and-request cycles while about 3.0 GB of
@@ -1137,6 +1137,10 @@ repos, and one ended in a colon with no template after it.)
   at 1705 MiB, while at 1805 MiB it loaded and then crashed with CUDA out of
   memory on its first request. Details in `TESTING.md`, *Spike test at 131072
   context*. (2026-10-31)
+  `freedom` (no MTP heads) was fitted at 34 by `./add-model` on 2026-11-08 and
+  passed the spike test on 2026-11-09: 5 of 5 cycles at 2961 to 3002 MiB of other
+  GPU use, about 1.07 GB still free at peak. Details in `TESTING.md`, *Spike test
+  of freedom*. (2026-11-09)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and
@@ -1188,11 +1192,13 @@ repos, and one ended in a colon with no template after it.)
   numbers. Only real comparison passes write to `eval/runs/`. (2026-09-14)
 - **Locked: the router is a contract for other repos.** Jobhunt and SEO-LLM call
   `http://localhost:8080/v1/chat/completions` with model `gemma`, `qwen`, or `lite`
-  (README, "Serving other apps"). Changing the port, a model name, the context
-  size, or the structured-output shape breaks those apps, so it needs Casey's
-  approval and a matching change planned in each app's repo. (2026-09-15)
+  (README, "Serving other apps"). Friends-Hermes calls `freedom` from a QEMU guest
+  at `10.0.2.2:8080`, QEMU's address for the host's localhost (2026-11-09).
+  Changing the port, a model name, the context size, or the structured-output
+  shape breaks those apps, so it needs Casey's approval and a matching change
+  planned in each app's repo. `add-model` refuses all four names. (2026-09-15)
 - **A new model is added with `./add-model`, not by copying a builder.** It
-  refuses a router name that collides with the `gemma` / `qwen` / `lite` contract,
+  refuses a router name that collides with the `gemma` / `qwen` / `lite` / `freedom` contract,
   reads MTP support from the GGUF header rather than the filename (gemma4-26b
   contains 4 literal "mtp" byte sequences and has no MTP), and derives the pinned
   split by loading the model once at `--fit-target 2048`. A builder declares only

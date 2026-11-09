@@ -96,6 +96,7 @@ new builder was silently ignored until someone edited it.
 | `gemma` | `gemma4-26b-a4b-it-qat` | 26B A4B MoE at QAT Q4_0. Same weights as the Ollama-era benchmarks, so post-switch deltas measure the runtime rather than the model. |
 | `qwen` | `qwen3.6-35b-a3b-mtp` | 35B A3B MoE, the largest model that stays usable on this card. |
 | `lite` | `qwen3.5-9b-mtp` | Dense 9B, the only one that fits entirely in 10 GB. Speed anchor and third judge. |
+| `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive` | The uncensored tune of `qwen`'s base, for Friends-Hermes. No MTP heads, so 34 MoE layers on CPU rather than 37. Held to `qwen`'s standards. |
 
 `gemma` and `qwen` are mixture-of-experts: few parameters are active per token,
 so spilling experts to system RAM stays usable even though neither fits fully in
@@ -106,6 +107,16 @@ the baseline the other two are measured against.
 with a leave-one-out judge panel. With two models that leaves exactly one judge
 per response and inter-judge disagreement can never be computed. Three models
 means two judges per response and a real disagreement number.
+
+`freedom` is an uncensored base in a lineup whose shared stack carries
+`prompts/safety.md`. The same tune was tried as `qwen` on 2026-07-27 and
+reverted the next day, because under the shared stack the stack spends tokens
+every turn fighting the model's own tuning. It is acceptable as `freedom` for
+two reasons. It has its own name, so no client of `qwen` is repointed. And its
+one client, Friends-Hermes, sends its own system prompt, so `safety.md` reaches
+it only in this repo's suites, where it stays so that `freedom` is measured
+under the same stack as everything else. Added 2026-11-08, made a contract name
+2026-11-09.
 
 `lite`'s weights are not the Ollama-era ones: that build does not load in
 llama.cpp, so it was replaced with unsloth's MTP build at the same quant, and its
@@ -121,7 +132,10 @@ implementation details. Changing any of them is a coordinated change across
 repos, not a local edit.
 
 - `POST http://localhost:8080/v1/chat/completions`, OpenAI format.
-- `model` is one of `gemma`, `qwen`, `lite`.
+- `model` is one of `gemma`, `qwen`, `lite`, `freedom`. Jobhunt and SEO-LLM use
+  the first three. Friends-Hermes uses `freedom`, from a QEMU guest that reaches
+  the host's `127.0.0.1:8080` at `10.0.2.2:8080`, so the router stays bound to
+  localhost.
 - The caller sends its own system message.
 - Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30). There is no per-request
   context size, and an oversized prompt returns HTTP 400 rather than being
@@ -177,7 +191,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 24, `qwen` 37 at 131072 context) | 2026-09-14, values updated 2026-09-16 and 2026-10-30 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. |
+| 2 GB fit margin (`gemma` 24, `qwen` 37, `freedom` 34 at 131072 context) | 2026-09-14, values updated 2026-09-16 and 2026-10-30, `freedom` added 2026-11-09 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |

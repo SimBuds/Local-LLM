@@ -381,6 +381,34 @@ ones whose rules are about *behavior* rather than *facts*: `identity`,
 `model_origin`, `unverified`, `fields_echo`, and `bash_block`. Weight those when
 deciding what to cut.
 
+**Measured 2026-07-28** (moved from README on 2026-11-09). What each rule actually buys: `run-persona.py` stacked vs
+`--system-mode baseline`, 3 attempts × 3 models, so each rule scores out of 9.
+Nine attempts is a small sample, and the same suite's measured run-to-run spread
+(see *Interpreting Results* in [`TESTING.md`](TESTING.md)) covers several of the
+smaller gaps below. Treat a large delta as signal and a one or two point delta
+as unresolved.
+
+| Rule               | Stacked | Baseline |         Buys | Read                                                                                                                                                                                   |
+| ------------------ | ------: | -------: | -----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`       |     9/9 |      0/9 | **+9** | Load-bearing. Without it every base volunteers a developer and training origin.                                                                                                        |
+| `model_origin`   |     7/9 |      0/9 | **+7** | Load-bearing, same reason.                                                                                                                                                             |
+| `familiar_skill` |     5/9 |      1/9 | **+4** | Load-bearing but leaky — no model holds it 3/3. The honesty rule most worth rewriting.                                                                                                |
+| `unknown_fact`   |     6/9 |      3/9 | **+3** | Load-bearing on `qwen`/`lite`. `gemma`'s clean baseline is an artifact: with no profile it has never heard of Casey, so it declines for the wrong reason.                        |
+| `unverified`     |     3/9 |      0/9 | **+3** | Works on `qwen` only; 0/3 on `gemma` and `lite` **stacked as well as unstacked**. See the negative result in [`TESTING.md`](TESTING.md) — rewriting it did not fix this. |
+| `fields_echo`    |     3/9 |      0/9 | **+3** | Same shape: `qwen` 3/3, the other two 0/3 stacked.                                                                                                                                   |
+| `bash_block`     |     9/9 |      9/9 |  **0** | Free. **Rule deleted 2026-07-28** — all three bases already fence commands in `bash` with no `$` prefix unprompted.                                                         |
+
+Only `bash_block` was cut: it is the one rule confirmed at zero contribution
+twice, on two different lineups. The deletion was verified with `make check` —
+`bash_block` still scores 3/3 on all three models with the rule gone.
+
+The honest caveat on the rest: `unverified` and `fields_echo` are not earning
+their tokens on two of three models, but they are not *free* either — deleting
+them would cost `qwen` a rule it does obey. They are candidates for a rewrite,
+not a cut, and a rewrite has to be measured against a task that does not share
+its subject with any example in the stack (that mistake is documented in
+[`TESTING.md`](TESTING.md)).
+
 ## Current Benchmark Snapshot
 
 Two full `standard` passes on llama.cpp build 12009 (`e216f4ec8`) at one config:
@@ -769,20 +797,115 @@ Casey's call.
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
+| `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | current, added 2026-11-08, not yet benchmarked | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
 | `bigqwen` (`qwen3.8-27b-mtp-q4_K_M.gguf`) | added 2026-11-08, retired 2026-11-09 | Added with `./add-model` only to measure its speed. Dense 27B with MTP, 16.8 GB file. At 131072 context and the 2 GB margin only 12 of 66 layers fit on the GPU (6109 MiB used). On build 12155 the 2026-11-08 persona run gave 7 tok/s and 17.7 s per reply, 16/21 clean. MTP took it from the 4 tok/s of the 2026-10-09 load check to 7, which is still too slow for interactive use. |
 | `gemma4:31b-it-qat` | speed-only | Not in the lineup. Dense 31B, 18 GB, 3.1 tok/s under 72% CPU spill. Slowest base measured here; effectively unusable interactively. |
 | `gemma` (`gemma4:12b-it-q4_K_M`) | retired 2026-07-27 | Base no longer installed. Won/tied all six suites on 2026-06-14, but that run was sampler-confounded. |
-| `granite` (`granite4.1:8b-Q5_K_M`) | dropped | Strong prior coding runs, but no longer leads the current lineup. |
-| `qwen-custom` (`qwen3.5:9b`) | removed | Fast 9B-era thinking model; superseded by current Qwen3.6 MoE results. |
-| `ministral-custom` | removed | Strong historical #2; removed after Gemma/Granite consolidation. |
-| `llama-custom` | removed | Last or near-last in early content/coding/teaching runs. |
+| `granite` / `granite-custom` (`granite4.1:8b-Q5_K_M`) | dropped | Strong prior coding runs, but no longer leads the current lineup. |
+| `qwen-custom` (`qwen3.5:9b`) | removed | Fast 9B-era thinking model; superseded by current Qwen3.6 MoE results. The base returned 2026-07-28 as `lite`. |
+| `ministral-custom` (`ministral-3:8b`) | removed | Strong historical #2; removed after Gemma/Granite consolidation. |
+| `llama-custom` (`llama3.1:8b`) | removed | Last or near-last in early content/coding/teaching runs. |
 | `qwen-big` / `qwen-moe` experiments | promoted/retired variants | Established that MoE can survive spillover; current `qwen` is the promoted MTP MoE line. |
-| `gemma-big` | retired | Larger dense Gemma lost quality/speed tradeoffs on this hardware. |
+| `gemma-big` (`gemma3:27b`) | retired | Larger dense Gemma lost quality/speed tradeoffs on this hardware. |
+| `gemma-custom` (`gemma4:e4b`) | removed | Superseded by gemma4 12B. |
 
 ## Historical Notes
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Pinned split history (moved from README on 2026-11-09)
+
+**The values leave about 2 GB of VRAM free, because 1 GB was not enough.** The
+first pinned values (gemma 18, qwen 32) came from llama.cpp's default 1 GB fit
+margin and crashed with CUDA out of memory once other GPU use passed somewhere
+between 2.1 and 2.5 GB for `gemma` and between 2.5 and 3.0 GB for `qwen`. Desktop apps alone use 1.2 to 1.5 GB
+on this box. The 2 GB-margin values at 32768 context (gemma 21, qwen 34) were
+then checked with 5 load-and-request cycles each while 3.0 GB of the card was
+held by other processes: all passed. The cost against the old values was about
+13% generation speed for `gemma` and 9% for `qwen` (details in
+[`TESTING.md`](TESTING.md) under *Offload headroom*). The values were then
+re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
+35 at 65536 on 2026-09-16, and the current gemma 24 and qwen 37 at 131072 on
+2026-10-30 (build 12009). 22 and 35 were replaced before they had the 3.0 GB
+spike test. 24 and 37 passed it on 2026-10-31, 5 of 5 cycles each, with about
+1.1 GB (gemma) and 1.2 GB (qwen) still free at peak. At 131072, gemma generates
+about 5 to 8% slower than at 22, and qwen showed no measurable change. `lite`
+stays all-GPU by Casey's choice, with only about 0.4 GB free at 131072 while the
+desktop holds 1.4 GB, so a desktop VRAM spike can crash it. It runs with up to
+about 1.7 GB of other GPU use, about 0.75 GB above the 0.94 GB the desktop held
+when that was measured (2026-10-31). At 1.8 GB it loaded and then crashed on its
+first request, which a client sees as an HTTP 500.
+
+Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
+reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB used`). `gemma`'s fitter now picks 21, not 22 (`31 layers (21 overflowing), 6403 MiB used`, the same in two runs). The pin stays at 22, which keeps more
+VRAM free than the 2 GB margin asks for. Casey chose that while two
+`llama-server` crashes (NVIDIA Xid 31) on 2026-09-17 are unexplained.
+
+**`server.ini` reads weights into RAM and uses a 1024-token physical batch.**
+Two settings in `server.ini` were added on 2026-09-17 because prompt ingest was
+the slow spot for the two models that keep experts in system RAM.
+`load-mode = none` stops the kernel from evicting those weights out of page cache,
+and `ubatch-size = 1024` processes prompts in larger chunks. On build 11022,
+prompt ingest went from 665 to 1565 tok/s for `gemma` and from 379 to 1030 for
+`qwen`, with generation unchanged and model VRAM up only 0.1 to 0.2 GiB, so the
+pinned splits still hold. Loads take 3 to 10 seconds longer. `lite` keeps
+`ubatch-size = 512` in its own `LOAD`, because at 1024 it no longer fits
+entirely on the GPU with the 2 GB margin. The full sweep is in
+[`TESTING.md`](TESTING.md) under *Preset tuning on build 11022*.
+
+### llama.cpp build history (moved from README on 2026-11-09)
+
+The installed build is 12155 (commit `e30ad80fd`), swapped in on 2026-11-05
+through `scripts/llama-update` after `scripts/verify-build` passed it: at every
+pinned split it needed exactly the same VRAM as 12009 (gemma 6066, lite 8038,
+qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. Build
+12009 (commit `e216f4ec8`) ran from 2026-10-30 and is now the rollback target.
+12155 has not been benchmarked yet. The
+current leaderboard was measured on build 12009 on 2026-10-31, repeating the
+2026-10-30 pass at the same config. The ones before it
+came from build 11768 (2026-10-20) and build 11022 (commit `f172be756`,
+2026-09-17), and results from
+2026-09-14 to 2026-09-16 came from build 10968 (commit `41abbfd59`). llama.cpp is built from
+source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
+used to pin `g++-15` as the CUDA host compiler. That is corrected as of
+2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
+the configure step, and `llama-server --version` reports the installed binary was
+in fact built with GNU 16.2.1. Nothing needs pinning. Verified by configuring in
+a scratch directory: cmake reports `CUDA host compiler is GNU 16.2.1` against
+CUDA 13.4.59.
+
+The configure step uses `--fresh`, which discards `build/CMakeCache.txt`. On
+2026-09-17 the update to 11022 failed at configure because the cache still held
+`CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-15` from the old recipe. The new
+CMakeLists asks nvcc for the host compiler version with errors suppressed, so
+the only symptom was `CUDA host compiler is GNU` with no version, followed by
+`ggml_get_flags Function invoked with incorrect arguments`.
+
+### Other GGUFs on disk (load checks 2026-10-09, moved from README on 2026-11-09)
+
+`~/models/gguf` also holds four models copied out of Ollama before it was removed,
+checked against their blob digests: `granite4.2-8b-q4_K_M.gguf`, `ornith.gguf`,
+`qwen3.8-27b-mtp-q4_K_M.gguf` and `gemma4-12b-it-qat.gguf`. Only
+`gemma4-12b-it-qat` has its `.mmproj.gguf` vision projector on disk (checked
+2026-09-17). Ollama's params, licenses, and ornith's built-in system prompt were
+not kept: no `ollama-extras/` folder exists (checked 2026-10-09). None is in the
+lineup. On 2026-10-09 each was loaded once on build 11537 (standalone, 8192
+context, `--fit-target 2048`, text only) and answered a one-line request
+correctly:
+
+| File                            | Architecture       | Layers on GPU | Speed (short reply) |
+| ------------------------------- | ------------------ | ------------: | ------------------: |
+| `granite4.2-8b-q4_K_M.gguf`   | granite            |         41/41 |            97 tok/s |
+| `ornith.gguf`                 | qwen35             |         33/33 |            94 tok/s |
+| `gemma4-12b-it-qat.gguf`      | gemma4             |         42/49 |            30 tok/s |
+| `qwen3.8-27b-mtp-q4_K_M.gguf` | qwen35 (dense 27B) |         24/66 |             4 tok/s |
+
+These are load checks, not benchmarks. The speeds come from one short reply at a
+small context, and the 27B ran without its MTP heads (no `--spec-type`). Adding
+one to the lineup goes through `./add-model`. The 27B was added that way as
+`bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
+131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
 
 ### Spike test of freedom (2026-11-09)
 

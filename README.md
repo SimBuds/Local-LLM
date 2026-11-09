@@ -27,6 +27,7 @@ Current lineup (moved to llama.cpp 2026-09-14):
 | `gemma` | `gemma4-26b-a4b-it-qat.gguf`      | 128K | 24 MoE layers on CPU      | 26B A4B MoE, QAT Q4_0.                                                                       |
 | `qwen`  | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 37 MoE layers on CPU, MTP | 35B A3B MoE. Largest model that stays usable here.                                           |
 | `lite`  | `qwen3.5-9b-mtp-q4_K_M.gguf`      | 128K | all GPU, MTP              | Dense 9B. The only one that fits entirely in 10 GB, so it is the speed anchor and 3rd judge. |
+| `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf` | 128K | 34 MoE layers on CPU | Uncensored tune of `qwen`'s base, for Friends-Hermes. No MTP heads. |
 
 `gemma` and `qwen` are the same weights the Ollama-era benchmarks used, copied
 byte for byte out of Ollama's blob store. `lite` is not: Ollama's `qwen3.5:9b`
@@ -38,6 +39,10 @@ MTP (multi-token prediction) is speculative decoding built into the Qwen GGUFs.
 stays usable on a 10 GB card even though neither fits fully in VRAM. `lite` is
 dense but small enough to avoid spillover altogether, which is what makes it the
 baseline the other two are measured against.
+
+`freedom` is held to `qwen`'s standards (spike-tested split, benchmark suites,
+`make check`) and is the model Friends-Hermes calls. Why an uncensored base is in
+a lineup with a shared `safety.md` is in PLAN.md, *The lineup*.
 
 `lite` also exists for a measurement reason, not just a speed one: the learn and
 tutor suites grade with a leave-one-out judge panel, so a 2-model lineup left
@@ -96,6 +101,7 @@ Builders abort naming the missing path if a file is not there.
 | `gemma` | `gemma4-26b-a4b-it-qat.gguf`      | Copied from Ollama's `gemma4:26b-a4b-it-qat` blob.              |
 | `qwen`  | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Copied from Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob.         |
 | `lite`  | `qwen3.5-9b-mtp-q4_K_M.gguf`      | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
+| `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf` | Staged 2026-11-08. The filename matches HuggingFace `HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive`. |
 
 Check the staged files against the checksums the benchmarks were run with:
 
@@ -105,6 +111,7 @@ cd ~/models/gguf && sha256sum -c <<'EOF'
 4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5  gemma4-26b-a4b-it-qat.gguf
 d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
+bbef58c37ce88820be9d98b6437f1cf4bac890c947bd55fc7b68e22098574231  Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
 EOF
 ```
 
@@ -118,28 +125,9 @@ Ollama and its store were removed from this box on 2026-09-15. The closest downl
 (`Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`). Neither has been tested on this box, both are
 different files, and switching to one starts a new baseline for that model.
 
-`~/models/gguf` also holds four models copied out of Ollama before it was removed,
-checked against their blob digests: `granite4.2-8b-q4_K_M.gguf`, `ornith.gguf`,
-`qwen3.8-27b-mtp-q4_K_M.gguf` and `gemma4-12b-it-qat.gguf`. Only
-`gemma4-12b-it-qat` has its `.mmproj.gguf` vision projector on disk (checked
-2026-09-17). Ollama's params, licenses, and ornith's built-in system prompt were
-not kept: no `ollama-extras/` folder exists (checked 2026-10-09). None is in the
-lineup. On 2026-10-09 each was loaded once on build 11537 (standalone, 8192
-context, `--fit-target 2048`, text only) and answered a one-line request
-correctly:
-
-| File                            | Architecture       | Layers on GPU | Speed (short reply) |
-| ------------------------------- | ------------------ | ------------: | ------------------: |
-| `granite4.2-8b-q4_K_M.gguf`   | granite            |         41/41 |            97 tok/s |
-| `ornith.gguf`                 | qwen35             |         33/33 |            94 tok/s |
-| `gemma4-12b-it-qat.gguf`      | gemma4             |         42/49 |            30 tok/s |
-| `qwen3.8-27b-mtp-q4_K_M.gguf` | qwen35 (dense 27B) |         24/66 |             4 tok/s |
-
-These are load checks, not benchmarks. The speeds come from one short reply at a
-small context, and the 27B ran without its MTP heads (no `--spec-type`). Adding
-one to the lineup goes through `./add-model`. The 27B was added that way as
-`bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
-131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
+`~/models/gguf` also holds four GGUFs copied out of Ollama that are not in the
+lineup. Their 2026-10-09 load checks are in [`TESTING.md`](TESTING.md), *Other
+GGUFs on disk*. Adding one goes through `./add-model`.
 
 ## Structure
 
@@ -201,7 +189,7 @@ A GGUF that a builder already names in `BASE_MODEL` is refused with that
 builder's name, whether it was given as a filename or reached through a repo.
 
 It asks for the router name, refusing one that is malformed, already taken, or
-part of the `gemma` / `qwen` / `lite` contract other repos depend on. It reads
+part of the `gemma` / `qwen` / `lite` / `freedom` contract other repos depend on. It reads
 the GGUF header to decide whether the model carries MTP heads, and emits
 `spec-type = draft-mtp` only when it does. It writes no `PARAMS`, because the
 sampler baseline is shared in `server.ini` (see *Build And Tune*).
@@ -265,9 +253,7 @@ presence-penalty = 0.0
 repeat-penalty = 1.05
 ```
 
-Until 2026-09-15 these were copy-pasted into all three builders and keeping them
-in sync was manual discipline. Until 2026-10-09 they were a default `PARAMS`
-array in `build-common.sh`, copied into every model's section. A builder that
+A builder that
 defines its own `PARAMS` still overrides them in its own section, which is how a
 model that needs different decoding for daily use gets a separate preset rather
 than skewing the shared baseline. Keep such a preset out of head-to-head
@@ -279,43 +265,20 @@ split is exactly what the builder declares rather than whatever llama.cpp's
 automatic fitting picks from the VRAM free at load time (an open browser would
 otherwise change a benchmark's offload between runs).
 
-**The values leave about 2 GB of VRAM free, because 1 GB was not enough.** The
-first pinned values (gemma 18, qwen 32) came from llama.cpp's default 1 GB fit
-margin and crashed with CUDA out of memory once other GPU use passed somewhere
-between 2.1 and 2.5 GB for `gemma` and between 2.5 and 3.0 GB for `qwen`. Desktop apps alone use 1.2 to 1.5 GB
-on this box. The 2 GB-margin values at 32768 context (gemma 21, qwen 34) were
-then checked with 5 load-and-request cycles each while 3.0 GB of the card was
-held by other processes: all passed. The cost against the old values was about
-13% generation speed for `gemma` and 9% for `qwen` (details in
-[`TESTING.md`](TESTING.md) under *Offload headroom*). The values were then
-re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
-35 at 65536 on 2026-09-16, and the current gemma 24 and qwen 37 at 131072 on
-2026-10-30 (build 12009). 22 and 35 were replaced before they had the 3.0 GB
-spike test. 24 and 37 passed it on 2026-10-31, 5 of 5 cycles each, with about
-1.1 GB (gemma) and 1.2 GB (qwen) still free at peak. At 131072, gemma generates
-about 5 to 8% slower than at 22, and qwen showed no measurable change. `lite`
-stays all-GPU by Casey's choice, with only about 0.4 GB free at 131072 while the
-desktop holds 1.4 GB, so a desktop VRAM spike can crash it. It runs with up to
-about 1.7 GB of other GPU use, about 0.75 GB above the 0.94 GB the desktop held
-when that was measured (2026-10-31). At 1.8 GB it loaded and then crashed on its
-first request, which a client sees as an HTTP 500.
-
-Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
-reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB used`). `gemma`'s fitter now picks 21, not 22 (`31 layers (21 overflowing), 6403 MiB used`, the same in two runs). The pin stays at 22, which keeps more
-VRAM free than the 2 GB margin asks for. Casey chose that while two
-`llama-server` crashes (NVIDIA Xid 31) on 2026-09-17 are unexplained.
+**The values leave about 2 GB of VRAM free, because 1 GB was not enough.**
+Splits fitted at llama.cpp's default 1 GB margin crashed with CUDA out of memory
+under normal desktop use. The current values at 131072 context are gemma 24,
+qwen 37 and freedom 34, each spike-tested with about 3.0 GB of the card held by
+other processes. `lite` stays all-GPU by Casey's choice, so a desktop VRAM spike
+can crash it. The measurements behind every value are in
+[`TESTING.md`](TESTING.md), *Pinned split history*.
 
 **`server.ini` reads weights into RAM and uses a 1024-token physical batch.**
-Two settings in `server.ini` were added on 2026-09-17 because prompt ingest was
-the slow spot for the two models that keep experts in system RAM.
-`load-mode = none` stops the kernel from evicting those weights out of page cache,
-and `ubatch-size = 1024` processes prompts in larger chunks. On build 11022,
-prompt ingest went from 665 to 1565 tok/s for `gemma` and from 379 to 1030 for
-`qwen`, with generation unchanged and model VRAM up only 0.1 to 0.2 GiB, so the
-pinned splits still hold. Loads take 3 to 10 seconds longer. `lite` keeps
-`ubatch-size = 512` in its own `LOAD`, because at 1024 it no longer fits
-entirely on the GPU with the 2 GB margin. The full sweep is in
-[`TESTING.md`](TESTING.md) under *Preset tuning on build 11022*.
+`load-mode = none` keeps the CPU expert weights from being evicted from page
+cache, and `ubatch-size = 1024` more than doubled prompt ingest for the models
+that spill. `lite` keeps `ubatch-size = 512` in its own `LOAD` to stay all-GPU.
+Numbers: [`TESTING.md`](TESTING.md), *Pinned split history* and *Preset tuning on
+build 11022*.
 
 To re-derive a value after a model or hardware change, use `./add-model` on a
 fresh builder, which runs this for you. The manual recipe below is the fallback,
@@ -420,31 +383,11 @@ the preset this repo deploys to `~/.config/llama.cpp/models.ini` (see *Serving
 other apps*). `make serve` runs a router in the foreground over the repo's own
 `models/models.ini`, for trying changes before deploying them.
 
-The installed build is 12155 (commit `e30ad80fd`), swapped in on 2026-11-05
-through `scripts/llama-update` after `scripts/verify-build` passed it: at every
-pinned split it needed exactly the same VRAM as 12009 (gemma 6066, lite 8038,
-qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. Build
-12009 (commit `e216f4ec8`) ran from 2026-10-30 and is now the rollback target.
-12155 has not been benchmarked yet. The
-current leaderboard was measured on build 12009 on 2026-10-31, repeating the
-2026-10-30 pass at the same config. The ones before it
-came from build 11768 (2026-10-20) and build 11022 (commit `f172be756`,
-2026-09-17), and results from
-2026-09-14 to 2026-09-16 came from build 10968 (commit `41abbfd59`). llama.cpp is built from
-source because the AUR `llama.cpp-cuda` package was reported stale. The recipe
-used to pin `g++-15` as the CUDA host compiler. That is corrected as of
-2026-09-15: this box has no `/usr/bin/g++-15`, so the block as written failed at
-the configure step, and `llama-server --version` reports the installed binary was
-in fact built with GNU 16.2.1. Nothing needs pinning. Verified by configuring in
-a scratch directory: cmake reports `CUDA host compiler is GNU 16.2.1` against
-CUDA 13.4.59.
-
-The configure step uses `--fresh`, which discards `build/CMakeCache.txt`. On
-2026-09-17 the update to 11022 failed at configure because the cache still held
-`CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-15` from the old recipe. The new
-CMakeLists asks nvcc for the host compiler version with errors suppressed, so
-the only symptom was `CUDA host compiler is GNU` with no version, followed by
-`ggml_get_flags Function invoked with incorrect arguments`.
+The installed build is 12155 (commit `e30ad80fd`, since 2026-11-05), and 12009
+(`e216f4ec8`) is the rollback target. The leaderboard was measured on 12009.
+llama.cpp is built from source because the AUR `llama.cpp-cuda` package was
+reported stale. Earlier builds and the 2026-09 compiler fixes are in
+[`TESTING.md`](TESTING.md), *llama.cpp build history*.
 
 The block below is the first install. Updates after that go through
 `scripts/llama-update` (see *Updating llama.cpp* below).
@@ -589,8 +532,12 @@ after `make deploy`, or restart `make serve` after `make build`.
 ## Serving other apps
 
 The router is a machine-level service, not part of this repo at runtime. Jobhunt,
-SEO-LLM, this repo's evals, and editors are all just clients of
-`http://localhost:8080`. The pieces live where a standard llama.cpp setup puts
+SEO-LLM, Friends-Hermes, this repo's evals, and editors are all just clients of
+`http://localhost:8080`. Jobhunt and SEO-LLM use `gemma`, `qwen` and `lite`.
+Friends-Hermes uses `freedom` from a QEMU guest, which reaches the host's
+localhost at `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`. These
+four names, the port, the context size and the structured-output shape are a
+contract: changing one needs a matching change in each app's repo. The pieces live where a standard llama.cpp setup puts
 them:
 
 | Piece         | Location                                                                                      |
@@ -666,7 +613,7 @@ any of them is a coordinated change across repos, not a local edit:
 
 - Endpoint `POST http://localhost:8080/v1/chat/completions` (OpenAI format). Any
   non-empty API key is accepted.
-- `model` is one of `gemma`, `qwen`, `lite`.
+- `model` is one of `gemma`, `qwen`, `lite`, `freedom`.
 - The app sends its own system message. Nothing is baked into the model, so a
   request without one gets the bare base model.
 - Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30).
@@ -690,7 +637,7 @@ any of them is a coordinated change across repos, not a local edit:
 Both extensions talk to the router's OpenAI-compatible API at
 `http://localhost:8080/v1`, with the `llama-server` service running (see
 *Serving other apps*). The model names are the
-preset names `gemma`, `qwen`, and `lite`. The server has no API key set, so any
+preset names `gemma`, `qwen`, `lite`, and `freedom`. The server has no API key set, so any
 non-empty key is accepted.
 
 The prompt stack is no longer part of the model. A client that does not send
@@ -898,52 +845,17 @@ guarantee, so compare prompt or scorer changes by re-scoring saved responses.
 
 ## Prompt Stack Value
 
-What each rule actually buys, measured 2026-07-28: `run-persona.py` stacked vs
-`--system-mode baseline`, 3 attempts × 3 models, so each rule scores out of 9.
-Nine attempts is a small sample, and the same suite's measured run-to-run spread
-(see *Interpreting Results* in [`TESTING.md`](TESTING.md)) covers several of the
-smaller gaps below. Treat a large delta as signal and a one or two point delta
-as unresolved.
-
-| Rule               | Stacked | Baseline |         Buys | Read                                                                                                                                                                                   |
-| ------------------ | ------: | -------: | -----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`       |     9/9 |      0/9 | **+9** | Load-bearing. Without it every base volunteers a developer and training origin.                                                                                                        |
-| `model_origin`   |     7/9 |      0/9 | **+7** | Load-bearing, same reason.                                                                                                                                                             |
-| `familiar_skill` |     5/9 |      1/9 | **+4** | Load-bearing but leaky — no model holds it 3/3. The honesty rule most worth rewriting.                                                                                                |
-| `unknown_fact`   |     6/9 |      3/9 | **+3** | Load-bearing on `qwen`/`lite`. `gemma`'s clean baseline is an artifact: with no profile it has never heard of Casey, so it declines for the wrong reason.                        |
-| `unverified`     |     3/9 |      0/9 | **+3** | Works on `qwen` only; 0/3 on `gemma` and `lite` **stacked as well as unstacked**. See the negative result in [`TESTING.md`](TESTING.md) — rewriting it did not fix this. |
-| `fields_echo`    |     3/9 |      0/9 | **+3** | Same shape: `qwen` 3/3, the other two 0/3 stacked.                                                                                                                                   |
-| `bash_block`     |     9/9 |      9/9 |  **0** | Free. **Rule deleted 2026-07-28** — all three bases already fence commands in `bash` with no `$` prefix unprompted.                                                         |
-
-Only `bash_block` was cut: it is the one rule confirmed at zero contribution
-twice, on two different lineups. The deletion was verified with `make check` —
-`bash_block` still scores 3/3 on all three models with the rule gone.
-
-The honest caveat on the rest: `unverified` and `fields_echo` are not earning
-their tokens on two of three models, but they are not *free* either — deleting
-them would cost `qwen` a rule it does obey. They are candidates for a rewrite,
-not a cut, and a rewrite has to be measured against a task that does not share
-its subject with any example in the stack (that mistake is documented in
-[`TESTING.md`](TESTING.md)).
+Measured 2026-07-28 with `run-persona.py` stacked against
+`--system-mode baseline`: `identity` and `model_origin` are load-bearing,
+`familiar_skill` helps but leaks, `unverified` and `fields_echo` work on `qwen`
+only, and `bash_block` bought nothing, so it is the one rule deleted. The per-rule
+table and how to read it are in [`TESTING.md`](TESTING.md), *Measuring what the
+prompt stack contributes*.
 
 ## Models Tested
 
-Full roster (current and retired). See [`TESTING.md`](TESTING.md) for the reasoning:
-
-| Model                 | Base                                                                                    | Status                                                                                                                                                                                                                                                              |
-| --------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemma`             | `gemma4-26b-a4b-it-qat.gguf` (Ollama `gemma4:26b-a4b-it-qat`, same bytes)           | current. Rebuilt 2026-07-28, moved to llama.cpp 2026-09-14                                                                                                                                                                                                          |
-| `qwen`              | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` (Ollama `qwen3.6:35b-a3b-mtp-q4_K_M`, same bytes) | current. Rebuilt 2026-07-28, moved to llama.cpp 2026-09-14 with MTP on                                                                                                                                                                                              |
-| `lite`              | `qwen3.5-9b-mtp-q4_K_M.gguf` (unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M)                 | current. Added 2026-07-28 as the in-VRAM speed anchor and 3rd judge, base replaced 2026-09-14                                                                                                                                                                       |
-| `lite` (Ollama)     | `qwen3.5:9b`                                                                          | replaced 2026-09-14. The Ollama file does not load in llama.cpp (`rope.dimension_sections` has 3 entries, llama.cpp expects 4).                                                                                                                                   |
-| `qwen` (uncensored) | `hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`                | reverted 2026-07-28 — never benchmarked; works against `prompts/safety.md` by construction, so the shared stack spent tokens every turn fighting the base's own tuning. An uncensored base needs its own tag and its own stack, not a swap under the shared one. |
-| `gemma` (prior)     | `gemma4:12b-it-q4_K_M`                                                                | retired 2026-07-27 — base no longer installed; source of the 2026-06-14 scores                                                                                                                                                                                     |
-| `gemma-custom`      | `gemma4:e4b`                                                                          | removed — superseded by gemma4 12B                                                                                                                                                                                                                                 |
-| `granite-custom`    | `granite4.1:8b-Q5_K_M`                                                                | dropped — strong prior coding, no longer leads                                                                                                                                                                                                                     |
-| `qwen-custom`       | `qwen3.5:9b`                                                                          | superseded 2026-06 by Qwen3.6 MoE; the base returned 2026-07-28 as `lite`                                                                                                                                                                                         |
-| `ministral-custom`  | `ministral-3:8b`                                                                      | removed — historical #2                                                                                                                                                                                                                                            |
-| `llama-custom`      | `llama3.1:8b`                                                                         | removed — trailed in early runs                                                                                                                                                                                                                                    |
-| `gemma-big`         | `gemma3:27b`                                                                          | retired — lost the quality/speed tradeoff on this box                                                                                                                                                                                                              |
+The current lineup is under *Models*. Every model tried before it, with why it
+left, is in [`TESTING.md`](TESTING.md), *Models Tested*.
 
 ## Hardware Envelope
 

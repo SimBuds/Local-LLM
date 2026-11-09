@@ -24,7 +24,7 @@ GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"
 # Names other repos address the router by. Reusing one would point an existing
 # app at a different model without that app changing, so they are refused here
 # rather than left to review. README.md, "Serving other apps", is the contract.
-CONTRACT_NAMES=(gemma qwen lite)
+CONTRACT_NAMES=(gemma qwen lite freedom)
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 

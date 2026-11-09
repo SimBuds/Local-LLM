@@ -215,6 +215,14 @@ class NameValidationTests(AddModelTestCase):
         self.assertIn("contract", out.lower())
         self.assertTrue((self.repo / "build-fresh").exists())
 
+    def test_freedom_is_a_contract_name(self):
+        # Friends-Hermes calls the router as `freedom` since 2026-11-09.
+        r = self.run_add_model(stdin="freedom\nfresh\n", args=["free-plain.gguf"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("'freedom' is part of the router contract", r.stdout + r.stderr)
+        self.assertFalse((self.repo / "build-freedom").exists())
+        self.assertTrue((self.repo / "build-fresh").exists())
+
     def test_existing_builder_file_is_never_overwritten(self):
         before = self.builder("taken")
         self.run_add_model(stdin="taken\nfresh\n", args=["free-plain.gguf"])
