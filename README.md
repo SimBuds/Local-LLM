@@ -117,9 +117,9 @@ EOF
   `google/gemma-4-26B-A4B-it-qat-q4_0-gguf` (`gemma-4-26B_q4_0-it.gguf`) and
   `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` (`Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`). Both are
   different, untested files, and switching starts a new baseline for that model.
-- Four more GGUFs from Ollama sit in `~/models/gguf` outside the lineup. Their
-  2026-10-09 load checks are in [`TESTING.md`](TESTING.md), *Other GGUFs on
-  disk*. Add one with `./add-model`.
+- `~/models/gguf` holds only the lineup. Four other GGUFs copied from Ollama were
+  deleted on 2026-11-09. Their 2026-10-09 load checks are in
+  [`TESTING.md`](TESTING.md), *Other GGUFs on disk*.
 
 ## Structure
 
@@ -158,7 +158,7 @@ never downloads.
 ```bash
 # Runs in: local terminal, repo root. Writes one build-* file, nothing else.
 ./add-model                            # pick from staged GGUFs with no builder
-./add-model qwen3.8-27b-mtp-q4_K_M.gguf   # or name the file and skip the menu
+./add-model some-model-q4_K_M.gguf     # or name the file and skip the menu
 ./add-model Org/Repo-GGUF              # or look a HuggingFace repo up first
 ```
 

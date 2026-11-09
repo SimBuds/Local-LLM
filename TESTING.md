@@ -943,7 +943,11 @@ the only symptom was `CUDA host compiler is GNU` with no version, followed by
 
 ### Other GGUFs on disk (load checks 2026-10-09, moved from README on 2026-11-09)
 
-`~/models/gguf` also holds four models copied out of Ollama before it was removed,
+Casey deleted all four files, and `gemma4-12b-it-qat.mmproj.gguf`, on 2026-11-09,
+leaving only the lineup in `~/models/gguf`. They have no byte-identical public
+source, so this record is all that remains of them.
+
+`~/models/gguf` held four models copied out of Ollama before it was removed,
 checked against their blob digests: `granite4.2-8b-q4_K_M.gguf`, `ornith.gguf`,
 `qwen3.8-27b-mtp-q4_K_M.gguf` and `gemma4-12b-it-qat.gguf`. Only
 `gemma4-12b-it-qat` has its `.mmproj.gguf` vision projector on disk (checked
