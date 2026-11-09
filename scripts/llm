@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """llm: Ollama-style terminal commands for the local llama-server router.
 
-  llm status                       models, their state, and llama-server VRAM   (ollama ps / list)
+  llm status [--wait SECONDS]      models, their state, and llama-server VRAM   (ollama ps / list)
+                                   --wait polls until the router answers, for
+                                   the check right after a service restart
   llm load MODEL                   load a model and wait until it is ready     (preload)
   llm unload [MODEL]               unload one model, or every resident one      (ollama stop)
   llm chat [--think] [--verbose] [--system-file PATH] MODEL [PROMPT...]
@@ -175,8 +177,34 @@ def gpu_mib() -> int | None:
     return sum(used)
 
 
-def cmd_status(_args) -> int:
-    listing = models()
+def wait_for_router(seconds: int) -> dict[str, dict]:
+    """The model listing once the router answers, polling for up to `seconds`.
+
+    `systemctl --user restart` returns before the router listens, so a check run
+    straight after it would report the router down (seen 2026-11-09). Any failure
+    is retried, a 503 while it starts included, and the last one is reported."""
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            return models()
+        except CliError as e:
+            if time.monotonic() >= deadline:
+                last = str(e).splitlines()[0]
+                raise CliError(f"router at {base_url()} did not answer within {seconds} s "
+                               f"(last error: {last})\n"
+                               f"  Read why:  journalctl --user -u llama-server -n 50") from e
+        time.sleep(POLL_S)
+
+
+def non_negative_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more, got {value}")
+    return value
+
+
+def cmd_status(args) -> int:
+    listing = wait_for_router(args.wait) if args.wait else models()
     print(f"router  {base_url()}  up")
     for model_id, status in listing.items():
         print(f"  {model_id:<8} {status.get('value', '?')}")
@@ -324,7 +352,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="llm", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
-    sub.add_parser("status", help="models, their state, and VRAM").set_defaults(func=cmd_status)
+    p = sub.add_parser("status", help="models, their state, and VRAM")
+    p.add_argument("--wait", type=non_negative_int, default=0, metavar="SECONDS",
+                   help="poll until the router answers, up to SECONDS (for use after a restart)")
+    p.set_defaults(func=cmd_status)
     p = sub.add_parser("load", help="load a model and wait until it is ready")
     p.add_argument("model")
     p.set_defaults(func=cmd_load)

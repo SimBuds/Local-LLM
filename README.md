@@ -525,7 +525,7 @@ On a `PASS`, swap it in and restart:
 ```bash
 # Runs in: local terminal, repo root. The printed restart is yours to run.
 ./scripts/llama-update swap       # build -> build-prev, build-next -> build
-systemctl --user restart llama-server && systemctl --user is-active llama-server
+systemctl --user restart llama-server && ./scripts/llm status --wait 60   # must list every model
 ```
 
 Between the swap and the restart, a model load runs the new binary under the
@@ -575,7 +575,7 @@ abort still costs the run, so let a `standard` pass finish before restarting.
 Common commands:
 
 ```bash
-make build && make deploy && systemctl --user restart llama-server   # ship a preset change
+make build && make deploy && systemctl --user restart llama-server && ./scripts/llm status --wait 60   # ship a preset change
 make serve PORT=8081                                   # try an undeployed change beside the service
 curl -s localhost:8080/models | jq '.data[] | {id, status: .status.value}'
 curl -s -X POST localhost:8080/models/load   -H 'Content-Type: application/json' -d '{"model":"gemma"}'
@@ -614,24 +614,25 @@ mkdir -p ~/.config/systemd/user
 cp ~/Apps/Local-LLM/systemd/llama-server.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now llama-server
-systemctl --user is-active llama-server
-ok=no; for i in $(seq 1 30); do curl -sf localhost:8080/health && { ok=yes; echo; break; }; sleep 1; done
-[ "$ok" = yes ] || echo "The server did not answer within 30 seconds. Check: journalctl --user -u llama-server -n 50"
+./scripts/llm status --wait 60
 ```
 
-`is-active` must print `active` and the health check `{"status":"ok"}`. The
-check polls for up to 30 seconds, because `is-active` reports `active` as soon as
-the process starts, before the router listens: a request sent straight after a
-start or restart got `Connection refused` on 2026-10-09. If it never answers,
-read `journalctl --user -u llama-server -n 50`. Both files are copies, so after
-changing the tracked unit, copy it again and run `systemctl --user daemon-reload`.
+The last line must list every model. It polls for up to 60 seconds, because
+`systemctl` returns, and `is-active` reports `active`, as soon as the process
+starts, before the router listens: a request sent straight after a start or
+restart got `Connection refused` on 2026-10-09 and an empty model list on
+2026-11-09. If it never answers, it exits 1 and names the `journalctl` command
+to read. Every restart this README hands out ends with the same check.
+
+Both files are copies, so after changing the tracked unit, copy it again and run
+`systemctl --user daemon-reload`.
 
 Day to day:
 
 | Task                                      | Command                                                                                                              |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Status / logs                             | `systemctl --user status llama-server`, `journalctl --user -u llama-server -f`                                   |
-| Ship a preset change                      | `make build && make deploy && systemctl --user restart llama-server`                                               |
+| Ship a preset change                      | `make build && make deploy && systemctl --user restart llama-server && ./scripts/llm status --wait 60` |
 | Try a change without touching the service | `make serve PORT=8081`, and `LLM_URL=http://localhost:8081` for the eval runners                                 |
 | Free the GPU now                          | `systemctl --user stop llama-server` (idle models also sleep on their own after 10 minutes)                        |
 | Plain `make serve` on 8080              | Stop the service first. Two routers cannot share a port: the second exits with `couldn't bind HTTP server socket`. |

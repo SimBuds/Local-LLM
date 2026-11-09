@@ -70,12 +70,12 @@ models/%/.built: build-% build-common.sh $(STACK)
 	@mkdir -p $(dir $@) && touch $@
 
 # The service serves the deployed copy, not the repo's, so a half-finished edit here
-# never reaches the apps that depend on it. Restart the service after deploying:
-# systemctl --user restart llama-server
+# never reaches the apps that depend on it. Restart the service after deploying.
+# The restart returns before the router listens, so the check after it waits.
 deploy: models/models.ini
 	mkdir -p $(DEPLOY_DIR)
 	cp models/models.ini $(DEPLOY_DIR)/models.ini
-	@echo "deployed to $(DEPLOY_DIR)/models.ini, now: systemctl --user restart llama-server"
+	@echo "deployed to $(DEPLOY_DIR)/models.ini, now: systemctl --user restart llama-server && ./scripts/llm status --wait 60"
 
 # --models-max 1 keeps one model resident at a time, so each gets the whole card
 # and a model's throughput never depends on what else happens to be loaded.

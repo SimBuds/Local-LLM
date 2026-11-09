@@ -179,6 +179,44 @@ class StatusTests(CliCase):
         self.assertEqual(self.url(0), "http://localhost:8081/models")
 
 
+class StatusWaitTests(CliCase):
+    """`llm status --wait N`: a restart returns before the router listens, so the
+    check that follows it waits instead of reporting the router down (2026-11-09)."""
+
+    def test_waits_through_refusals_then_lists_the_models(self):
+        refused = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+        self.serve(refused, refused, listing(freedom="unloaded", qwen="unloaded"))
+        self.smi()
+        code, out, err = self.run_cli("status", "--wait", "60")
+        self.assertEqual(code, 0, err)
+        self.assertIn("freedom", out)
+        self.assertIn("qwen", out)
+        self.assertEqual(len(self.requests), 3)
+
+    def test_router_that_never_answers_exits_1_after_the_wait(self):
+        refused = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+        self.serve(*[refused] * 500)
+        code, _, err = self.run_cli("status", "--wait", "5")
+        self.assertEqual(code, 1)
+        self.assertGreaterEqual(self.clock, 5)
+        for text in ("http://localhost:8080", "5 s", "Connection refused", "journalctl"):
+            self.assertIn(text, err)
+
+    def test_http_503_while_starting_is_waited_through(self):
+        starting = urllib.error.HTTPError("http://localhost:8080/models", 503, "Loading", {},
+                                          io.BytesIO(b'{"error":{"message":"Loading model"}}'))
+        self.serve(starting, listing(lite="unloaded"))
+        self.smi()
+        code, out, err = self.run_cli("status", "--wait", "60")
+        self.assertEqual(code, 0, err)
+        self.assertIn("lite", out)
+
+    def test_negative_wait_is_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.run_cli("status", "--wait", "-1")
+        self.assertNotEqual(cm.exception.code, 0)
+
+
 class LoadTests(CliCase):
     def test_polls_until_loaded_and_reports_time(self):
         self.serve(listing(lite="unloaded"), {"success": True},

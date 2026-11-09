@@ -24,7 +24,9 @@ LIVE="$SRC/build"
 NEXT="$SRC/build-next"
 PREV="$SRC/build-prev"
 OK_MARK=".llama-update-ok"   # written only after a build finishes and its binary runs
-RESTART="systemctl --user restart llama-server && systemctl --user is-active llama-server"
+# The restart returns before the router listens, so the check after it waits
+# (an immediate check printed nothing on 2026-11-09). Run from the repo root.
+RESTART="systemctl --user restart llama-server && ./scripts/llm status --wait 60"
 
 die() { echo "llama-update: $*" >&2; exit 1; }
 

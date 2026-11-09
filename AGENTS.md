@@ -1228,5 +1228,8 @@ repos, and one ended in a colon with no template after it.)
   error while it runs. Test undeployed changes with `make serve PORT=8081` and
   `LLM_URL=http://localhost:8081`. `make deploy` writes outside the repo and
   restarting or stopping the service is a service action, so both stay Casey's
-  under tier 0: hand over `make deploy && systemctl --user restart llama-server`
-  rather than running it. (2026-09-15)
+  under tier 0: hand over
+  `make deploy && systemctl --user restart llama-server && ./scripts/llm status --wait 60`
+  rather than running it. The restart returns before the router listens, so a
+  check run straight after it found nothing on 2026-11-09, and `--wait` polls
+  instead. (2026-09-15, check added 2026-11-09)

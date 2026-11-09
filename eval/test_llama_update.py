@@ -231,6 +231,9 @@ class SwapAndRollbackTests(UpdateCase):
                         "llama-perplexity did not travel with the swap")
         self.assertFalse((self.src / "build-next").exists())
         self.assertIn("systemctl --user restart llama-server", r.stdout)
+        # The restart returns before the router listens, so the check waits for it.
+        self.assertIn("llm status --wait", r.stdout)
+        self.assertNotIn("is-active", r.stdout)
         self.assertFalse(self.syslog.exists(), "swap must print the restart, not run it")
 
     def test_rollback_without_a_build_prev_is_refused(self):
@@ -245,6 +248,7 @@ class SwapAndRollbackTests(UpdateCase):
         self.assertIn("build 1", self.version("build"))
         self.assertIn("build 2", self.version("build-prev"))
         self.assertIn("systemctl --user restart llama-server", r.stdout)
+        self.assertIn("llm status --wait", r.stdout)
         self.assertFalse(self.syslog.exists())
 
     def test_help_and_bad_commands_work_without_a_checkout(self):
