@@ -35,10 +35,7 @@ Standalone like scripts/llm: stdlib only, no imports from eval/.
 from __future__ import annotations
 
 import argparse
-import configparser
-import json
 import os
-import socket
 import subprocess
 import sys
 import tempfile
@@ -46,6 +43,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _probe import free_port, port_free, read_preset, service_busy, stop  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN = Path.home() / "src/llama.cpp/build-next/bin/llama-server"
@@ -66,18 +66,6 @@ FETCH_CORPUS = ("mkdir -p ~/models/eval-data && cd ~/models/eval-data "
 
 
 # --- pure parts (unit-tested) -------------------------------------------------
-
-def read_preset(path: Path) -> dict[str, dict[str, str]]:
-    """Each model's settings from a built models.ini: `[*]` defaults, then its section."""
-    text = Path(path).read_text(encoding="utf-8")
-    cp = configparser.ConfigParser(interpolation=None, comment_prefixes=(";", "#"),
-                                   default_section="__none__")
-    cp.optionxform = str  # keep keys exactly as llama-server spells them
-    cp.read_string("[__top__]\n" + text)
-    base = dict(cp["*"]) if cp.has_section("*") else {}
-    return {name: {**base, **dict(cp[name])} for name in cp.sections()
-            if name not in ("*", "__top__")}
-
 
 def footprint_cmd(binary: str, settings: dict[str, str], port: int) -> list[str]:
     """One model at exactly the split the preset pins, as the router would load it."""
@@ -145,45 +133,12 @@ def judge_footprint(live: int | None, cand: int | None, tolerance: int) -> tuple
     return False, f"{verdict}: more than {tolerance} MiB extra eats the 2 GB margin"
 
 
-def service_busy(url: str) -> list[str]:
-    """Models the live service has in VRAM right now. A stopped service is idle."""
-    try:
-        with urllib.request.urlopen(f"{url}/models", timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8")).get("data", [])
-    except (urllib.error.URLError, OSError, ValueError):
-        return []
-    return [m["id"] for m in data
-            if (m.get("status") or {}).get("value") in ("loaded", "loading")]
-
-
 # --- runtime ------------------------------------------------------------------
-
-def port_free(port: int) -> bool:
-    with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", port)) != 0
-
-
-def free_port(start: int = 8090, stop: int = 8130) -> int:
-    for p in range(start, stop):
-        if port_free(p):
-            return p
-    raise SystemExit("no free port between 8090 and 8130 for the fit probe")
-
 
 def xid_count() -> int:
     out = subprocess.run(["journalctl", "-k", "-b", "--no-pager"],
                          capture_output=True, text=True).stdout
     return sum(1 for line in out.splitlines() if "Xid" in line)
-
-
-def stop(proc: subprocess.Popen) -> None:
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
 
 
 def measure(binary: str, name: str, settings: dict[str, str], out: Path,
