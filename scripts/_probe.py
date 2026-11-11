@@ -19,13 +19,25 @@ import urllib.request
 from pathlib import Path
 
 
-def read_preset(path: Path) -> dict[str, dict[str, str]]:
-    """Each model's settings from a built models.ini: `[*]` defaults, then its section."""
-    text = Path(path).read_text(encoding="utf-8")
+def _parse(path: Path) -> configparser.ConfigParser:
+    """An INI file as llama-server's router reads it: keys kept as spelled, no
+    interpolation, and settings above the first section allowed."""
     cp = configparser.ConfigParser(interpolation=None, comment_prefixes=(";", "#"),
                                    default_section="__none__")
     cp.optionxform = str  # keep keys exactly as llama-server spells them
-    cp.read_string("[__top__]\n" + text)
+    cp.read_string("[__top__]\n" + Path(path).read_text(encoding="utf-8"))
+    return cp
+
+
+def read_defaults(path: Path) -> dict[str, str]:
+    """The `[*]` section alone: server.ini, or the shared part of a built preset."""
+    cp = _parse(path)
+    return dict(cp["*"]) if cp.has_section("*") else {}
+
+
+def read_preset(path: Path) -> dict[str, dict[str, str]]:
+    """Each model's settings from a built models.ini: `[*]` defaults, then its section."""
+    cp = _parse(path)
     base = dict(cp["*"]) if cp.has_section("*") else {}
     return {name: {**base, **dict(cp[name])} for name in cp.sections()
             if name not in ("*", "__top__")}

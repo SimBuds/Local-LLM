@@ -38,7 +38,7 @@ from pathlib import Path
 
 AI_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(AI_ROOT / "scripts"))
-from _probe import RouterUnreadable, free_port, service_busy, stop  # noqa: E402
+from _probe import RouterUnreadable, free_port, read_defaults, service_busy, stop  # noqa: E402
 
 GGUF_DIR = Path(os.environ.get("GGUF_DIR") or Path.home() / "models/gguf")
 
@@ -257,11 +257,14 @@ def refuse_if_router_busy() -> None:
             f"  (A sleeping model is fine, it has already released its VRAM.)")
 
 
-def ini_number(text: str, key: str) -> str | None:
-    """The first `key = N` in server.ini. It has only the [*] section, so the
-    first match is the shared value."""
-    m = re.search(rf"^[ \t]*{re.escape(key)}[ \t]*=[ \t]*([0-9]+)", text, re.MULTILINE)
-    return m.group(1) if m else None
+# Shared settings that change what a load costs in VRAM, as the probe flags that
+# carry them. Read from server.ini rather than written out here: until
+# 2026-11-11 the cache types and flash attention were literals, so a preset
+# change to either would have sized the split for a cache the router does not
+# build. `fit` and `n-gpu-layers` are left out on purpose: they pin the split
+# for serving, and passing them would stop the fitter choosing one.
+PROBE_FLAGS = (("ctx-size", "-c"), ("ubatch-size", "-ub"), ("cache-type-k", "-ctk"),
+               ("cache-type-v", "-ctv"), ("flash-attn", "-fa"))
 
 
 class Fit:
@@ -293,16 +296,16 @@ def probe_fit(gguf: Path, mtp: bool) -> Fit:
     if not ini.is_file():
         die(f"no server.ini at {ini}. The probe needs its ubatch-size and ctx-size to size "
             f"the split the router will serve.")
-    text = ini.read_text(encoding="utf-8")
-    ub, ctx = ini_number(text, "ubatch-size"), ini_number(text, "ctx-size")
+    settings = read_defaults(ini)
+    ctx, ub = settings.get("ctx-size"), settings.get("ubatch-size")
     if not ctx:
         die(f"no ctx-size in {ini}. The probe sizes the KV cache from it, so it will not guess.")
 
-    cmd = ["llama-server", "-m", str(gguf), "-c", ctx, "-np", "1", "-fa", "on",
-           "-ctk", "q4_0", "-ctv", "q4_0", "--no-mmproj", "--fit-target", "2048",
+    cmd = ["llama-server", "-m", str(gguf), "-np", "1", "--no-mmproj", "--fit-target", "2048",
            "--port", str(free_port()), "-lv", "4"]
-    if ub:
-        cmd += ["-ub", ub]
+    for key, flag in PROBE_FLAGS:
+        if settings.get(key):
+            cmd += [flag, settings[key]]
     if mtp:
         cmd += ["--spec-type", "draft-mtp"]
 

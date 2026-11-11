@@ -29,6 +29,7 @@ _spec = importlib.util.spec_from_loader("verify_build", _loader)
 vb = importlib.util.module_from_spec(_spec)
 sys.modules["verify_build"] = vb
 _loader.exec_module(vb)
+import _probe as probe  # noqa: E402  (on sys.path once verify-build loads)
 
 PRESET = """; comment line
 version = 1
@@ -127,6 +128,14 @@ class PresetTests(unittest.TestCase):
         self.assertEqual(models["qwen"]["n-cpu-moe"], "35")
         self.assertNotIn("n-cpu-moe", models["lite"])
         self.assertEqual(models["gemma"]["cache-type-k"], "q4_0")
+
+    def test_defaults_are_the_shared_section_alone(self):
+        # add-model's probe reads server.ini, which has only [*] (2026-11-11).
+        defaults = probe.read_defaults(self.path)
+        self.assertEqual(defaults["ubatch-size"], "1024")
+        self.assertEqual(defaults["cache-type-k"], "q4_0")
+        self.assertNotIn("model", defaults)
+        self.assertNotIn("n-cpu-moe", defaults)
 
     def test_footprint_command_pins_the_split_with_fit_off(self):
         models = vb.read_preset(self.path)

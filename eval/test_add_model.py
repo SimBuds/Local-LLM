@@ -487,6 +487,50 @@ class ProbeFitTests(AddModelTestCase):
         self.assertIn("-ub", args)
         self.assertEqual(args[args.index("-ub") + 1], "1024")
 
+    def test_probe_sends_the_cache_types_and_flash_attention_server_ini_sets(self):
+        # The probe hardcoded q4_0 and flash attention on until 2026-11-11, so a
+        # preset change to either would size the split for a cache the router
+        # does not build.
+        (self.repo / "server.ini").write_text(
+            "[*]\nctx-size = 131072\ncache-type-k = q8_0\ncache-type-v = f16\nflash-attn = off\n")
+        r = self.probe_run("spill", "cached\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertEqual(args[args.index("-ctk") + 1], "q8_0")
+        self.assertEqual(args[args.index("-ctv") + 1], "f16")
+        self.assertEqual(args[args.index("-fa") + 1], "off")
+
+    def test_probe_sends_no_cache_type_server_ini_does_not_set(self):
+        # The router then builds llama-server's default cache, so the probe must too.
+        (self.repo / "server.ini").write_text("[*]\nctx-size = 131072\n")
+        r = self.probe_run("spill", "plaincache\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        for flag in ("-ctk", "-ctv", "-fa"):
+            self.assertNotIn(flag, args)
+
+    def test_probe_never_passes_the_pinning_keys(self):
+        # Guard, not a regression test: server.ini pins fit = off and
+        # n-gpu-layers = 99 for serving, and passing either would stop the fitter
+        # from choosing the split the probe exists to measure.
+        (self.repo / "server.ini").write_text(
+            "[*]\nctx-size = 131072\nfit = off\nn-gpu-layers = 99\n")
+        r = self.probe_run("spill", "unpinned\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        for flag in ("--fit", "-fit", "-ngl", "--n-gpu-layers", "99"):
+            self.assertNotIn(flag, args)
+
+    def test_settings_are_read_from_the_shared_section_only(self):
+        # Guard: a key in a commented line must not count. The sed this replaced
+        # was anchored too, so this passed before as well.
+        (self.repo / "server.ini").write_text(
+            "; ctx-size = 4096 was the old value\n[*]\nctx-size = 65536\n")
+        r = self.probe_run("spill", "sectioned\n", "free-plain.gguf")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertEqual(args[args.index("-c") + 1], "65536")
+
     def test_probe_sends_no_batch_when_server_ini_sets_none(self):
         # The router then serves at its own default, and so does the probe.
         (self.repo / "server.ini").write_text("[*]\nfit = off\nctx-size = 131072\n")
