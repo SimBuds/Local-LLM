@@ -70,8 +70,9 @@ FETCH_CORPUS = ("mkdir -p ~/models/eval-data && cd ~/models/eval-data "
 
 def footprint_cmd(binary: str, settings: dict[str, str], port: int) -> list[str]:
     """One model at exactly the split the preset pins, as the router would load it."""
-    cmd = [binary, "-m", settings["model"], "-np", "1", "--fit", "off", "-ngl", "99",
-           "--port", str(port), "--no-mmproj"]
+    # The model's own n-gpu-layers: a dense model that spills is pinned with it.
+    cmd = [binary, "-m", settings["model"], "-np", "1", "--fit", "off",
+           "-ngl", settings.get("n-gpu-layers", "99"), "--port", str(port), "--no-mmproj"]
     for key, flag in (("n-cpu-moe", "--n-cpu-moe"), ("ctx-size", "--ctx-size"),
                       ("ubatch-size", "-ub"), ("cache-type-k", "-ctk"),
                       ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
@@ -88,7 +89,7 @@ def kl_cmd(ppl: str, settings: dict[str, str], corpus: str, kld: str, chunks: in
     Context, ubatch, MTP and mmproj are left out: the chunk is KL_CTX tokens, and
     the other two are server-only."""
     cmd = [ppl, "-m", settings["model"], "-f", corpus, "-c", str(KL_CTX),
-           "--chunks", str(chunks), "--fit", "off", "-ngl", "99"]
+           "--chunks", str(chunks), "--fit", "off", "-ngl", settings.get("n-gpu-layers", "99")]
     for key, flag in (("n-cpu-moe", "--n-cpu-moe"), ("cache-type-k", "-ctk"),
                       ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
                       ("load-mode", "--load-mode")):

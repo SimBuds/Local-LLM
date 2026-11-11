@@ -2,9 +2,9 @@
 """
 Speed benchmark: measure raw token throughput per model — NOT correctness.
 
-Purpose: quantify the speed tradeoff of CPU-spillover models (e.g. qwen =
-qwen3.6:35b-a3b-mtp-q4_K_M, ~22 GB, spills heavily to CPU on a 10 GB GPU)
-against the models that fit on-GPU and we actually use daily (gemma).
+Purpose: quantify the speed tradeoff of the models whose experts spill to the
+CPU (gemma, qwen and freedom on the 10 GB card) against `lite`, which runs
+entirely on the GPU and anchors the speed column.
 
 Allows testing throughput with thinking ON or OFF to evaluate its impact on 
 wall-clock and token generation rates across different architectures.
@@ -16,7 +16,7 @@ slowdown multiple vs the fastest model.
 
 Usage:
   ./eval/run-speed.py                                  # default models + prompts
-  ./eval/run-speed.py --models gemma qwen lite
+  ./eval/run-speed.py --models gemma qwen lite freedom
   ./eval/run-speed.py --thinking on                    # force enable thinking
   ./eval/run-speed.py --num-predict 128 --attempts 1   # even faster
   ./eval/run-speed.py --timeout 900                    # for very slow spillover

@@ -9,8 +9,8 @@ This is a real pass@1 measurement, not a regex proxy. The summary ranks models
 by overall pass rate (tie-break: speed) and declares a winner.
 
 Usage:
-  ./eval/run-code.py --models gemma qwen lite      # all tasks, 5 attempts/task
-  ./eval/run-code.py --models gemma qwen lite --attempts 3
+  ./eval/run-code.py --models gemma qwen lite freedom      # all tasks, 5 attempts/task
+  ./eval/run-code.py --models gemma qwen lite freedom --attempts 3
   ./eval/run-code.py --models gemma
   ./eval/run-code.py --tasks two_sum lru_cache
   ./eval/run-code.py --exec-timeout 10       # per-program wall clock
@@ -86,7 +86,7 @@ def run_attempt(model: str, task: Task, n: int, total: int, timeout: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--attempts", type=positive_int, default=5, help="attempts per task (default 5)")
     ap.add_argument("--tasks", nargs="+", default=None,
                     help="subset of task names (default: all)")

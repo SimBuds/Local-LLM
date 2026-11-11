@@ -19,10 +19,10 @@ after it. Drop
 `--judge-repeats` to 1 to trade the median back for speed.
 
 Usage:
-  ./eval/run-profile.py smoke --models gemma qwen lite
-  ./eval/run-profile.py standard --models gemma qwen lite
-  ./eval/run-profile.py deep --models gemma qwen lite
-  ./eval/run-profile.py standard --models gemma qwen lite --dry-run  # show commands
+  ./eval/run-profile.py smoke --models gemma qwen lite freedom
+  ./eval/run-profile.py standard --models gemma qwen lite freedom
+  ./eval/run-profile.py deep --models gemma qwen lite freedom
+  ./eval/run-profile.py standard --models gemma qwen lite freedom --dry-run  # show commands
 
 Each underlying runner still writes its own eval/runs/<UTC>/<suite>/ directory;
 the wrapper lists every summary.md the profile produced at the end. A failed
@@ -82,7 +82,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("profile", choices=list(PROFILES))
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the underlying commands without running them")
     ap.add_argument("--out-root", type=Path, default=None,

@@ -8,7 +8,7 @@ checks. The summary ranks models by overall clean rate (tie-break: speed),
 reports a per-task matrix, and declares a winner.
 
 Usage:
-  ./eval/run-content.py --models gemma qwen lite          # all content tasks
+  ./eval/run-content.py --models gemma qwen lite freedom          # all content tasks
   ./eval/run-content.py --models gemma --tasks seo_product
   ./eval/run-content.py --models gemma --attempts 3
   ./eval/run-content.py --models gemma --prompt-file eval/prompts/x.md  # ad-hoc SEO prompt
@@ -68,7 +68,7 @@ def run_attempt(model: str, task: ContentTask, n: int, total: int, timeout: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--attempts", type=positive_int, default=5)
     ap.add_argument("--tasks", nargs="+", default=None,
                     help=f"subset of: {', '.join(TASKS)} (default: all)")

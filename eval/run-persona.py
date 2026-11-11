@@ -16,7 +16,7 @@ is "clean" iff every rule its task checks holds. The summary groups failures by
 the stack rule they implicate, so a red row points at the file to fix.
 
 Usage:
-  ./eval/run-persona.py --models gemma qwen lite
+  ./eval/run-persona.py --models gemma qwen lite freedom
   ./eval/run-persona.py --models gemma --tasks identity familiar_skill
   ./eval/run-persona.py --models gemma --attempts 5
 
@@ -86,7 +86,7 @@ def run_attempt(model: str, task: PersonaTask, n: int, total: int, timeout: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--attempts", type=positive_int, default=5, help="attempts per task (default 5)")
     ap.add_argument("--tasks", nargs="+", default=None,
                     help=f"subset of: {', '.join(TASKS)} (default: all)")

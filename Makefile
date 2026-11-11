@@ -15,7 +15,7 @@
 #
 # Every builder assembles the SAME prompt stack, so any edit under prompts/ or
 # memory/ invalidates every model. The per-model stamp still
-# matters: it means editing one builder's PARAMS rebuilds only that model, and a
+# matters: it means editing one builder's LOAD rebuilds only that model, and a
 # no-op `make check` costs nothing but the persona run.
 
 # Every build-* script is a model. Discovered rather than listed, so dropping in
@@ -23,7 +23,7 @@
 # maintained list and a new builder was silently ignored until someone edited it.
 # build-common.sh is shared assembly, not a builder, so it is filtered out.
 # The order here is the section order in models.ini. wildcard sorts, so it is
-# gemma lite qwen rather than the hand-written gemma qwen lite. llama-server
+# freedom gemma lite qwen, whatever order the builders were added in. llama-server
 # sorts /models itself and does not depend on file order.
 MODELS  := $(filter-out common.sh,$(patsubst build-%,%,$(wildcard build-*)))
 STACK   := $(shell find prompts memory -type f -name '*.md' 2>/dev/null | sort)

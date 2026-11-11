@@ -60,7 +60,8 @@ mkdir -p "$OUT_DIR"
   echo "Built: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo
 
-  # Inject reference first, user context second, behavior rules last.
+  # User context first, behavior rules last (a knowledge/ directory came first
+  # until 2026-09-16).
   # `*.example.md` are tracked templates for people cloning the repo; the real
   # files sit beside them untracked. Injecting both would hand the model two
   # conflicting User Profile sections, so the templates are skipped here.

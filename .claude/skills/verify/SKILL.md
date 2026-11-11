@@ -38,7 +38,7 @@ There is no GUI. Unit tests are CI's job, not verification.
 - Unknown task name: every runner exits 1 naming the valid tasks, no run dir.
 - Router down: `LLM_URL=http://localhost:9 ./eval/run-<suite>.py --models qwen`
   must exit 1 with `no llama-server router` and create no run dir.
-- Profiles: `./eval/run-profile.py standard --models gemma qwen lite --dry-run`
+- Profiles: `./eval/run-profile.py standard --models gemma qwen lite freedom --dry-run`
 - Leaderboard: `./eval/promote.py --check` exits 0 when README matches runs.
 
 ## Never

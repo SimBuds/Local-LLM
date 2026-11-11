@@ -19,9 +19,9 @@ an argument the model made up. See tool_tasks.py for the task table and the
 `any_of` / `contains` matchers used for free-text arguments.
 
 Usage:
-  ./eval/run-tools.py --models gemma qwen lite
+  ./eval/run-tools.py --models gemma qwen lite freedom
   ./eval/run-tools.py --models gemma --tasks pick_tool parallel_calls
-  ./eval/run-tools.py --models gemma qwen lite --attempts 5 --out-root /tmp/scratch
+  ./eval/run-tools.py --models gemma qwen lite freedom --attempts 5 --out-root /tmp/scratch
 
 Output:
   eval/runs/<UTC>/tools/

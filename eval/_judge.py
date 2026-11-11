@@ -165,8 +165,8 @@ def reliability_lines(judge_stats: dict[str, list[bool]], records: list[dict],
     else:
         L.append("- Inter-judge disagreement: n/a — each response had <2 judges. "
                  "Leave-one-out over an N-model lineup leaves N-1 judges per "
-                 "response, so a 2-model run leaves one; add a 3rd model "
-                 "(`--models gemma qwen lite`) to cross-check scores.")
+                 "response, so a 2-model run leaves one; run 3 or more models "
+                 "(`--models gemma qwen lite freedom`) to cross-check scores.")
 
     under = sum(1 for r in records if r.get("n_judges", 0) < 2)
     if under:

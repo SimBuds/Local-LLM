@@ -16,10 +16,10 @@ Ranking metric is the composite "task score" = mean over attempts of
 count — that's the failure mode that silently ships bad data in the real apps.
 
 Usage:
-  ./eval/run-json.py --models gemma qwen lite
+  ./eval/run-json.py --models gemma qwen lite freedom
   ./eval/run-json.py --models gemma --tasks jd_extract needle_recall
-  ./eval/run-json.py --models gemma qwen lite --num-ctx 65536 --attempts 5
-  ./eval/run-json.py --models gemma qwen lite --context-pressure medium   # longer docs
+  ./eval/run-json.py --models gemma qwen lite freedom --num-ctx 65536 --attempts 5
+  ./eval/run-json.py --models gemma qwen lite freedom --context-pressure medium   # longer docs
   ./eval/run-json.py --models gemma --tasks needle_recall --position all  # early/mid/late
 
 --num-ctx is the minimum context each model must be serving (default 65536, room

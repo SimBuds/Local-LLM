@@ -22,9 +22,9 @@ generate every response first (each model loaded once), then judge by looping
 over the panel (each judge loaded once).
 
 Usage:
-  ./eval/run-learn.py --models gemma qwen lite                 # panel = both, leave-one-out
+  ./eval/run-learn.py --models gemma qwen lite freedom                 # leave-one-out: each graded by the other three
   ./eval/run-learn.py --models gemma --judges qwen        # grade gemma with qwen
-  ./eval/run-learn.py --models gemma qwen lite --tasks lru_cache edit_distance --attempts 5
+  ./eval/run-learn.py --models gemma qwen lite freedom --tasks lru_cache edit_distance --attempts 5
 
 Leave-one-out means a response is graded only by judges other than its author, so
 every model under test needs at least one judge with a different name. A single
@@ -80,7 +80,7 @@ Return ONLY a JSON object, no other text, exactly these keys:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--judges", nargs="+", default=None,
                     help="judge panel (default: all --models, leave-one-out). "
                          "Each response is graded by every judge except the model "

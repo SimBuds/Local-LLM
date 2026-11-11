@@ -6,9 +6,9 @@ a leak and scores 0. Valid responses are graded by a leave-one-out judge panel
 on scaffolding, concept, calibration, pitfalls, and clarity.
 
 Usage:
-  ./eval/run-tutor.py --models gemma qwen lite                 # panel = both, leave-one-out
+  ./eval/run-tutor.py --models gemma qwen lite freedom                 # leave-one-out: each graded by the other three
   ./eval/run-tutor.py --models gemma --judges qwen        # grade gemma with qwen
-  ./eval/run-tutor.py --models gemma qwen lite --tasks two_sum --attempts 1
+  ./eval/run-tutor.py --models gemma qwen lite freedom --tasks two_sum --attempts 1
 
 Leave-one-out means a response is graded only by judges other than its author, so
 every model under test needs at least one judge with a different name. A single
@@ -87,7 +87,7 @@ def solution_leak_check(response: str, tests: str, exec_timeout: int) -> tuple[b
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--models", nargs="+", required=True, help="Ollama model names")
+    ap.add_argument("--models", nargs="+", required=True, help="router model names (the preset sections)")
     ap.add_argument("--judges", nargs="+", default=None,
                     help="judge panel (default: all --models, leave-one-out)."
                          " Each response is graded by every judge except the model "

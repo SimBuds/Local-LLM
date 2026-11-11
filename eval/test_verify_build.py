@@ -148,6 +148,24 @@ class PresetTests(unittest.TestCase):
         self.assertNotIn("--spec-type", gemma)
         self.assertNotIn("fit-target", gemma)
 
+    def test_a_dense_split_keeps_its_own_gpu_layers(self):
+        # add-model pins n-gpu-layers for a dense model that spills. Until
+        # 2026-11-11 both commands sent -ngl 99 regardless, so such a model would
+        # load every layer, fail the footprint check, and be measured for KL at
+        # a split the router never serves.
+        dense = {**vb.read_preset(self.path)["gemma"], "n-gpu-layers": "12"}
+        dense.pop("n-cpu-moe")
+        for cmd in (vb.footprint_cmd("/b/llama-server", dense, 8090),
+                    vb.kl_cmd("/b/llama-perplexity", dense, "/c", "/k", 4, candidate=False)):
+            self.assertEqual(cmd[cmd.index("-ngl") + 1], "12", cmd)
+            self.assertEqual(cmd.count("-ngl"), 1, cmd)
+
+    def test_a_model_without_its_own_layers_keeps_the_shared_value(self):
+        gemma = vb.read_preset(self.path)["gemma"]
+        for cmd in (vb.footprint_cmd("/b/llama-server", gemma, 8090),
+                    vb.kl_cmd("/b/llama-perplexity", gemma, "/c", "/k", 4, candidate=False)):
+            self.assertEqual(cmd[cmd.index("-ngl") + 1], "99", cmd)
+
     def test_all_gpu_model_gets_no_expert_split_and_keeps_its_own_batch(self):
         models = vb.read_preset(self.path)
         lite = " ".join(vb.footprint_cmd("/b/llama-server", models["lite"], 8090))
