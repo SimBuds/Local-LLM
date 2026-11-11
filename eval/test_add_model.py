@@ -27,6 +27,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -783,6 +784,139 @@ class HuggingFaceLookupTests(AddModelTestCase):
         r = self.run_add_model(stdin="localname\n", args=["free-plain.gguf"], env_extra=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.urls().strip(), "")
+
+
+class RefitTests(AddModelTestCase):
+    """`--refit NAME...` re-derives an existing model's split and reports it.
+
+    Every context change (2026-09-16, 2026-10-30) re-derived the pinned splits
+    with the README hand recipe, because add-model refused any GGUF a builder
+    already claimed. Pinned values are locked, so refit reports and writes
+    nothing: changing a pin stays Casey's edit.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        fake = self.bin / "llama-server"
+        fake.write_text(FAKE_SERVER)
+        fake.chmod(0o755)
+        self.args_file = Path(self.tmp.name) / "argv.txt"
+        g = self.gguf_dir
+        sections = {
+            "moe": f"model = {g}/claimed.gguf\nn-cpu-moe = 21\n",
+            "moetwo": f"model = {g}/free-plain.gguf\nn-cpu-moe = 30\n",
+            "small": f"model = {g}/free-mtp.gguf\nspec-type = draft-mtp\nubatch-size = 512\n",
+            "dense": f"model = {g}/free-plain.gguf\nn-gpu-layers = 12\n",
+        }
+        models = self.repo / "models"
+        models.mkdir()
+        (models / "models.ini").write_text(
+            "version = 1\n\n[*]\nctx-size = 131072\nubatch-size = 1024\nfit = off\n"
+            "n-gpu-layers = 99\ncache-type-k = q4_0\ncache-type-v = q4_0\nflash-attn = on\n"
+            + "".join(f"[{n}]\n{body}\n" for n, body in sections.items()))
+        for n in sections:
+            (self.repo / f"build-{n}").write_text(f'MODEL_NAME="{n}"\n')
+            (models / n).mkdir()
+            (models / n / ".built").touch()
+        old = time.time() - 60
+        for f in [self.repo / "server.ini", *(self.repo / f"build-{n}" for n in sections)]:
+            os.utime(f, (old, old))
+
+    def refit(self, mode: str, *names: str, env: dict | None = None):
+        extra = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": mode,
+                 "FAKE_ARGS": str(self.args_file), "FIT_TIMEOUT": "10", **(env or {})}
+        return self.run_add_model(args=["--refit", *names], probe=True, env_extra=extra)
+
+    def tree(self) -> dict[str, bytes]:
+        # __pycache__ is the interpreter caching _probe's bytecode, not a write
+        # by refit, and it is gitignored.
+        return {str(f.relative_to(self.repo)): f.read_bytes()
+                for f in sorted(self.repo.rglob("*"))
+                if f.is_file() and "__pycache__" not in f.parts}
+
+    def test_unchanged_moe_split_is_reported_as_unchanged(self):
+        r = self.refit("spill", "moe")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("moe: pinned n-cpu-moe = 21, the fitter now picks n-cpu-moe = 21", r.stdout)
+        self.assertIn("Unchanged", r.stdout)
+        self.assertIn("(21 overflowing)", r.stdout)
+
+    def test_changed_moe_split_shows_both_values_and_says_the_pin_is_locked(self):
+        r = self.refit("spill", "moetwo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pinned n-cpu-moe = 30, the fitter now picks n-cpu-moe = 21", r.stdout)
+        self.assertIn("Changed", r.stdout)
+        self.assertIn("locked", r.stdout)
+
+    def test_refit_writes_nothing(self):
+        before = self.tree()
+        self.refit("spill", "moetwo")
+        self.assertEqual(before, self.tree())
+
+    def test_full_fit_uses_the_models_own_batch_and_spec_type(self):
+        r = self.refit("fits", "small")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("fits entirely", r.stdout)
+        args = self.spawned_args()
+        self.assertEqual(args[args.index("-ub") + 1], "512")
+        self.assertEqual(args[args.index("--spec-type") + 1], "draft-mtp")
+        self.assertEqual(args[args.index("-m") + 1], str(self.gguf_dir / "free-mtp.gguf"))
+
+    def test_dense_pin_is_compared_as_gpu_layers(self):
+        r = self.refit("dense", "dense")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pinned n-gpu-layers = 12, the fitter now picks n-gpu-layers = 12", r.stdout)
+
+    def test_the_pinned_split_is_never_passed_to_the_fitter(self):
+        self.refit("spill", "moe")
+        args = self.spawned_args()
+        for flag in ("--n-cpu-moe", "-ncmoe", "-ngl", "--n-gpu-layers", "--fit"):
+            self.assertNotIn(flag, args)
+
+    def test_two_names_are_both_reported(self):
+        r = self.refit("spill", "moe", "moetwo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("moe: pinned", r.stdout)
+        self.assertIn("moetwo: pinned", r.stdout)
+
+    def test_unknown_name_is_refused_naming_the_preset_models(self):
+        r = self.refit("spill", "nope")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("nope", r.stderr)
+        self.assertIn("moetwo", r.stderr)
+        self.assertFalse(self.args_file.exists(), "probed a model that is not in the preset")
+
+    def test_builder_newer_than_its_build_is_refused(self):
+        # The preset would then pin a split the builder no longer declares.
+        (self.repo / "build-moe").touch()
+        r = self.refit("spill", "moe")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("make build", r.stderr)
+        self.assertFalse(self.args_file.exists())
+
+    def test_missing_built_preset_is_refused(self):
+        (self.repo / "models" / "models.ini").unlink()
+        r = self.refit("spill", "moe")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("make build", r.stderr)
+
+    def test_busy_router_refuses_the_refit(self):
+        body = json.dumps({"data": [{"id": "moe", "status": {"value": "loaded"}}]})
+        r = self.refit("spill", "moe", env={"FAKE_BODY": body,
+                                             "LLM_URL": "http://router.test:8080"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("llm unload", r.stderr)
+        self.assertFalse(self.args_file.exists())
+
+    def test_refit_without_a_name_is_refused(self):
+        r = self.refit("spill")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--refit", r.stderr)
+        self.assertFalse(self.args_file.exists())
+
+    spawned_args = ProbeFitTests.spawned_args
 
 
 class DenseOffloadTests(AddModelTestCase):

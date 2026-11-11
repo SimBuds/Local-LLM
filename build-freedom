@@ -19,8 +19,7 @@ BASE_MODEL="Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
 # Role: the uncensored Qwen3.6 35B A3B for Friends-Hermes, which calls it by
 # this name (the router contract). Held to qwen's standards.
 # server.ini pins fit = off, so this is the split every load uses. Re-derive it
-# with ./add-model on a fresh builder, or the recipe in README.md, after a
-# model or hardware change. Do not turn automatic fitting back on: it would
+# with ./add-model --refit freedom after a model or hardware change. Do not turn automatic fitting back on: it would
 # resize the split from whatever VRAM happens to be free per run.
 LOAD=(
   'n-cpu-moe = 34'

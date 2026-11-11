@@ -7,6 +7,8 @@ Scaffold a build-* script for a GGUF that is already staged in $GGUF_DIR.
   ./add-model ORG/REPO         list a HuggingFace repo's GGUFs and print the
                                download command for the one you pick
   ./add-model --no-probe ...   scaffold only, do not touch the GPU
+  ./add-model --refit NAME...  re-derive an existing model's split and report it
+                               beside the pinned value. Writes nothing.
 
 It writes build-<name> and derives the GPU/CPU split by loading the model once
 with llama.cpp's fitter. Downloading the GGUF is yours.
@@ -38,7 +40,8 @@ from pathlib import Path
 
 AI_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(AI_ROOT / "scripts"))
-from _probe import RouterUnreadable, free_port, read_defaults, service_busy, stop  # noqa: E402
+from _probe import (RouterUnreadable, free_port, read_defaults,  # noqa: E402
+                    read_preset, service_busy, stop)
 
 GGUF_DIR = Path(os.environ.get("GGUF_DIR") or Path.home() / "models/gguf")
 
@@ -275,8 +278,31 @@ class Fit:
         self.key, self.n, self.line, self.note = key, n, line, note
 
 
-def probe_fit(gguf: Path, mtp: bool) -> Fit:
+def shared_settings() -> dict[str, str]:
+    """server.ini's [*] section, which a new model will be served with.
+
+    The compute buffer grows with the physical batch, so the probe must use the
+    one the router serves at. Until 2026-10-09 it passed none, and every split it
+    derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
+    The context is read the same way, so the probe cannot drift from the served
+    one (it was hardcoded until 2026-10-31).
+    """
+    ini = AI_ROOT / "server.ini"
+    if not ini.is_file():
+        die(f"no server.ini at {ini}. The probe needs its ubatch-size and ctx-size to size "
+            f"the split the router will serve.")
+    settings = read_defaults(ini)
+    if not settings.get("ctx-size"):
+        die(f"no ctx-size in {ini}. The probe sizes the KV cache from it, so it will not guess.")
+    return settings
+
+
+def probe_fit(gguf: Path, settings: dict[str, str]) -> Fit:
     """Load the model once with llama.cpp's fitter and read what it pushed off the GPU.
+
+    `settings` are what the router serves the model with: server.ini's [*] for a
+    new model, its merged preset section for a refit. Only PROBE_FLAGS and
+    spec-type are taken from them, so a pinned split never reaches the fitter.
 
     The log goes to a file because llama-server buffers a pipe: README.md
     records losing the fit line twice by stopping a piped probe as soon as it
@@ -285,32 +311,24 @@ def probe_fit(gguf: Path, mtp: bool) -> Fit:
     (`lite` loads with "offloaded 34/34 layers to GPU" and no fit line, measured
     2026-09-15).
     """
-    # The compute buffer grows with the physical batch, so the probe must use the
-    # one the router serves at. Until 2026-10-09 it passed none, and every split it
-    # derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
-    # The context is read the same way, so the probe cannot drift from the served
-    # one (it was hardcoded until 2026-10-31). Unlike the batch it is required:
-    # llama-server's default is the trained context, 262144 for this lineup, which
-    # sizes the split for a KV cache twice the one the router serves.
-    ini = AI_ROOT / "server.ini"
-    if not ini.is_file():
-        die(f"no server.ini at {ini}. The probe needs its ubatch-size and ctx-size to size "
-            f"the split the router will serve.")
-    settings = read_defaults(ini)
-    ctx, ub = settings.get("ctx-size"), settings.get("ubatch-size")
-    if not ctx:
-        die(f"no ctx-size in {ini}. The probe sizes the KV cache from it, so it will not guess.")
+    # Unlike the batch the context is required: llama-server's default is the
+    # trained context, 262144 for this lineup, which sizes the split for a KV
+    # cache twice the one the router serves. Callers check it, this is the guard.
+    ctx, ub, spec = settings["ctx-size"], settings.get("ubatch-size"), settings.get("spec-type")
 
     cmd = ["llama-server", "-m", str(gguf), "-np", "1", "--no-mmproj", "--fit-target", "2048",
            "--port", str(free_port()), "-lv", "4"]
     for key, flag in PROBE_FLAGS:
         if settings.get(key):
             cmd += [flag, settings[key]]
-    if mtp:
-        cmd += ["--spec-type", "draft-mtp"]
+    # Keep spec-type: the MTP layer needs VRAM of its own, and fitting without it
+    # gives a split that is too generous.
+    if spec:
+        cmd += ["--spec-type", spec]
 
     print(f"Probing the GPU/CPU split (--fit-target 2048, -c {ctx}"
-          f"{f', -ub {ub}' if ub else ''}{', MTP on' if mtp else ''}).")
+          f"{f', -ub {ub}' if ub else ''}"
+          f"{', MTP on' if spec == 'draft-mtp' else f', spec-type {spec}' if spec else ''}).")
     print("  Loading the model once. Close anything holding VRAM: the split is sized")
     print("  from what is free right now, and that is why it gets pinned.")
     sys.stdout.flush()
@@ -458,16 +476,16 @@ def builder_text(name: str, gguf: str, mtp: bool, fit: Fit, probed: bool) -> str
         if fit.note:
             out.append(f"# {fit.note}.")
         out += ["# server.ini pins fit = off, so this is the split every load uses. Re-derive it",
-                "# with ./add-model on a fresh builder, or the recipe in README.md, after a",
-                "# model or hardware change. Do not turn automatic fitting back on: it would",
-                "# resize the split from whatever VRAM happens to be free per run."]
+                f"# with ./add-model --refit {name} after a model or hardware change. Do not",
+                "# turn automatic fitting back on: it would resize the split from whatever",
+                "# VRAM happens to be free per run."]
     elif probed:
         out += [f"# Probed on {today()} with --fit-target 2048: this model fits",
                 "# entirely on the card, so there is no expert split to pin."]
     else:
         out += ["# n-cpu-moe is NOT set: --no-probe was used. server.ini pins fit = off, so",
                 "# until you add one this model is loaded entirely onto the GPU. Derive it",
-                "# with ./add-model without --no-probe, or the README.md recipe, then add:",
+                f"# with ./add-model --refit {name} after make build, then add:",
                 "#   'n-cpu-moe = N'"]
     out.append("LOAD=(")
     if fit.n:
@@ -490,14 +508,83 @@ def write_builder(name: str, text: str) -> None:
     out.chmod(0o755)
 
 
+# --- re-deriving an existing split -----------------------------------------
+
+def refit_settings(names: list[str]) -> dict[str, dict[str, str]]:
+    """Each named model's merged settings from the built preset, refusing any the
+    preset does not hold or holds from an older builder."""
+    preset = AI_ROOT / "models" / "models.ini"
+    if not preset.is_file():
+        die(f"no built preset at {preset}. Run make build first: refit reads each "
+            f"model's settings from it.")
+    models = read_preset(preset)
+    unknown = [n for n in names if n not in models]
+    if unknown:
+        die(f"not in {preset}: {' '.join(unknown)}. Models there: "
+            f"{' '.join(sorted(models)) or '(none)'}")
+    built_at = preset.stat().st_mtime
+    for n in names:
+        stamp = AI_ROOT / "models" / n / ".built"
+        sources = [AI_ROOT / "server.ini", AI_ROOT / f"build-{n}"]
+        newer = [s.name for s in sources
+                 if s.exists() and s.stat().st_mtime > min(
+                     built_at, stamp.stat().st_mtime if stamp.exists() else 0)]
+        if newer or not stamp.exists():
+            die(f"{n}: {' and '.join(newer) or 'its build stamp'} changed since the last "
+                f"make build, so the preset may not say what the builder says. Run make "
+                f"build, then refit.")
+    return {n: models[n] for n in names}
+
+
+def pinned(settings: dict[str, str], defaults: dict[str, str]) -> tuple[str, str]:
+    """The split a model's section pins: n-cpu-moe, or an n-gpu-layers that
+    differs from [*]'s all-on-GPU value, or nothing."""
+    if settings.get("n-cpu-moe"):
+        return "n-cpu-moe", settings["n-cpu-moe"]
+    if settings.get("n-gpu-layers") and settings["n-gpu-layers"] != defaults.get("n-gpu-layers"):
+        return "n-gpu-layers", settings["n-gpu-layers"]
+    return "", ""
+
+
+def refit(names: list[str]) -> int:
+    """Probe each named model as the router serves it and report the split the
+    fitter picks beside the pinned one. Writes nothing: pinned splits are locked
+    (AGENTS.md), so acting on a changed value stays a human edit."""
+    if not names:
+        die("--refit needs at least one model name, e.g. ./add-model --refit gemma")
+    models = refit_settings(names)
+    defaults = read_defaults(AI_ROOT / "models" / "models.ini")
+    refuse_if_router_busy()
+    for n, settings in models.items():
+        if not settings.get("ctx-size"):
+            die(f"{n}: no ctx-size in the built preset. The probe sizes the KV cache from it.")
+        print()
+        print(f"--- {n}")
+        fit = probe_fit(Path(settings["model"]), settings)
+        was = pinned(settings, defaults)
+        was_s = f"{was[0]} = {was[1]}" if was[0] else "none (all on the GPU)"
+        now_s = f"{fit.key} = {fit.n}" if fit.key else "none (it fits entirely on the card)"
+        print(f"{n}: pinned {was_s}, the fitter now picks {now_s}.")
+        if fit.line:
+            print(f"  Fit line: {fit.line}")
+        if (fit.key, fit.n) == was:
+            print("  Unchanged.")
+        else:
+            print(f"  Changed. Pinned splits are locked: changing build-{n} needs approval and "
+                  f"a spike test (AGENTS.md, project rules).")
+    return 0
+
+
 # --- main -------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
-    probe = True
+    probe, refitting = True, False
     positional = []
     for arg in argv:
         if arg == "--no-probe":
             probe = False
+        elif arg == "--refit":
+            refitting = True
         elif arg in ("-h", "--help"):
             print(__doc__.strip())
             return 0
@@ -505,6 +592,11 @@ def main(argv: list[str]) -> int:
             die(f"unknown option: {arg}")
         else:
             positional.append(arg)
+
+    if refitting:
+        if not probe:
+            die("--refit probes by definition, so it cannot be combined with --no-probe")
+        return refit(positional)
 
     if not GGUF_DIR.is_dir():
         die(f"GGUF_DIR does not exist: {GGUF_DIR}")
@@ -545,7 +637,8 @@ def main(argv: list[str]) -> int:
 
     # Probe before writing: a failed probe must not leave a half-written builder
     # behind for someone to find later and assume was measured.
-    fit = probe_fit(GGUF_DIR / gguf, mtp) if probe else Fit()
+    settings = {**shared_settings(), **({'spec-type': 'draft-mtp'} if mtp else {})}
+    fit = probe_fit(GGUF_DIR / gguf, settings) if probe else Fit()
 
     write_builder(name, builder_text(name, gguf, mtp, fit, probe))
 
@@ -567,8 +660,8 @@ def main(argv: list[str]) -> int:
         print()
         print("Before serving it, derive the GPU/CPU split and add 'n-cpu-moe = N' to LOAD.")
         print("server.ini sets fit = off, so without it llama.cpp puts the whole model on the")
-        print("card and a model larger than VRAM fails to load. Re-run without --no-probe, or")
-        print('use the recipe in README.md under "Build And Tune". Then: make build')
+        print("card and a model larger than VRAM fails to load. Run make build, then")
+        print(f"./add-model --refit {name} reports the split to pin.")
     return 0
 
 

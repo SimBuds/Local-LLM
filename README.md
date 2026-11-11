@@ -183,9 +183,9 @@ GGUF stops with the reason.
   *Build And Tune*).
 
 **Then it derives the GPU/CPU split.** It loads the model once with
-`--fit-target 2048` on a spare port, passing `server.ini`'s `ctx-size` as `-c`
-and `ubatch-size` as `-ub`, and records the fitter's choice in `LOAD` as
-`n-cpu-moe` with the fit line and date. **Close anything holding VRAM first**,
+`--fit-target 2048` on a spare port, with the context, batch, cache types and
+flash attention from `server.ini`'s `[*]` section, and records the fitter's
+choice in `LOAD` as `n-cpu-moe` with the fit line and date. **Close anything holding VRAM first**,
 because the split is sized from what is free at that moment.
 
 - It refuses to probe while the router at `LLM_URL` (default
@@ -262,40 +262,35 @@ choice, so a desktop VRAM spike can crash it. The measurements are in
 [`TESTING.md`](TESTING.md), *Pinned split history* and *Preset tuning on build
 11022*.
 
-### Re-deriving a split by hand
+### Re-deriving a split
 
-`./add-model` on a fresh builder does this for you. The manual recipe loads the
-GGUF with a 2 GB fit margin and the builder's `spec-type`, then reads the fit
-line. Leaving MTP off gives a wrong answer, because the MTP layer needs VRAM of
-its own. The log goes to a file because llama-server buffers it, and a piped
-probe stopped early lost the fit line twice.
-
-The loop only ends for a model that spills. A model that fits never prints an
-overflow line (`lite` logs `offloaded 34/34 layers to GPU`, measured 2026-09-15),
-so the loop waits forever. `add-model` also stops on `model loaded`.
+After a context, batch, cache, build or hardware change, ask the fitter what it
+would pin now:
 
 ```bash
-# Runs in: local terminal, with nothing else holding the GPU. Safe to re-run.
-LOG="$(mktemp)"
-llama-server -m ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf -c 131072 -np 1 -fa on \
-  -ctk q4_0 -ctv q4_0 --no-mmproj --spec-type draft-mtp --fit-target 2048 \
-  -ub 1024 --port 8081 -lv 4 > "$LOG" 2>&1 &
-PID=$!
-echo "probe pid: $PID, log: $LOG"
-until grep -q 'layers (.* overflowing)' "$LOG" || ! kill -0 "$PID"; do sleep 1; done
-grep 'layers (.* overflowing)' "$LOG" || echo "no fit line: read $LOG"
-kill "$PID"
+# Runs in: local terminal, repo root, after make build. Loads each model once on a
+# spare port. Writes nothing. Needs the router to hold no model in VRAM.
+./add-model --refit gemma qwen freedom
 ```
 
-- The `echo` must print a numeric pid.
-- A line ending `42 layers (34 overflowing), 6071 MiB used, 2157 MiB free` means
-  `n-cpu-moe = 34`.
-- Drop `--spec-type draft-mtp` for `gemma` and `freedom`, which have no MTP
-  layer.
-- `-ub 1024` matches `server.ini`, because the compute buffer grows with the
-  batch. Use `-ub 512` for `lite` or any model whose `LOAD` pins 512.
-- The count moves with free VRAM, which is why it is pinned rather than re-fitted
-  per run.
+- Each model is probed as the router serves it: its section of the built
+  `models/models.ini`, with its own `ubatch-size` and `spec-type`, at
+  `--fit-target 2048`. Its pinned `n-cpu-moe` or `n-gpu-layers` is left out, so
+  the fitter chooses.
+- It prints the pinned value, the fitter's value and the fit line, and says
+  whether they differ. A line ending `31 layers (24 overflowing), 6375 MiB used,
+  2061 MiB free` means `n-cpu-moe = 24`.
+- It refuses while a builder or `server.ini` is newer than the last
+  `make build`, because the preset would then not say what the builder says.
+- **It never edits a builder.** The pinned splits are locked (see `AGENTS.md`),
+  so a changed value needs Casey's approval and a spike test before it goes into
+  `LOAD`.
+- The count moves with free VRAM, which is why it is pinned rather than
+  re-fitted per run. Close anything holding VRAM first.
+
+Until 2026-11-11 this was a hand recipe (a backgrounded `llama-server` and a
+`grep` loop). It waited forever on a model that fits, and its flags were typed
+in rather than read from the preset.
 
 ### Where changes belong
 

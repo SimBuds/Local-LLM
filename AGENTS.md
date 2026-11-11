@@ -1102,8 +1102,8 @@ repos, and one ended in a colon with no template after it.)
   declares its split in `LOAD`, taken from what `--fit` chose. Automatic fitting
   sizes the split from the VRAM free at load time, so desktop apps would change a
   benchmark's offload between runs, the same class of confound as the 2026-07-28
-  co-residency problem. Re-derive a value with the README recipe after a model or
-  hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
+  co-residency problem. Re-derive a value with `./add-model --refit NAME` (README,
+  *Re-deriving a split*) after a model or hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
 - **Locked: pinned splits keep a 2 GB fit margin (gemma 24, qwen 37, freedom 34
   at 131072 context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
