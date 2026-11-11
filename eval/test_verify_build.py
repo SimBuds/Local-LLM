@@ -215,7 +215,20 @@ class ServiceBusyTests(unittest.TestCase):
     def test_a_stopped_service_is_not_busy(self):
         with mock.patch.object(vb.urllib.request, "urlopen",
                                side_effect=vb.urllib.error.URLError("refused")):
-            self.assertEqual(vb.service_busy("http://localhost:8080"), [])
+            self.assertFalse(vb.service_busy("http://localhost:8080"))
+
+    def test_an_unreadable_answer_refuses_rather_than_reading_as_idle(self):
+        # A router that answers but cannot be read may hold VRAM. Until
+        # 2026-11-11 verify-build read this as idle while add-model refused.
+        cases = {
+            "not json": dict(return_value=FakeResponse(b"<html>not json</html>")),
+            "HTTP 500": dict(side_effect=vb.urllib.error.HTTPError(
+                "http://localhost:8080/models", 500, "boom", {}, None)),
+        }
+        for label, kw in cases.items():
+            with self.subTest(label), mock.patch.object(vb.urllib.request, "urlopen", **kw):
+                with self.assertRaises(vb.RouterUnreadable):
+                    vb.service_busy("http://localhost:8080")
 
 
 class KlCommandTests(unittest.TestCase):

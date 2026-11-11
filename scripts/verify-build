@@ -45,7 +45,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _probe import free_port, port_free, read_preset, service_busy, stop  # noqa: E402
+from _probe import (RouterUnreadable, free_port, port_free, read_preset,  # noqa: E402
+                    service_busy, stop)
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BIN = Path.home() / "src/llama.cpp/build-next/bin/llama-server"
@@ -261,7 +262,11 @@ def main() -> int:
     binary = str(Path(args.binary).expanduser())
     live = str(Path(args.live).expanduser())
     version, live_version = version_of(binary), version_of(live)
-    busy = service_busy(args.service_url)
+    try:
+        busy = service_busy(args.service_url)
+    except RouterUnreadable as e:
+        raise SystemExit(f"ERROR: {e}. The probes size the split from free VRAM, so they "
+                         f"will not run on a guess.") from e
     if busy:
         raise SystemExit(f"ERROR: the live service at {args.service_url} has {', '.join(busy)} "
                          f"in VRAM. The probes size the split from free VRAM, so wait until it "

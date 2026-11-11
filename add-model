@@ -1,577 +1,573 @@
-#!/usr/bin/env bash
-#
-# Scaffold a build-* script for a GGUF that is already staged in $GGUF_DIR.
-#
-#   ./add-model                  pick from the staged GGUFs no builder claims
-#   ./add-model FILENAME.gguf    skip the menu
-#   ./add-model ORG/REPO         list a HuggingFace repo's GGUFs and print the
-#                                download command for the one you pick
-#   ./add-model --no-probe ...   scaffold only, do not touch the GPU
-#
-# It writes build-<name> and derives the GPU/CPU split by loading the model once
-# with llama.cpp's fitter. Downloading the GGUF is yours.
-#
-# Why this exists rather than "copy build-lite and edit three lines": the router
-# name and the MTP flag are the two fields that are silently wrong when hand
-# edited. A wrong name yields a preset section no client can address, and a wrong
-# spec-type makes the fit probe size the card for a different model.
+#!/usr/bin/env python3
+"""
+Scaffold a build-* script for a GGUF that is already staged in $GGUF_DIR.
 
-set -euo pipefail
+  ./add-model                  pick from the staged GGUFs no builder claims
+  ./add-model FILENAME.gguf    skip the menu
+  ./add-model ORG/REPO         list a HuggingFace repo's GGUFs and print the
+                               download command for the one you pick
+  ./add-model --no-probe ...   scaffold only, do not touch the GPU
 
-AI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"
+It writes build-<name> and derives the GPU/CPU split by loading the model once
+with llama.cpp's fitter. Downloading the GGUF is yours.
+
+Why this exists rather than "copy build-lite and edit three lines": the router
+name and the MTP flag are the two fields that are silently wrong when hand
+edited. A wrong name yields a preset section no client can address, and a wrong
+spec-type makes the fit probe size the card for a different model.
+"""
+
+# Stdlib only, like scripts/llm and scripts/verify-build. It was bash with a
+# Python heredoc and jq until 2026-11-11, and shares the busy-router check, the
+# port search and the process stop with verify-build through scripts/_probe.py.
+
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import re
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+AI_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(AI_ROOT / "scripts"))
+from _probe import RouterUnreadable, free_port, service_busy, stop  # noqa: E402
+
+GGUF_DIR = Path(os.environ.get("GGUF_DIR") or Path.home() / "models/gguf")
 
 # Names other repos address the router by. Reusing one would point an existing
 # app at a different model without that app changing, so they are refused here
 # rather than left to review. README.md, "Serving other apps", is the contract.
-CONTRACT_NAMES=(gemma qwen lite freedom)
-
-die() { echo "ERROR: $*" >&2; exit 1; }
-
-# --- reading the GGUF -------------------------------------------------------
-
-# True when the GGUF carries multi-token-prediction heads, which llama.cpp drives
-# with `--spec-type draft-mtp`. The marker is a `<arch>.nextn_predict_layers`
-# metadata key, checked 2026-09-15 against the four staged GGUFs: both Qwen MTP
-# builds carry it, gemma4-26b and granite4.2 do not. Do not be tempted to grep
-# the file for "mtp": gemma4-26b contains 4 such byte sequences and granite 9.
-# Quoted heredoc, so the shell expands nothing inside it.
-detect_mtp() {
-  python3 - "$1" <<'PY'
-import struct, sys
-
-def u32(f): return struct.unpack("<I", f.read(4))[0]
-def u64(f): return struct.unpack("<Q", f.read(8))[0]
-def gstr(f): return f.read(u64(f)).decode("utf-8", "replace")
-
-SIMPLE = {0:"<B",1:"<b",2:"<H",3:"<h",4:"<I",5:"<i",6:"<f",7:"<?",10:"<Q",11:"<q",12:"<d"}
-
-def value(f, t):
-    if t in SIMPLE:
-        fmt = SIMPLE[t]
-        return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
-    if t == 8:
-        return gstr(f)
-    if t == 9:
-        et, n = u32(f), u64(f)
-        return [value(f, et) for _ in range(n)]
-    raise ValueError(f"unknown GGUF value type {t}")
-
-try:
-    with open(sys.argv[1], "rb") as f:
-        if f.read(4) != b"GGUF":
-            sys.exit(2)          # not a GGUF at all
-        u32(f); u64(f)           # version, tensor count
-        for _ in range(u64(f)):  # metadata key/value pairs
-            key = gstr(f)
-            val = value(f, u32(f))
-            if key.endswith(".nextn_predict_layers") and isinstance(val, int) and val > 0:
-                sys.exit(0)      # MTP
-except (OSError, struct.error, ValueError, IndexError):
-    sys.exit(2)                  # unreadable or malformed
-sys.exit(1)                      # parsed fine, no MTP marker
-PY
-}
-
-# --- looking up a HuggingFace repo ------------------------------------------
+CONTRACT_NAMES = ("gemma", "qwen", "lite", "freedom")
 
 # Overridable so tests can point at a fake, and so a mirror can be used.
-HF_API="${HF_API:-https://huggingface.co/api/models}"
-HF_HOST="${HF_HOST:-https://huggingface.co}"
+HF_API = os.environ.get("HF_API", "https://huggingface.co/api/models")
+HF_HOST = os.environ.get("HF_HOST", "https://huggingface.co")
 
-# An argument is a repo when it is a URL or contains a slash. A staged GGUF is
-# always a bare filename in $GGUF_DIR, so the two never collide.
-looks_like_repo() {
-  case "$1" in
-    http://*|https://*|*/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# "https://huggingface.co/Org/Repo?clone=true" and "Org/Repo" both give "Org/Repo".
-repo_slug() {
-  local s="$1"
-  s="${s%%\?*}"
-  s="${s#http://}"; s="${s#https://}"
-  s="${s#huggingface.co/}"
-  s="${s%/}"
-  s="${s%/tree/main}"
-  printf '%s' "$s"
-}
-
-# List the repo's GGUFs, let the user choose, and print the download command.
-# It prints rather than downloads: the target is $GGUF_DIR, which lives outside
-# the repo, so the transfer is the human's to run and to interrupt.
-hf_pick() {
-  local slug json code
-  slug="$(repo_slug "$1")"
-  json="$(mktemp "${TMPDIR:-/tmp}/add-model-hf-XXXXXX.json")"
-
-  code="$(curl -sS -o "$json" -w '%{http_code}' --max-time 30 "$HF_API/$slug/tree/main" || echo 000)"
-  case "$code" in
-    200) ;;
-    # HuggingFace answers a repo that does not exist with 401, the same as a
-    # gated one (seen 2026-10-09), so the message names both causes.
-    401|403) rm -f "$json"; die "$slug was not found, or is gated or private (HTTP $code).
-  Check the spelling at https://huggingface.co/$slug. If it is right, accept the
-  model's terms on that page while signed in, then retry." ;;
-    404) rm -f "$json"; die "no such model repo: $slug (HTTP 404)" ;;
-    000) rm -f "$json"; die "could not reach $HF_API (no network, or the request timed out)" ;;
-    *)   rm -f "$json"; die "HuggingFace returned HTTP $code for $slug" ;;
-  esac
-
-  # One row per model: sharded sets (NAME-00001-of-00003.gguf) collapse to one
-  # entry carrying every shard, because they are downloaded and loaded together.
-  local rows
-  rows="$(jq -r '
-    [ .[] | select(.type == "file") | select(.path | endswith(".gguf")) ]
-    | map(. + {base: (.path | sub("-[0-9]{5}-of-[0-9]{5}\\.gguf$"; ".gguf"))})
-    | group_by(.base)
-    | map({
-        name:   .[0].base,
-        size:   (map(.size) | add),
-        shards: length,
-        files:  (map(.path) | sort | join(" ")),
-        pairs:  (sort_by(.path) | map("\(.path)|\(.lfs.oid // "")") | join(" ")),
-        proj:   (.[0].base | test("mmproj"))
-      })
-    | sort_by(.size)[]
-    | [.name, .size, .shards, .proj, .files, .pairs] | @tsv
-  ' "$json")"
-  rm -f "$json"
-  [ -n "$rows" ] || die "no GGUF files in $slug"
-
-  local -a names sizes shards files pairs
-  local projectors=""
-  while IFS=$'\t' read -r name size nshard proj flist plist; do
-    if [ "$proj" = true ]; then
-      projectors="$projectors $name"
-      continue
-    fi
-    names+=("$name"); sizes+=("$size"); shards+=("$nshard"); files+=("$flist"); pairs+=("$plist")
-  done <<<"$rows"
-  [ "${#names[@]}" -gt 0 ] || die "no GGUF files in $slug (only projectors)"
-
-  echo "GGUF files in $slug:"
-  local i=1
-  for i in $(seq 1 "${#names[@]}"); do
-    local idx=$((i - 1)) label=""
-    [ "${shards[$idx]}" -gt 1 ] && label="  [${shards[$idx]} shards]"
-    printf '  %d) %-52s %6.1f GB%s\n' "$i" "${names[$idx]}" \
-      "$(awk -v b="${sizes[$idx]}" 'BEGIN{printf "%.1f", b/1000000000}')" "$label"
-  done
-  [ -n "$projectors" ] && echo "  (vision projector in this repo, download alongside if you need vision:$projectors)"
-
-  local choice
-  while true; do
-    printf 'Pick a number: '
-    read -r choice || die "no choice given"
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ]; then
-      break
-    fi
-    echo "  not one of 1 to ${#names[@]}"
-  done
-
-  local idx=$((choice - 1)) f pair oid
-  echo
-  echo "Download it yourself, then re-run add-model. Resumable, safe to repeat:"
-  echo
-  # Set before use: a shell without GGUF_DIR would otherwise expand the target to
-  # /<file>. That happened on the 2026-09-16 neoqwen download.
-  echo "  GGUF_DIR=\"\${GGUF_DIR:-\$HOME/models/gguf}\""
-  for f in ${files[$idx]}; do
-    echo "  curl -L --fail -C - -o \"\$GGUF_DIR/$f\" \\"
-    echo "    \"$HF_HOST/$slug/resolve/main/$f\""
-  done
-  echo
-  # HuggingFace stores an LFS object's sha256 as its oid, so the expected value
-  # is already in the listing. `sha256sum -c` exits non-zero on a mismatch, which
-  # is the check a human skips when asked to compare 64 hex characters by eye.
-  echo "Then verify it against HuggingFace's checksum. Each line must print OK:"
-  for pair in ${pairs[$idx]}; do
-    f="${pair%%|*}"; oid="${pair#*|}"
-    if [ -n "$oid" ]; then
-      echo "  echo \"$oid  \$GGUF_DIR/$f\" | sha256sum -c -"
-    else
-      echo "  (no checksum published for $f, so it cannot be verified)"
-    fi
-  done
-  echo
-  echo "--fail matters: without it a 404 or a gated redirect is saved as a valid"
-  echo "looking .gguf full of HTML, and you find out at load time."
-
-  # If it is already staged, carry straight on into the scaffold.
-  HF_TARGET="${names[$idx]}"
-  if [ "${shards[$idx]}" -gt 1 ]; then
-    HF_TARGET="$(echo "${files[$idx]}" | awk '{print $1}')"
-  fi
-}
-
-# --- probing the fit --------------------------------------------------------
+# The live router, read so the probe never runs beside a model it holds.
+LLM_URL = os.environ.get("LLM_URL", "http://localhost:8080")
 
 # Seconds to wait for the server to report. A 21 GB model off a cold page cache
 # takes far longer than a warm 5 GB one, so this is generous and only exists so a
 # wedged probe fails instead of hanging.
-FIT_TIMEOUT="${FIT_TIMEOUT:-300}"
+FIT_TIMEOUT = int(os.environ.get("FIT_TIMEOUT", "300"))
 
-PROBE_PID=""
 
-# The live router, read so the probe never runs beside a model it holds.
-LLM_URL="${LLM_URL:-http://localhost:8080}"
+def die(msg: str) -> None:
+    sys.exit(f"ERROR: {msg}")
 
-# Refuse to probe while the router has a model loaded or loading. The fitter
-# sizes the split from free VRAM, so a resident model would shrink it and the
-# pinned value would starve every later load. A sleeping or unloaded model frees
-# its VRAM (6226 down to 242 MiB, measured 2026-09-15), so the always-on service
-# alone is no reason to stop. Same rule as service_busy() in scripts/verify-build.
-refuse_if_router_busy() {
-  local body code busy
-  body="$(mktemp "${TMPDIR:-/tmp}/add-model-router-XXXXXX.json")"
-  code="$(curl -s -o "$body" -w '%{http_code}' --max-time 5 "$LLM_URL/models" || true)"
-  case "$code" in
-    000|"") rm -f "$body"; echo "No router answering at $LLM_URL, so none holds VRAM."; return ;;
-    200) ;;
-    *) rm -f "$body"; die "the router at $LLM_URL answered /models with HTTP $code, so whether it holds VRAM is unknown" ;;
-  esac
-  busy="$(jq -r '.data[] | select(.status.value == "loaded" or .status.value == "loading") | .id' "$body")" \
-    || { rm -f "$body"; die "the router at $LLM_URL returned a /models listing that is not JSON, so whether it holds VRAM is unknown"; }
-  rm -f "$body"
-  if [ -n "$busy" ]; then
-    die "the router at $LLM_URL holds $(echo $busy) in VRAM, which would shrink the probed split.
-  Free it first:  llm unload
-  (A sleeping model is fine, it has already released its VRAM.)"
-  fi
-}
 
-probe_cleanup() {
-  if [ -n "$PROBE_PID" ] && kill -0 "$PROBE_PID" 2>/dev/null; then
-    kill "$PROBE_PID" 2>/dev/null || true
-    wait "$PROBE_PID" 2>/dev/null || true
-  fi
-  PROBE_PID=""
-}
+def ask(prompt: str) -> str | None:
+    """One line from stdin after `prompt`, stripped, or None at end of input."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    return line.strip() if line else None
 
-free_port() {
-  local p
-  for p in $(seq 8090 8130); do
-    (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; return; }
-    exec 3>&-
-  done
-  die "no free port between 8090 and 8130 for the fit probe"
-}
 
-# Load the model once with llama.cpp's fitter and read how many layers it pushed
-# to the CPU. Sets FIT_N to that count, or to empty when the model fits entirely.
-#
-# Two things here are not obvious. The log goes to a file because llama-server
-# buffers a pipe: README.md records losing the fit line twice by stopping a piped
-# probe as soon as it answered. And the loop waits for the fit line OR for the
-# server to come up, because a model that fits entirely never prints an overflow
-# line at all. Measured 2026-09-15: `lite` loads with "offloaded 34/34 layers to
-# GPU" and no fit line, so waiting only for the overflow line hangs forever. The
-# recipe in README.md had exactly that bug.
-probe_fit() {
-  local gguf="$1" mtp="$2"
-  local log port elapsed=0
-  log="$(mktemp "${TMPDIR:-/tmp}/add-model-fit-XXXXXX.log")"
+def pick_number(count: int) -> int:
+    """A 0-based index chosen from a menu of `count` items."""
+    while True:
+        choice = ask("Pick a number: ")
+        if choice is None:
+            die("no choice given")
+        if choice.isdigit() and 1 <= int(choice) <= count:
+            return int(choice) - 1
+        print(f"  not one of 1 to {count}")
 
-  # The compute buffer grows with the physical batch, so the probe must use the
-  # one the router serves at. Until 2026-10-09 it passed none, and every split it
-  # derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
-  # server.ini has only the [*] section, so the first match is the shared value.
-  # The context is read the same way, so the probe cannot drift from the served
-  # one (it was hardcoded until 2026-10-31). Unlike the batch it is required:
-  # llama-server's default is the trained context, 262144 for this lineup, which
-  # sizes the split for a KV cache twice the one the router serves.
-  local ini="$AI_ROOT/server.ini" ub ctx
-  [ -f "$ini" ] || die "no server.ini at $ini. The probe needs its ubatch-size and ctx-size to size the split the router will serve."
-  ub="$(sed -n 's/^[[:space:]]*ubatch-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
-  ctx="$(sed -n 's/^[[:space:]]*ctx-size[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$ini" | head -1 || true)"
-  [ -n "$ctx" ] || die "no ctx-size in $ini. The probe sizes the KV cache from it, so it will not guess."
 
-  local -a cmd=(llama-server -m "$gguf" -c "$ctx" -np 1 -fa on -ctk q4_0 -ctv q4_0
-                --no-mmproj --fit-target 2048 --port "$(free_port)" -lv 4)
-  [ -n "$ub" ] && cmd+=(-ub "$ub")
-  [ "$mtp" = yes ] && cmd+=(--spec-type draft-mtp)
+def today() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
-  echo "Probing the GPU/CPU split (--fit-target 2048, -c $ctx$([ -n "$ub" ] && echo ", -ub $ub")$([ "$mtp" = yes ] && echo ', MTP on'))."
-  echo "  Loading the model once. Close anything holding VRAM: the split is sized"
-  echo "  from what is free right now, and that is why it gets pinned."
 
-  "${cmd[@]}" > "$log" 2>&1 &
-  PROBE_PID=$!
-  trap probe_cleanup EXIT INT TERM
+# --- reading the GGUF -------------------------------------------------------
 
-  # Wait for `offloaded X/Y layers to GPU`, which every load prints regardless of
-  # how the fitter decided, rather than for the overflow line, which only the MoE
-  # path prints. `model loaded` is the backstop for a build that prints neither.
-  while true; do
-    grep -qE 'offloaded [0-9]+/[0-9]+ layers to GPU' "$log" && break
-    grep -q 'model loaded' "$log" && break
-    kill -0 "$PROBE_PID" 2>/dev/null \
-      || die "the fit probe exited before reporting a split. Read the log: $log"
-    [ "$elapsed" -lt "$FIT_TIMEOUT" ] \
-      || die "the fit probe timed out after ${FIT_TIMEOUT}s. Read the log: $log"
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
+# GGUF scalar value types by id, from the format spec. 8 is a string, 9 an array.
+SIMPLE = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
+          10: "<Q", 11: "<q", 12: "<d"}
 
-  # Three outcomes, not two. Until 2026-09-16 this read only the MoE wording and
-  # treated its absence as a perfect fit, which wrote a dense 18.5 GB model out
-  # with no split and would have failed at load under `fit = off`.
-  #
-  #   overflow clause present  MoE: experts go to the CPU, pin n-cpu-moe = M
-  #   offloaded X/Y, X below Y dense: the fitter cut GPU layers, pin n-gpu-layers = X
-  #   offloaded Y/Y, no overflow everything on the GPU, nothing to pin
-  #
-  # The overflow check must come first. MoE spills experts, not layers, so a
-  # spilling MoE model still reports every layer on the GPU: gemma4-26b prints
-  # `offloaded 31/31 layers to GPU` beside `31 layers (20 overflowing)`. Testing
-  # the layer count first reads that as a perfect fit, which is what the first
-  # version of this block did.
-  #
-  # `|| true` throughout: a missing match is an answer here, and under
-  # `set -o pipefail` a failing grep would otherwise kill the script.
-  local offload on total
-  offload="$(grep -m1 -oE 'offloaded [0-9]+/[0-9]+ layers to GPU' "$log" || true)"
-  [ -n "$offload" ] || die "the probe never reported how many layers it offloaded. Read the log: $log"
-  on="$(echo "$offload" | sed -E 's|offloaded ([0-9]+)/.*|\1|')"
-  total="$(echo "$offload" | sed -E 's|offloaded [0-9]+/([0-9]+).*|\1|')"
 
-  # The last report is the decision. The fitter prints intermediate stages first
-  # that match the same pattern: a 64k gemma load reports `31 layers, 2861 MiB
-  # used, 5586 MiB free` before `31 layers (22 overflowing), 6272 MiB used,
-  # 2175 MiB free`, and recording the first one misstated the margin by 3.4 GB.
-  FIT_LINE="$(grep -E 'CUDA[0-9]+ .*MiB used' "$log" | tail -n1 | sed 's/^.*CUDA/CUDA/' || true)"
-  local overflow
-  overflow="$(sed -n 's/.*[^0-9]\([0-9]\{1,\}\) overflowing.*/\1/p' "$log" | head -1 || true)"
+def has_mtp(path: Path) -> bool | None:
+    """True when the GGUF carries multi-token-prediction heads, which llama.cpp
+    drives with `--spec-type draft-mtp`. None when it cannot be read.
 
-  if [ -n "$overflow" ]; then
-    FIT_KEY="n-cpu-moe"; FIT_N="$overflow"
-  elif [ "$on" = "$total" ]; then
-    FIT_KEY=""; FIT_N=""
-  else
-    FIT_KEY="n-gpu-layers"; FIT_N="$on"
-    FIT_NOTE="dense model: the fitter kept $on of $total layers on the GPU rather than offloading experts"
-  fi
-  probe_cleanup
-  rm -f "$log"
-}
+    The marker is a `<arch>.nextn_predict_layers` metadata key, checked
+    2026-09-15 against the four staged GGUFs: both Qwen MTP builds carry it,
+    gemma4-26b and granite4.2 do not. Do not be tempted to grep the file for
+    "mtp": gemma4-26b contains 4 such byte sequences and granite 9.
+    """
+    def read(f, fmt):
+        return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
+
+    def string(f):
+        return f.read(read(f, "<Q")).decode("utf-8", "replace")
+
+    def value(f, t):
+        if t in SIMPLE:
+            return read(f, SIMPLE[t])
+        if t == 8:
+            return string(f)
+        if t == 9:
+            et, n = read(f, "<I"), read(f, "<Q")
+            return [value(f, et) for _ in range(n)]
+        raise ValueError(f"unknown GGUF value type {t}")
+
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return None
+            read(f, "<I"), read(f, "<Q")           # version, tensor count
+            for _ in range(read(f, "<Q")):         # metadata key/value pairs
+                key = string(f)
+                val = value(f, read(f, "<I"))
+                if (key.endswith(".nextn_predict_layers") and isinstance(val, int)
+                        and not isinstance(val, bool) and val > 0):
+                    return True
+    except (OSError, struct.error, ValueError, IndexError):
+        return None
+    return False
+
+
+# --- looking up a HuggingFace repo ------------------------------------------
+
+def looks_like_repo(arg: str) -> bool:
+    """A URL or anything with a slash. A staged GGUF is always a bare filename in
+    $GGUF_DIR, so the two never collide."""
+    return arg.startswith(("http://", "https://")) or "/" in arg
+
+
+def repo_slug(arg: str) -> str:
+    """"https://huggingface.co/Org/Repo?clone=true" and "Org/Repo" both give "Org/Repo"."""
+    s = arg.split("?", 1)[0]
+    for prefix in ("http://", "https://", "huggingface.co/"):
+        s = s.removeprefix(prefix)
+    s = s.removesuffix("/")
+    return s.removesuffix("/tree/main")
+
+
+def hf_pick(arg: str) -> str:
+    """List the repo's GGUFs, let the user choose, and print the download command.
+    Returns the filename to look for in $GGUF_DIR (the first shard of a set).
+
+    It prints rather than downloads: the target is $GGUF_DIR, which lives outside
+    the repo, so the transfer is the human's to run and to interrupt.
+    """
+    slug = repo_slug(arg)
+    try:
+        with urllib.request.urlopen(f"{HF_API}/{slug}/tree/main", timeout=30) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            # HuggingFace answers a repo that does not exist with 401, the same as
+            # a gated one (seen 2026-10-09), so the message names both causes.
+            die(f"{slug} was not found, or is gated or private (HTTP {e.code}).\n"
+                f"  Check the spelling at https://huggingface.co/{slug}. If it is right, accept the\n"
+                f"  model's terms on that page while signed in, then retry.")
+        if e.code == 404:
+            die(f"no such model repo: {slug} (HTTP 404)")
+        die(f"HuggingFace returned HTTP {e.code} for {slug}")
+    except (urllib.error.URLError, OSError):
+        die(f"could not reach {HF_API} (no network, or the request timed out)")
+    try:
+        entries = json.loads(raw.decode("utf-8"))
+        files = [e for e in entries if e.get("type") == "file"
+                 and str(e.get("path", "")).endswith(".gguf")]
+    except (ValueError, AttributeError, TypeError):
+        die(f"HuggingFace returned a listing for {slug} that is not JSON")
+
+    # One row per model: sharded sets (NAME-00001-of-00003.gguf) collapse to one
+    # entry carrying every shard, because they are downloaded and loaded together.
+    groups: dict[str, list[dict]] = {}
+    for e in files:
+        base = re.sub(r"-[0-9]{5}-of-[0-9]{5}\.gguf$", ".gguf", e["path"])
+        groups.setdefault(base, []).append(e)
+    rows = sorted(({"name": base,
+                    "size": sum(e.get("size", 0) for e in shards),
+                    "shards": sorted(shards, key=lambda e: e["path"])}
+                   for base, shards in sorted(groups.items())),
+                  key=lambda r: r["size"])
+    if not rows:
+        die(f"no GGUF files in {slug}")
+    projectors = [r["name"] for r in rows if "mmproj" in r["name"]]
+    models = [r for r in rows if "mmproj" not in r["name"]]
+    if not models:
+        die(f"no GGUF files in {slug} (only projectors)")
+
+    print(f"GGUF files in {slug}:")
+    for i, r in enumerate(models, 1):
+        label = f"  [{len(r['shards'])} shards]" if len(r["shards"]) > 1 else ""
+        print(f"  {i}) {r['name']:<52} {r['size'] / 1e9:6.1f} GB{label}")
+    if projectors:
+        print("  (vision projector in this repo, download alongside if you need vision:"
+              + "".join(f" {p}" for p in projectors) + ")")
+
+    pick = models[pick_number(len(models))]
+    print()
+    print("Download it yourself, then re-run add-model. Resumable, safe to repeat:")
+    print()
+    # Set before use: a shell without GGUF_DIR would otherwise expand the target to
+    # /<file>. That happened on the 2026-09-16 neoqwen download.
+    print('  GGUF_DIR="${GGUF_DIR:-$HOME/models/gguf}"')
+    for e in pick["shards"]:
+        print(f'  curl -L --fail -C - -o "$GGUF_DIR/{e["path"]}" \\')
+        print(f'    "{HF_HOST}/{slug}/resolve/main/{e["path"]}"')
+    print()
+    # HuggingFace stores an LFS object's sha256 as its oid, so the expected value
+    # is already in the listing. `sha256sum -c` exits non-zero on a mismatch, which
+    # is the check a human skips when asked to compare 64 hex characters by eye.
+    print("Then verify it against HuggingFace's checksum. Each line must print OK:")
+    for e in pick["shards"]:
+        oid = (e.get("lfs") or {}).get("oid", "")
+        if oid:
+            print(f'  echo "{oid}  $GGUF_DIR/{e["path"]}" | sha256sum -c -')
+        else:
+            print(f"  (no checksum published for {e['path']}, so it cannot be verified)")
+    print()
+    print("--fail matters: without it a 404 or a gated redirect is saved as a valid")
+    print("looking .gguf full of HTML, and you find out at load time.")
+
+    return pick["shards"][0]["path"] if len(pick["shards"]) > 1 else pick["name"]
+
+
+# --- probing the fit --------------------------------------------------------
+
+def refuse_if_router_busy() -> None:
+    """Refuse to probe while the router has a model loaded or loading. The fitter
+    sizes the split from free VRAM, so a resident model would shrink it and the
+    pinned value would starve every later load. A sleeping or unloaded model frees
+    its VRAM (6226 down to 242 MiB, measured 2026-09-15), so the always-on service
+    alone is no reason to stop."""
+    try:
+        busy = service_busy(LLM_URL)
+    except RouterUnreadable as e:
+        die(str(e))
+    if busy is None:
+        print(f"No router answering at {LLM_URL}, so none holds VRAM.")
+    elif busy:
+        die(f"the router at {LLM_URL} holds {' '.join(busy)} in VRAM, which would shrink "
+            f"the probed split.\n"
+            f"  Free it first:  llm unload\n"
+            f"  (A sleeping model is fine, it has already released its VRAM.)")
+
+
+def ini_number(text: str, key: str) -> str | None:
+    """The first `key = N` in server.ini. It has only the [*] section, so the
+    first match is the shared value."""
+    m = re.search(rf"^[ \t]*{re.escape(key)}[ \t]*=[ \t]*([0-9]+)", text, re.MULTILINE)
+    return m.group(1) if m else None
+
+
+class Fit:
+    """What the probe decided: the LOAD key to pin (empty for a full fit), its
+    value, the fitter's final report line, and a note for a dense model."""
+
+    def __init__(self, key: str = "", n: str = "", line: str = "", note: str = ""):
+        self.key, self.n, self.line, self.note = key, n, line, note
+
+
+def probe_fit(gguf: Path, mtp: bool) -> Fit:
+    """Load the model once with llama.cpp's fitter and read what it pushed off the GPU.
+
+    The log goes to a file because llama-server buffers a pipe: README.md
+    records losing the fit line twice by stopping a piped probe as soon as it
+    answered. And the loop waits for the offload line OR for the server to come
+    up, because a model that fits entirely never prints an overflow line at all
+    (`lite` loads with "offloaded 34/34 layers to GPU" and no fit line, measured
+    2026-09-15).
+    """
+    # The compute buffer grows with the physical batch, so the probe must use the
+    # one the router serves at. Until 2026-10-09 it passed none, and every split it
+    # derived after server.ini moved to 1024 was sized for llama.cpp's default 512.
+    # The context is read the same way, so the probe cannot drift from the served
+    # one (it was hardcoded until 2026-10-31). Unlike the batch it is required:
+    # llama-server's default is the trained context, 262144 for this lineup, which
+    # sizes the split for a KV cache twice the one the router serves.
+    ini = AI_ROOT / "server.ini"
+    if not ini.is_file():
+        die(f"no server.ini at {ini}. The probe needs its ubatch-size and ctx-size to size "
+            f"the split the router will serve.")
+    text = ini.read_text(encoding="utf-8")
+    ub, ctx = ini_number(text, "ubatch-size"), ini_number(text, "ctx-size")
+    if not ctx:
+        die(f"no ctx-size in {ini}. The probe sizes the KV cache from it, so it will not guess.")
+
+    cmd = ["llama-server", "-m", str(gguf), "-c", ctx, "-np", "1", "-fa", "on",
+           "-ctk", "q4_0", "-ctv", "q4_0", "--no-mmproj", "--fit-target", "2048",
+           "--port", str(free_port()), "-lv", "4"]
+    if ub:
+        cmd += ["-ub", ub]
+    if mtp:
+        cmd += ["--spec-type", "draft-mtp"]
+
+    print(f"Probing the GPU/CPU split (--fit-target 2048, -c {ctx}"
+          f"{f', -ub {ub}' if ub else ''}{', MTP on' if mtp else ''}).")
+    print("  Loading the model once. Close anything holding VRAM: the split is sized")
+    print("  from what is free right now, and that is why it gets pinned.")
+    sys.stdout.flush()
+
+    fd, log_name = tempfile.mkstemp(prefix="add-model-fit-", suffix=".log")
+    log = Path(log_name)
+    offload_re = re.compile(r"offloaded ([0-9]+)/([0-9]+) layers to GPU")
+    with os.fdopen(fd, "w") as out:
+        try:
+            proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
+        except OSError as e:
+            die(f"could not start llama-server ({e}). Is it on PATH?")
+    try:
+        # Wait for `offloaded X/Y layers to GPU`, which every load prints however
+        # the fitter decided, rather than for the overflow line, which only the
+        # MoE path prints. `model loaded` is the backstop for a build that prints
+        # neither.
+        deadline = time.monotonic() + FIT_TIMEOUT
+        while True:
+            seen = log.read_text(encoding="utf-8", errors="replace")
+            if offload_re.search(seen) or "model loaded" in seen:
+                break
+            if proc.poll() is not None:
+                die(f"the fit probe exited before reporting a split. Read the log: {log}")
+            if time.monotonic() >= deadline:
+                die(f"the fit probe timed out after {FIT_TIMEOUT}s. Read the log: {log}")
+            time.sleep(1)
+    finally:
+        stop(proc)
+
+    lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    offload = next((m for m in map(offload_re.search, lines) if m), None)
+    if offload is None:
+        die(f"the probe never reported how many layers it offloaded. Read the log: {log}")
+    on, total = offload.groups()
+
+    # The last report is the decision. The fitter prints intermediate stages first
+    # that match the same pattern: a 64k gemma load reports `31 layers, 2861 MiB
+    # used, 5586 MiB free` before `31 layers (22 overflowing), 6272 MiB used,
+    # 2175 MiB free`, and recording the first one misstated the margin by 3.4 GB.
+    reports = [ln for ln in lines if re.search(r"CUDA[0-9]+ .*MiB used", ln)]
+    fit_line = reports[-1][reports[-1].rfind("CUDA"):] if reports else ""
+    overflow = next((m.group(1) for m in
+                     (re.search(r".*[^0-9]([0-9]+) overflowing", ln) for ln in lines) if m), None)
+    log.unlink()
+
+    # Three outcomes, not two. Until 2026-09-16 this read only the MoE wording and
+    # treated its absence as a perfect fit, which wrote a dense 18.5 GB model out
+    # with no split and would have failed at load under `fit = off`.
+    #
+    #   overflow clause present  MoE: experts go to the CPU, pin n-cpu-moe = M
+    #   offloaded X/Y, X below Y dense: the fitter cut GPU layers, pin n-gpu-layers = X
+    #   offloaded Y/Y, no overflow everything on the GPU, nothing to pin
+    #
+    # The overflow check must come first. MoE spills experts, not layers, so a
+    # spilling MoE model still reports every layer on the GPU: gemma4-26b prints
+    # `offloaded 31/31 layers to GPU` beside `31 layers (20 overflowing)`.
+    if overflow:
+        return Fit("n-cpu-moe", overflow, fit_line)
+    if on == total:
+        return Fit(line=fit_line)
+    return Fit("n-gpu-layers", on, fit_line,
+               f"dense model: the fitter kept {on} of {total} layers on the GPU rather "
+               f"than offloading experts")
+
 
 # --- choosing the GGUF ------------------------------------------------------
 
-# Filenames already named by a BASE_MODEL line in some builder.
-claimed() {
-  sed -n 's/^BASE_MODEL="\(.*\)"[[:space:]]*$/\1/p' "$AI_ROOT"/build-* 2>/dev/null || true
-}
+def builders() -> list[Path]:
+    return sorted(AI_ROOT.glob("build-*"))
 
-# Staged GGUFs no builder claims. *.mmproj.gguf are vision projectors loaded
-# alongside a model, never a model themselves, so they are not offered.
-candidates() {
-  local taken
-  taken="$(claimed)"
-  find "$GGUF_DIR" -maxdepth 1 -type f -name '*.gguf' ! -name '*.mmproj.gguf' -printf '%f\n' \
-    | sort \
-    | while IFS= read -r f; do
-        grep -qxF "$f" <<<"$taken" || echo "$f"
-      done
-}
 
-pick_gguf() {
-  local -a options
-  mapfile -t options < <(candidates)
-  [ "${#options[@]}" -gt 0 ] \
-    || die "no unclaimed GGUF in $GGUF_DIR (every staged file already has a builder)"
+def claimed_by(gguf: str) -> list[str]:
+    """Builders whose BASE_MODEL line names `gguf`."""
+    line = re.compile(r'^BASE_MODEL="(.*)"[ \t]*$', re.MULTILINE)
+    return [b.name for b in builders()
+            if gguf in line.findall(b.read_text(encoding="utf-8", errors="replace"))]
 
-  echo "Staged GGUFs without a builder:" >&2
-  local i=1 f
-  for f in "${options[@]}"; do
-    printf '  %d) %s  (%s)\n' "$i" "$f" "$(du -h "$GGUF_DIR/$f" | cut -f1)"
-    i=$((i + 1))
-  done
 
-  local choice
-  while true; do
-    printf 'Pick a number: '
-    read -r choice || die "no choice given"
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
-      GGUF_NAME="${options[$((choice - 1))]}"
-      return
-    fi
-    echo "  not one of 1 to ${#options[@]}"
-  done
-}
+def candidates() -> list[str]:
+    """Staged GGUFs no builder claims. *.mmproj.gguf are vision projectors loaded
+    alongside a model, never a model themselves, so they are not offered."""
+    return sorted(p.name for p in GGUF_DIR.glob("*.gguf")
+                  if p.is_file() and not p.name.endswith(".mmproj.gguf")
+                  and not claimed_by(p.name))
+
+
+def pick_gguf() -> str:
+    options = candidates()
+    if not options:
+        die(f"no unclaimed GGUF in {GGUF_DIR} (every staged file already has a builder)")
+    print("Staged GGUFs without a builder:", file=sys.stderr)
+    for i, f in enumerate(options, 1):
+        print(f"  {i}) {f}  ({(GGUF_DIR / f).stat().st_size / 1e9:.1f} GB)")
+    return options[pick_number(len(options))]
+
 
 # --- choosing the router name -----------------------------------------------
 
-read_name() {
-  local name n
-  while true; do
-    printf 'Router name: '
-    read -r name || die "no name given"
+def read_name() -> str:
+    while True:
+        name = ask("Router name: ")
+        if name is None:
+            die("no name given")
+        if not re.fullmatch(r"[a-z][a-z0-9]*", name):
+            print(f"  '{name}' is not usable: lower-case letter first, then letters and digits.")
+            print("  It becomes the [section] in models.ini and the model field clients send.")
+        elif name in CONTRACT_NAMES:
+            print(f"  '{name}' is part of the router contract other repos depend on.")
+            print("  Reusing it would repoint their requests at a different model.")
+        elif (AI_ROOT / f"build-{name}").exists():
+            print(f"  build-{name} already exists. Pick another name, or edit that file.")
+        else:
+            return name
 
-    if [[ ! "$name" =~ ^[a-z][a-z0-9]*$ ]]; then
-      echo "  '$name' is not usable: lower-case letter first, then letters and digits."
-      echo "  It becomes the [section] in models.ini and the model field clients send."
-      continue
-    fi
-
-    for n in "${CONTRACT_NAMES[@]}"; do
-      if [ "$name" = "$n" ]; then
-        echo "  '$name' is part of the router contract other repos depend on."
-        echo "  Reusing it would repoint their requests at a different model."
-        continue 2
-      fi
-    done
-
-    if [ -e "$AI_ROOT/build-$name" ]; then
-      echo "  build-$name already exists. Pick another name, or edit that file."
-      continue
-    fi
-
-    MODEL_NAME="$name"
-    return
-  done
-}
 
 # --- writing the builder ----------------------------------------------------
 
-write_builder() {
-  local out="$AI_ROOT/build-$MODEL_NAME"
-  [ ! -e "$out" ] || die "build-$MODEL_NAME appeared while you were typing, refusing to overwrite"
+def gpu_used() -> str:
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
+                              "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else "unknown"
 
-  {
-    echo '#!/usr/bin/env bash'
-    echo 'set -euo pipefail'
-    echo
-    echo "MODEL_NAME=\"$MODEL_NAME\""
-    echo "# Added $(date -u +%Y-%m-%d) by ./add-model."
-    echo "BASE_MODEL=\"$GGUF_NAME\""
-    echo
-    echo '# Per-model load params. The shared sampler baseline lives in server.ini [*],'
-    echo '# identical for every model, so PARAMS is deliberately absent here.'
-    if [ "$HAS_MTP" = yes ]; then
-      echo '# This GGUF carries MTP heads (nextn_predict_layers), so speculative decoding'
-      echo '# is on. Keep spec-type when re-deriving n-cpu-moe: the MTP layer needs VRAM'
-      echo '# of its own, and fitting without it gives a split that is too generous.'
-    fi
-    echo '#'
-    if [ -n "$FIT_N" ]; then
-      echo "# Split pinned from --fit-target 2048 on $(date -u +%Y-%m-%d), with"
-      echo "# $(nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null || echo 'unknown') held by other processes at probe time."
-      echo "# Fit line: $FIT_LINE"
-      [ -n "$FIT_NOTE" ] && echo "# $FIT_NOTE."
-      echo '# server.ini pins fit = off, so this is the split every load uses. Re-derive it'
-      echo '# with ./add-model on a fresh builder, or the recipe in README.md, after a'
-      echo '# model or hardware change. Do not turn automatic fitting back on: it would'
-      echo '# resize the split from whatever VRAM happens to be free per run.'
-    elif [ "$PROBE" = yes ]; then
-      echo "# Probed on $(date -u +%Y-%m-%d) with --fit-target 2048: this model fits"
-      echo '# entirely on the card, so there is no expert split to pin.'
-    else
-      echo '# n-cpu-moe is NOT set: --no-probe was used. server.ini pins fit = off, so'
-      echo '# until you add one this model is loaded entirely onto the GPU. Derive it'
-      echo '# with ./add-model without --no-probe, or the README.md recipe, then add:'
-      echo "#   'n-cpu-moe = N'"
-    fi
-    echo 'LOAD=('
-    [ -n "$FIT_N" ] && echo "  '$FIT_KEY = $FIT_N'"
-    [ "$HAS_MTP" = yes ] && echo "  'spec-type = draft-mtp'"
-    echo ')'
-    echo
-    echo '# Shared assembly, see build-common.sh.'
-    echo 'source "$(dirname "${BASH_SOURCE[0]}")/build-common.sh"'
-  } > "$out"
-  chmod +x "$out"
-}
+
+def builder_text(name: str, gguf: str, mtp: bool, fit: Fit, probed: bool) -> str:
+    out = ["#!/usr/bin/env bash", "set -euo pipefail", "",
+           f'MODEL_NAME="{name}"',
+           f"# Added {today()} by ./add-model.",
+           f'BASE_MODEL="{gguf}"', "",
+           "# Per-model load params. The shared sampler baseline lives in server.ini [*],",
+           "# identical for every model, so PARAMS is deliberately absent here."]
+    if mtp:
+        out += ["# This GGUF carries MTP heads (nextn_predict_layers), so speculative decoding",
+                "# is on. Keep spec-type when re-deriving n-cpu-moe: the MTP layer needs VRAM",
+                "# of its own, and fitting without it gives a split that is too generous."]
+    out.append("#")
+    if fit.n:
+        out += [f"# Split pinned from --fit-target 2048 on {today()}, with",
+                f"# {gpu_used()} held by other processes at probe time.",
+                f"# Fit line: {fit.line}"]
+        if fit.note:
+            out.append(f"# {fit.note}.")
+        out += ["# server.ini pins fit = off, so this is the split every load uses. Re-derive it",
+                "# with ./add-model on a fresh builder, or the recipe in README.md, after a",
+                "# model or hardware change. Do not turn automatic fitting back on: it would",
+                "# resize the split from whatever VRAM happens to be free per run."]
+    elif probed:
+        out += [f"# Probed on {today()} with --fit-target 2048: this model fits",
+                "# entirely on the card, so there is no expert split to pin."]
+    else:
+        out += ["# n-cpu-moe is NOT set: --no-probe was used. server.ini pins fit = off, so",
+                "# until you add one this model is loaded entirely onto the GPU. Derive it",
+                "# with ./add-model without --no-probe, or the README.md recipe, then add:",
+                "#   'n-cpu-moe = N'"]
+    out.append("LOAD=(")
+    if fit.n:
+        out.append(f"  '{fit.key} = {fit.n}'")
+    if mtp:
+        out.append("  'spec-type = draft-mtp'")
+    out += [")", "",
+            "# Shared assembly, see build-common.sh.",
+            'source "$(dirname "${BASH_SOURCE[0]}")/build-common.sh"']
+    return "\n".join(out) + "\n"
+
+
+def write_builder(name: str, text: str) -> None:
+    out = AI_ROOT / f"build-{name}"
+    try:
+        with open(out, "x", encoding="utf-8") as f:
+            f.write(text)
+    except FileExistsError:
+        die(f"build-{name} appeared while you were typing, refusing to overwrite")
+    out.chmod(0o755)
+
 
 # --- main -------------------------------------------------------------------
 
-PROBE=yes
-FIT_N=""
-FIT_KEY=""
-FIT_LINE=""
-FIT_NOTE=""
-positional=()
-for arg in "$@"; do
-  case "$arg" in
-    --no-probe) PROBE=no ;;
-    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*)         die "unknown option: $arg" ;;
-    *)          positional+=("$arg") ;;
-  esac
-done
-set -- ${positional[@]+"${positional[@]}"}
+def main(argv: list[str]) -> int:
+    probe = True
+    positional = []
+    for arg in argv:
+        if arg == "--no-probe":
+            probe = False
+        elif arg in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        elif arg.startswith("-"):
+            die(f"unknown option: {arg}")
+        else:
+            positional.append(arg)
 
-[ -d "$GGUF_DIR" ] || die "GGUF_DIR does not exist: $GGUF_DIR"
+    if not GGUF_DIR.is_dir():
+        die(f"GGUF_DIR does not exist: {GGUF_DIR}")
 
-if [ $# -gt 0 ] && looks_like_repo "$1"; then
-  hf_pick "$1"
-  if [ -f "$GGUF_DIR/$HF_TARGET" ]; then
-    echo
-    echo "$HF_TARGET is already staged, carrying on."
-    GGUF_NAME="$HF_TARGET"
-  else
-    exit 0
-  fi
-elif [ $# -gt 0 ]; then
-  GGUF_NAME="$1"
-  [ -f "$GGUF_DIR/$GGUF_NAME" ] || die "no such GGUF: $GGUF_DIR/$GGUF_NAME"
-else
-  pick_gguf
-fi
+    if positional and looks_like_repo(positional[0]):
+        target = hf_pick(positional[0])
+        if not (GGUF_DIR / target).is_file():
+            return 0
+        print()
+        print(f"{target} is already staged, carrying on.")
+        gguf = target
+    elif positional:
+        gguf = positional[0]
+        if not (GGUF_DIR / gguf).is_file():
+            die(f"no such GGUF: {GGUF_DIR / gguf}")
+    else:
+        gguf = pick_gguf()
 
-# The menu hides claimed files, and a file named outright, or reached through
-# ORG/REPO, gets the same rule. A second builder on one GGUF serves the same
-# weights under two router names with two pinned splits.
-if claimed | grep -qxF "$GGUF_NAME"; then
-  owner="$(grep -lF "BASE_MODEL=\"$GGUF_NAME\"" "$AI_ROOT"/build-* | xargs -n1 basename | paste -sd' ')"
-  die "$GGUF_NAME already has a builder: $owner. Edit that file instead of adding a second one."
-fi
+    # The menu hides claimed files, and a file named outright, or reached through
+    # ORG/REPO, gets the same rule. A second builder on one GGUF serves the same
+    # weights under two router names with two pinned splits.
+    owners = claimed_by(gguf)
+    if owners:
+        die(f"{gguf} already has a builder: {' '.join(owners)}. Edit that file instead of "
+            f"adding a second one.")
 
-# Before the name prompt, so a busy router is reported before anything is typed.
-[ "$PROBE" = yes ] && refuse_if_router_busy
+    # Before the name prompt, so a busy router is reported before anything is typed.
+    if probe:
+        refuse_if_router_busy()
 
-read_name
+    name = read_name()
 
-# detect_mtp exits 0 MTP, 1 no MTP, 2 unreadable. Only 2 is a reason to stop:
-# guessing either way writes a builder that is wrong in a way nothing else catches.
-set +e
-detect_mtp "$GGUF_DIR/$GGUF_NAME"
-mtp_status=$?
-set -e
-case "$mtp_status" in
-  0) HAS_MTP=yes ;;
-  1) HAS_MTP=no ;;
-  *) die "could not read GGUF metadata from $GGUF_DIR/$GGUF_NAME (not a GGUF, or truncated)" ;;
-esac
+    # Unreadable is the only reason to stop: guessing either way writes a builder
+    # that is wrong in a way nothing else catches.
+    mtp = has_mtp(GGUF_DIR / gguf)
+    if mtp is None:
+        die(f"could not read GGUF metadata from {GGUF_DIR / gguf} (not a GGUF, or truncated)")
 
-# Probe before writing: a failed probe must not leave a half-written builder
-# behind for someone to find later and assume was measured.
-if [ "$PROBE" = yes ]; then
-  probe_fit "$GGUF_DIR/$GGUF_NAME" "$HAS_MTP"
-fi
+    # Probe before writing: a failed probe must not leave a half-written builder
+    # behind for someone to find later and assume was measured.
+    fit = probe_fit(GGUF_DIR / gguf, mtp) if probe else Fit()
 
-write_builder
+    write_builder(name, builder_text(name, gguf, mtp, fit, probe))
 
-echo
-echo "Wrote build-$MODEL_NAME"
-echo "  base:      $GGUF_NAME"
-echo "  MTP:       $HAS_MTP$([ "$HAS_MTP" = yes ] && echo ' (spec-type = draft-mtp)')"
-echo "  samplers:  shared baseline from server.ini [*]"
-if [ -n "$FIT_N" ]; then
-  echo "  split:     $FIT_KEY = $FIT_N  ($FIT_LINE)"
-  echo
-  echo "Then: make build"
-elif [ "$PROBE" = yes ]; then
-  echo "  split:     none needed, it fits entirely on the card"
-  echo
-  echo "Then: make build"
-else
-  echo "  split:     not probed (--no-probe)"
-  echo
-  echo "Before serving it, derive the GPU/CPU split and add 'n-cpu-moe = N' to LOAD."
-  echo "server.ini sets fit = off, so without it llama.cpp puts the whole model on the"
-  echo "card and a model larger than VRAM fails to load. Re-run without --no-probe, or"
-  echo "use the recipe in README.md under \"Build And Tune\". Then: make build"
-fi
+    print()
+    print(f"Wrote build-{name}")
+    print(f"  base:      {gguf}")
+    print(f"  MTP:       {'yes (spec-type = draft-mtp)' if mtp else 'no'}")
+    print("  samplers:  shared baseline from server.ini [*]")
+    if fit.n:
+        print(f"  split:     {fit.key} = {fit.n}  ({fit.line})")
+        print()
+        print("Then: make build")
+    elif probe:
+        print("  split:     none needed, it fits entirely on the card")
+        print()
+        print("Then: make build")
+    else:
+        print("  split:     not probed (--no-probe)")
+        print()
+        print("Before serving it, derive the GPU/CPU split and add 'n-cpu-moe = N' to LOAD.")
+        print("server.ini sets fit = off, so without it llama.cpp puts the whole model on the")
+        print("card and a model larger than VRAM fails to load. Re-run without --no-probe, or")
+        print('use the recipe in README.md under "Build And Tune". Then: make build')
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

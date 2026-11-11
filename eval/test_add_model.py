@@ -19,12 +19,14 @@ Run with:
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import re
 import struct
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -73,6 +75,52 @@ def write_gguf(path: Path, arch: str = "testarch", mtp: bool = False) -> None:
     path.write_bytes(body)
 
 
+class FakeHttp(http.server.ThreadingHTTPServer):
+    """Every HTTP request add-model makes, served from canned values.
+
+    Runs as the subprocess's http_proxy, so the request line carries the full URL
+    the script asked for (router or HuggingFace) and tests assert on it unchanged.
+    It replaced a fake `curl` on PATH when add-model moved to urllib on
+    2026-11-11. With no body configured nothing answers: the connection closes
+    without a response, which is what a stopped router looks like.
+    """
+
+    body: str | None = None
+    code: int = 200
+    urls: Path | None = None
+
+    def __init__(self):
+        server = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if server.urls is not None:
+                    with open(server.urls, "a", encoding="utf-8") as f:
+                        f.write(self.path + "\n")
+                if server.body is None:
+                    self.close_connection = True
+                    return
+                raw = server.body.encode("utf-8")
+                self.send_response(server.code)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *args):
+                pass
+
+        super().__init__(("127.0.0.1", 0), Handler)
+
+    def configure(self, env: dict[str, str]) -> None:
+        """FAKE_BODY, FAKE_CODE and FAKE_URLS, the knobs the fake curl read."""
+        self.body = env.get("FAKE_BODY")
+        code = env.get("FAKE_CODE", "200")
+        if code == "000":
+            self.body = None
+        self.code = int(code) if code != "000" else 200
+        self.urls = Path(env["FAKE_URLS"]) if "FAKE_URLS" in env else None
+
+
 class AddModelTestCase(unittest.TestCase):
     """Base: a temp GGUF_DIR and a temp repo root holding copies of the builders."""
 
@@ -92,6 +140,14 @@ class AddModelTestCase(unittest.TestCase):
                 dst = self.repo / name
                 dst.write_bytes(src.read_bytes())
                 dst.chmod(0o755)
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "_probe.py").write_bytes(
+            (REPO / "scripts" / "_probe.py").read_bytes())
+
+        self.http = FakeHttp()
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+        self.addCleanup(self.http.server_close)
+        self.addCleanup(self.http.shutdown)
 
         write_gguf(self.gguf_dir / "claimed.gguf")
         write_gguf(self.gguf_dir / "free-plain.gguf")
@@ -120,7 +176,15 @@ class AddModelTestCase(unittest.TestCase):
         # A dead port, so the probe's busy-router check never reads the live
         # service on 8080. Tests that want a busy router put a fake curl on PATH.
         env = dict(os.environ, GGUF_DIR=str(self.gguf_dir), LLM_URL="http://127.0.0.1:9")
+        # Every request goes to the fake, never the network: plain http through
+        # it as a proxy, and HuggingFace on http so it takes the proxy too.
+        for var in ("no_proxy", "NO_PROXY", "https_proxy", "HTTPS_PROXY"):
+            env.pop(var, None)
+        proxy = f"http://127.0.0.1:{self.http.server_address[1]}"
+        env.update(http_proxy=proxy, HTTP_PROXY=proxy,
+                   HF_API="http://huggingface.co/api/models")
         env.update(env_extra or {})
+        self.http.configure(env_extra or {})
         return subprocess.run(
             [str(self.repo / "add-model"), *args],
             input=stdin, capture_output=True, text=True, env=env, cwd=self.repo, timeout=60,
@@ -511,26 +575,6 @@ HF_NO_GGUF = """[
  {"type":"file","size":7100,"path":"README.md"}
 ]"""
 
-FAKE_CURL = r"""#!/usr/bin/env bash
-# Stands in for curl during HF lookup tests. Records the URL it was asked for,
-# then writes $FAKE_BODY to the -o target and prints $FAKE_CODE for -w.
-url=""; out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    http*) url="$1"; shift ;;
-    *) shift ;;
-  esac
-done
-printf '%s
-' "$url" >> "$FAKE_URLS"
-[ -n "$out" ] && printf '%s' "$FAKE_BODY" > "$out"
-printf '%s' "${FAKE_CODE:-200}"
-exit 0
-"""
-
-
 class BusyRouterTests(AddModelTestCase):
     """The probe sizes the split from free VRAM, so a model the live router holds
     would shrink it. Same rule as scripts/verify-build's service_busy()."""
@@ -549,9 +593,6 @@ class BusyRouterTests(AddModelTestCase):
                                     for i, s in enumerate(states)]})
 
     def busy_run(self, body: str, name: str, code: str = "200", args: list[str] | None = None):
-        curl = self.bin / "curl"
-        curl.write_text(FAKE_CURL)
-        curl.chmod(0o755)
         self.urls_file = Path(self.tmp.name) / "urls.txt"
         self.urls_file.touch()
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": "spill",
@@ -604,9 +645,6 @@ class HuggingFaceLookupTests(AddModelTestCase):
         super().setUp()
         self.bin = Path(self.tmp.name) / "bin"
         self.bin.mkdir()
-        curl = self.bin / "curl"
-        curl.write_text(FAKE_CURL)
-        curl.chmod(0o755)
         self.urls_file = Path(self.tmp.name) / "urls.txt"
         self.urls_file.touch()
 
