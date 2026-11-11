@@ -455,6 +455,7 @@ override:
 | `OLLAMA_MAX_LOADED_MODELS=1` | `--models-max 1` | service unit, `make serve` |
 | `OLLAMA_KEEP_ALIVE=10m` | `sleep-idle-seconds = 600`: an idle model sleeps and frees its VRAM, and the next request wakes it | `server.ini` |
 | automatic GPU/CPU split | `fit = off` plus each builder's `LOAD` | `server.ini`, `build-*` |
+| (no equivalent) | `cache-ram = 0`: the server's host-RAM prompt cache is off, because its 8192 MiB default grew `qwen` toward the 2026-11-04 out-of-memory kill ([`TESTING.md`](TESTING.md), *Host RAM held by the prompt cache*) | `server.ini` |
 
 - **`--models-max 1` keeps benchmarks clean.** Two resident models would share
   the 10 GB, so throughput would depend on which other model was loaded. With

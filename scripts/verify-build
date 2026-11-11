@@ -76,7 +76,8 @@ def footprint_cmd(binary: str, settings: dict[str, str], port: int) -> list[str]
     for key, flag in (("n-cpu-moe", "--n-cpu-moe"), ("ctx-size", "--ctx-size"),
                       ("ubatch-size", "-ub"), ("cache-type-k", "-ctk"),
                       ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
-                      ("load-mode", "--load-mode"), ("spec-type", "--spec-type")):
+                      ("load-mode", "--load-mode"), ("spec-type", "--spec-type"),
+                      ("moe-cache-mib", "--moe-cache-mib")):
         if settings.get(key):
             cmd += [flag, settings[key]]
     return cmd
@@ -92,7 +93,7 @@ def kl_cmd(ppl: str, settings: dict[str, str], corpus: str, kld: str, chunks: in
            "--chunks", str(chunks), "--fit", "off", "-ngl", settings.get("n-gpu-layers", "99")]
     for key, flag in (("n-cpu-moe", "--n-cpu-moe"), ("cache-type-k", "-ctk"),
                       ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
-                      ("load-mode", "--load-mode")):
+                      ("load-mode", "--load-mode"), ("moe-cache-mib", "--moe-cache-mib")):
         if settings.get(key):
             cmd += [flag, settings[key]]
     cmd += ["--kl-divergence-base", kld]

@@ -266,8 +266,11 @@ def refuse_if_router_busy() -> None:
 # change to either would have sized the split for a cache the router does not
 # build. `fit` and `n-gpu-layers` are left out on purpose: they pin the split
 # for serving, and passing them would stop the fitter choosing one.
+# moe-cache-mib joined on 2026-11-11: the expert cache takes its own size in VRAM,
+# so a split fitted without it is that much too generous.
 PROBE_FLAGS = (("ctx-size", "-c"), ("ubatch-size", "-ub"), ("cache-type-k", "-ctk"),
-               ("cache-type-v", "-ctv"), ("flash-attn", "-fa"))
+               ("cache-type-v", "-ctv"), ("flash-attn", "-fa"),
+               ("moe-cache-mib", "--moe-cache-mib"))
 
 
 class Fit:
@@ -522,17 +525,25 @@ def refit_settings(names: list[str]) -> dict[str, dict[str, str]]:
     if unknown:
         die(f"not in {preset}: {' '.join(unknown)}. Models there: "
             f"{' '.join(sorted(models)) or '(none)'}")
+    # server.ini feeds the joined preset, and a builder feeds its own section. A
+    # server.ini edit makes make build rejoin models.ini without touching the
+    # per-model stamps, so each source is compared with what it produces (until
+    # 2026-11-11 server.ini was compared with the stamps and a fresh build read
+    # as stale).
     built_at = preset.stat().st_mtime
     for n in names:
         stamp = AI_ROOT / "models" / n / ".built"
-        sources = [AI_ROOT / "server.ini", AI_ROOT / f"build-{n}"]
-        newer = [s.name for s in sources
-                 if s.exists() and s.stat().st_mtime > min(
-                     built_at, stamp.stat().st_mtime if stamp.exists() else 0)]
-        if newer or not stamp.exists():
-            die(f"{n}: {' and '.join(newer) or 'its build stamp'} changed since the last "
-                f"make build, so the preset may not say what the builder says. Run make "
-                f"build, then refit.")
+        builder = AI_ROOT / f"build-{n}"
+        server_ini = AI_ROOT / "server.ini"
+        newer = []
+        if server_ini.exists() and server_ini.stat().st_mtime > built_at:
+            newer.append("server.ini")
+        if builder.exists() and (not stamp.exists()
+                                 or builder.stat().st_mtime > min(built_at, stamp.stat().st_mtime)):
+            newer.append(builder.name)
+        if newer:
+            die(f"{n}: {' and '.join(newer)} changed since the last make build, so the preset "
+                f"may not say what the builder says. Run make build, then refit.")
     return {n: models[n] for n in names}
 
 

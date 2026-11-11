@@ -160,6 +160,19 @@ class PresetTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("-ngl") + 1], "12", cmd)
             self.assertEqual(cmd.count("-ngl"), 1, cmd)
 
+    def test_a_moe_cache_in_the_preset_reaches_both_commands(self):
+        # Added 2026-11-11 with --moe-cache-mib: a model served with the cache
+        # must be footprinted and KL-checked with it, or the VRAM check reads
+        # about 1 GB low.
+        gemma = {**vb.read_preset(self.path)["gemma"], "moe-cache-mib": "1024"}
+        for cmd in (vb.footprint_cmd("/b/llama-server", gemma, 8090),
+                    vb.kl_cmd("/b/llama-perplexity", gemma, "/c", "/k", 4, candidate=False)):
+            self.assertEqual(cmd[cmd.index("--moe-cache-mib") + 1], "1024", cmd)
+        plain = vb.read_preset(self.path)["gemma"]
+        for cmd in (vb.footprint_cmd("/b/llama-server", plain, 8090),
+                    vb.kl_cmd("/b/llama-perplexity", plain, "/c", "/k", 4, candidate=False)):
+            self.assertNotIn("--moe-cache-mib", cmd)
+
     def test_a_model_without_its_own_layers_keeps_the_shared_value(self):
         gemma = vb.read_preset(self.path)["gemma"]
         for cmd in (vb.footprint_cmd("/b/llama-server", gemma, 8090),

@@ -970,6 +970,50 @@ one to the lineup goes through `./add-model`. The 27B was added that way as
 `bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
 131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
 
+### MoE GPU cache at a refitted split (2026-11-11)
+
+Follow-up to *MoE GPU cache* below, which ran 1024 MiB at today's pins and broke
+the 2 GB margin. Here each model was first refitted with the cache counted
+(`./add-model --refit` over a scratch preset with `moe-cache-mib = 1024`, at
+`--fit-target 2048`, build 12155), then measured at that split against its
+current pin without the cache. Method as below: a scratch server per config, the
+`verify-build` footprint command, three identical 256-token answers, thinking
+off. The pin ran twice, for the noise floor. About 1.4 GB of other GPU use.
+
+The fitter counts the cache. It moved more experts to the CPU to keep the
+margin:
+
+| Model | Pin (no cache) | Refit with 1024 MiB | Free in fit line, without and with |
+|---|---:|---:|---|
+| `gemma` | 24 | 27 | 2074 and 2270 MiB |
+| `qwen` | 37 | 39 | 2158 and 2132 MiB |
+| `freedom` | 34 | 37 | 2102 and 2150 MiB |
+
+| Model | Config | Generation (tok/s) | Process VRAM | Card peak |
+|---|---|---|---:|---:|
+| `gemma` | 24, no cache | 47.8, 49.0, 48.8 | 6116 | 7543 |
+| | 24, no cache (repeat) | 45.8, 48.8, 48.7 | 6116 | 7543 |
+| | 27, 1024 MiB | 45.9, 46.0, 45.8 | 5922 | 7351 |
+| `freedom` | 34, no cache | 56.4, 57.4, 57.3 | 6168 | 7607 |
+| | 34, no cache (repeat) | 56.6, 58.4, 58.6 | 6168 | 7607 |
+| | 37, 1024 MiB | 54.0, 54.1, 54.1 | 5720 | 7161 |
+| `qwen` | 37, no cache | 52.7, 58.8, 58.6 | 6012 | 7453 |
+| | 37, no cache (repeat) | 53.5, 57.0, 58.2 | 6012 | 7453 |
+| | 39, 1024 MiB | 33.3, 33.3, 33.4 | 6040 | 7483 |
+
+Findings:
+
+- With the margin kept, the cache is a loss for all three: `gemma` about 5%
+  slower, `freedom` about 6%, `qwen` about 42%. The experts it moves to the CPU
+  cost more than the cache wins back.
+- The earlier gain does not hold. *MoE GPU cache* below measured `gemma` at
+  42 tok/s without the cache and 48.5 with it, at the same pin. Today the pin
+  alone gave 48.5. That session's baseline was low, so its +15% (and
+  `freedom`'s +6%) was most likely run-to-run variation between sessions, not
+  the cache.
+- Decision on 2026-11-11: no model adopts `--moe-cache-mib`. The flag now
+  reaches `add-model`'s probe and `verify-build` if a preset sets it.
+
 ### MoE GPU cache, `--moe-cache-mib` (2026-11-11)
 
 Build 12155 adds `--moe-cache-mib N`, a GPU cache for the expert weights kept on

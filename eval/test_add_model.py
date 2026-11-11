@@ -864,6 +864,23 @@ class RefitTests(AddModelTestCase):
         self.assertEqual(args[args.index("--spec-type") + 1], "draft-mtp")
         self.assertEqual(args[args.index("-m") + 1], str(self.gguf_dir / "free-mtp.gguf"))
 
+    def test_refit_probes_with_the_models_moe_cache(self):
+        # The cache takes its own size in VRAM (measured 2026-11-11), so a
+        # split fitted without it is about 1 GB too generous.
+        ini = self.repo / "models" / "models.ini"
+        ini.write_text(ini.read_text().replace(
+            "n-cpu-moe = 21\n", "n-cpu-moe = 21\nmoe-cache-mib = 1024\n", 1))
+        old = time.time() - 30
+        os.utime(ini, (old, old))
+        r = self.refit("spill", "moe")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        args = self.spawned_args()
+        self.assertEqual(args[args.index("--moe-cache-mib") + 1], "1024")
+
+    def test_refit_sends_no_moe_cache_a_model_does_not_set(self):
+        self.refit("spill", "moetwo")
+        self.assertNotIn("--moe-cache-mib", self.spawned_args())
+
     def test_dense_pin_is_compared_as_gpu_layers(self):
         r = self.refit("dense", "dense")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -891,6 +908,25 @@ class RefitTests(AddModelTestCase):
     def test_builder_newer_than_its_build_is_refused(self):
         # The preset would then pin a split the builder no longer declares.
         (self.repo / "build-moe").touch()
+        r = self.refit("spill", "moe")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("make build", r.stderr)
+        self.assertFalse(self.args_file.exists())
+
+    def test_server_ini_edit_followed_by_make_build_is_not_stale(self):
+        # make build rejoins models.ini after a server.ini edit but leaves each
+        # model's .built stamp alone. Until 2026-11-11 refit compared server.ini
+        # with the stamps and refused a fresh build as stale.
+        now = time.time()
+        for m in ("moe", "moetwo", "small", "dense"):
+            os.utime(self.repo / "models" / m / ".built", (now - 50, now - 50))
+        os.utime(self.repo / "server.ini", (now - 20, now - 20))
+        os.utime(self.repo / "models" / "models.ini", (now - 10, now - 10))
+        r = self.refit("spill", "moe")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_server_ini_newer_than_the_built_preset_is_refused(self):
+        (self.repo / "server.ini").touch()
         r = self.refit("spill", "moe")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("make build", r.stderr)
