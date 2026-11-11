@@ -970,6 +970,90 @@ one to the lineup goes through `./add-model`. The 27B was added that way as
 `bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
 131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
 
+### MoE GPU cache, `--moe-cache-mib` (2026-11-11)
+
+Build 12155 adds `--moe-cache-mib N`, a GPU cache for the expert weights kept on
+the CPU (default 0, off). Measured on the three MoE models at their pinned
+splits, each with a scratch `llama-server` on a spare port (the `verify-build`
+footprint command plus the flag), build 12155, about 1.3 GB of the card held by
+the desktop. Each value is one load and three identical 256-token answers to the
+same short prompt, with thinking off and prompt caching off. 0 ran twice, for
+the noise floor. VRAM is the process's own (nvidia-smi) and the card's peak
+during the run.
+
+| Model | MiB | Generation (tok/s, 3 answers) | Process VRAM | Card peak |
+|---|---:|---|---:|---:|
+| `gemma` 24 | 0 | 41.9, 42.9, 43.3 | 6116 | 7445 |
+| | 0 (repeat) | 40.9, 41.5, 42.1 | 6116 | 7431 |
+| | 256 | 28.0, 28.0, 28.3 | 6386 | 7780 |
+| | 512 | 28.5, 28.3, 28.2 | 6640 | 7982 |
+| | 1024 | 49.0, 48.6, 47.9 | 7150 | 8724 |
+| `qwen` 37, MTP | 0 | 50.9, 52.6, 53.1 | 6012 | 7433 |
+| | 0 (repeat) | 51.2, 52.4, 53.1 | 6012 | 7422 |
+| | 256 | 33.0, 33.0, 33.1 | 6268 | 7742 |
+| | 512 | 32.9, 33.2, 33.4 | 6524 | 8002 |
+| | 1024 | 33.3, 33.3, 32.9 | 7036 | 8595 |
+| `freedom` 34 | 0 | 50.7, 51.7, 52.5 | 6168 | 7659 |
+| | 0 (repeat) | 51.3, 51.8, 51.6 | 6168 | 7628 |
+| | 256 | 33.4, 33.4, 33.4 | 6444 | 7885 |
+| | 512 | 38.6, 38.9, 38.6 | 6700 | 8236 |
+| | 1024 | 55.0, 55.2, 55.3 | 7214 | 8706 |
+
+Findings:
+
+- The cache costs its own size in VRAM, plus about 10 to 30 MiB.
+- A small cache is a large loss for all three: 256 MiB cut generation by about
+  a third, to 28 to 33 tok/s.
+- At 1024 MiB, `gemma` gained about 15% (42 to 48.5) and `freedom` about 6%
+  (52 to 55). `qwen`, the only one with MTP, stayed about 37% slower at every
+  size.
+- 1024 MiB breaks the locked 2 GB margin: the card peaked at 8.6 to 8.7 GB with
+  only the desktop beside it. Keeping the margin would mean re-deriving each
+  split with the cache counted in the VRAM, which puts more experts on the CPU
+  and eats into the gain.
+- One prompt, one load per value: it says nothing about cache behavior across
+  varied prompts or long conversations.
+
+Nothing changes in the preset. Whether to pursue the 1024 MiB result for `gemma`
+or `freedom` (re-derive the split, then the spike test and a benchmark pass) is
+Casey's decision.
+
+### Host RAM held by the prompt cache (2026-11-11)
+
+The audit of 2026-11-10 found `--cache-ram` unpinned. On build 12155 it defaults
+to 8192 MiB of host RAM per model process, for saved prompt states. `freedom`
+held 18.4 GB RSS that day, and the service was OOM-killed on 2026-11-04 at a
+26.6 GB peak. The question was whether the cache accounts for the difference.
+
+Method: a scratch `llama-server` on a spare port, at `qwen`'s settings from the
+built preset (the `verify-build` footprint command: `n-cpu-moe = 37`, MTP,
+`load-mode = none`, 131072 context, q4_0 cache). Six distinct prompts of about
+57,400 tokens each (seeded random words, the same in every run), 8-token
+answers, with the server's default caching (the request does not send
+`cache_prompt`). Server RSS was read from `/proc` 2 s after each answer. The
+default ran twice, for the noise floor, and then once with `--cache-ram 0`.
+
+| Run | RSS loaded | After prompts 1 to 6 (MiB) | Peak | Min available |
+|---|---:|---|---:|---:|
+| default | 18486 | 19022, 19669, 20296, 20922, 21549, 22176 | 22176 | 4590 |
+| default, repeat | 18584 | 19119, 19766, 20333, 20958, 21584, 22153 | 22153 | 4852 |
+| `--cache-ram 0` | 18587 | 19120, 19150, 19165, 19173, 19180, 19181 | 19181 | 8363 |
+
+Findings:
+
+- The default prompt cache holds about 627 MiB of host RAM per new 57k-token
+  prompt, and the two default runs agree within 23 MiB at the peak. With
+  `--cache-ram 0`, RSS stays flat, so the growth is the cache.
+- Prompt time was the same in all three runs (41.5 s for the first prompt), as
+  expected with distinct prompts. Turning the cache off costs time only when a
+  client returns to a prompt prefix that has left the slot.
+- Not measured, but projected: at the 8192 MiB cap, `qwen` would reach about
+  26.7 GB RSS, which matches the 26.6 GB peak of the 2026-11-04 OOM kill.
+- The service log at its default verbosity prints no cache lines, which is why
+  the 2026-11-05 audit found none.
+
+Setting a `cache-ram` value in `server.ini` is Casey's decision.
+
 ### Spike test of freedom (2026-11-09)
 
 `freedom` was pinned at 34 MoE layers on CPU by `./add-model` on 2026-11-08
