@@ -456,6 +456,7 @@ override:
 | `OLLAMA_KEEP_ALIVE=10m` | `sleep-idle-seconds = 600`: an idle model sleeps and frees its VRAM, and the next request wakes it | `server.ini` |
 | automatic GPU/CPU split | `fit = off` plus each builder's `LOAD` | `server.ini`, `build-*` |
 | (no equivalent) | `cache-ram = 0`: the server's host-RAM prompt cache is off, because its 8192 MiB default grew `qwen` toward the 2026-11-04 out-of-memory kill ([`TESTING.md`](TESTING.md), *Host RAM held by the prompt cache*) | `server.ini` |
+| (no equivalent) | `reasoning-preserve = true`: the build default, pinned so a build update cannot change how `qwen` and `freedom` see earlier turns' reasoning | `server.ini` |
 
 - **`--models-max 1` keeps benchmarks clean.** Two resident models would share
   the 10 GB, so throughput would depend on which other model was loaded. With
@@ -762,24 +763,30 @@ Winner is `tie` where the runner flagged the margin as within its close-result t
 
 ### Current picks
 
-From the 2026-10-30 and 2026-10-31 `standard` passes on build 12009 at 131072
-context, not yet revised for the 2026-11-09 pass on 12155 in the leaderboard above.
+From the 2026-11-09 `standard` pass on build 12155 at 131072 context, checked
+against the two 12009 passes (2026-10-30 and 2026-10-31). No pick changed.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local general use | `lite` | 132.5 tok/s, the only model fully on GPU. 2.2× `qwen` (61.5), 3.1× `gemma` (43.0). |
-| Agentic tools (Cline) | `lite` | Prompt ingest 3354 tok/s vs `gemma` 1462 and `qwen` 1015. Use `qwen` when tool accuracy matters more (39/39 in both passes vs `lite` 36 then 33). |
-| Tool calling / agent loops | `qwen` | 39/39 in both passes vs `lite` 33/39 and `gemma` 30/39. `lite` flipped three tasks between identical passes. `gemma` skipped the tool on 6 attempts and got an argument wrong on 3, both times. |
-| Coding | `gemma` | 26/27 vs 25/27 for `qwen` and `lite`, and 25 to 27 in every pass since 2026-09-15. The runner calls this pass a tie, so the pick rests on that record. |
-| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. `lite` 8/9, `qwen` 7/9. |
-| Socratic tutoring (no spoilers) | `gemma` | 0/15 leaks vs 5/15 (`qwen`) and 7/15 (`lite`), and 1 in 30 across both passes. Teach 9.1/10 vs 6.0 and 4.9. |
-| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8/10 with 12/12 on the code gate, inside the tie threshold. |
-| Structured JSON / app smoke tests | `lite` | All three scored 100%. `lite` averages 2.3s against `gemma` 5.5s and `qwen` 7.3s. |
-| Prompt-stack fidelity | `qwen` | 90% clean in both passes vs 57% for `gemma` and `lite`. |
+| Fast local general use | `lite` | 139.7 tok/s, the only model fully on GPU. 2.4× `qwen` (58.3), 3.0× `gemma` (47.1). |
+| Agentic tools (Cline) | `lite` | Prompt ingest 3415 tok/s vs `gemma` 1541, `freedom` 1194 and `qwen` 1039. Use `qwen` when tool accuracy matters more (39, 39 and 36 of 39 across three passes vs `lite` 36, 33 and 33). |
+| Tool calling / agent loops | `qwen` | 114 of 117 across three passes vs `lite` 102 and `gemma` 90. `freedom` scored 39/39 in its one pass, too little to displace that record. `gemma` scored 30/39 in all three. |
+| Coding | `gemma` | 25/27 vs 26/27 for `qwen`, which the runner calls a tie. `gemma` has scored 25 to 27 in every pass since 2026-09-15, so the pick rests on that record. `lite` fell to 20/27 in this pass. |
+| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. `freedom` 8/9, `lite` and `qwen` 7/9. |
+| Socratic tutoring (no spoilers) | `gemma` | 2/15 leaks vs 6/15 (`qwen` and `lite`) and 8/15 (`freedom`), and 3 in 45 across three passes. Teach 8.4/10 vs 5.8 and lower. |
+| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8/10 with 12/12 on the code gate, inside the tie threshold. `freedom` also scored 9.9 and 12/12. |
+| Structured JSON / app smoke tests | `lite` | All four scored 100%. `lite` averages 2.3s against `gemma` 5.5s, `freedom` 6.7s and `qwen` 7.1s. |
+| Prompt-stack fidelity | `qwen` | 86% clean vs 76% for `freedom` and 67% for `gemma` and `lite`. 90% in both 12009 passes. |
+| Uncensored (Friends-Hermes) | `freedom` | Its only role. In its one pass it matched `qwen` on learning and JSON and came close on coding, and it leaked the most on tutoring. |
 
 No single model wins. `lite` takes everything speed-shaped, `gemma` takes
 content, tutoring and coding, and `qwen` takes tool calling and the prompt stack
 and ties `gemma` on learning. Tool calling is where `gemma` is clearly weakest.
+`freedom` is picked only for its uncensored role. One pass cannot move a pick
+held over several.
+
+Learn and tutor scores in this pass come from three judges per response, not
+two, so compare them only within the pass.
 
 Two caveats:
 

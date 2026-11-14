@@ -56,7 +56,16 @@ build: models/models.ini
 # removed model kept its section in the router config and went on being served.
 # Rebuilding the file every time costs one cat of four small files; the builders
 # themselves are still guarded by their stamps.
+#
+# The same deleted-builder case also left models/<name>/ behind (models/unlocked/,
+# audit 2026-11-10), so any folder without a builder is removed here. Only
+# folders are touched, and the -d test skips the unmatched glob.
 models/models.ini: server.ini $(STAMPS) FORCE
+	@for d in models/*/; do \
+	  [ -d "$$d" ] || continue; \
+	  n=$$(basename "$$d"); \
+	  case " $(MODELS) " in *" $$n "*) ;; *) echo "=== removing models/$$n (no build-$$n) ==="; rm -rf -- "models/$$n" ;; esac; \
+	done
 	cat server.ini $(PRESETS) > $@
 
 FORCE:

@@ -639,21 +639,22 @@ run-to-run variation and need not come from the build or config changes. Why
 
 ## Current Picks
 
-From the 2026-10-31 repeat above, on build 12009 at 131072 context, with the
-2026-10-30 pass as a check. No pick changed between the two passes. Not yet
-revised for the 2026-11-09 pass on 12155.
+From the 2026-11-09 pass on build 12155 at 131072 context (*Build 12155 pass*
+above), checked against the two 12009 passes. No pick changed. `freedom` has one
+pass, so it takes only its own role.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `lite` | 132.5 tok/s fully on GPU, 2.2× `qwen` (61.5) and 3.1× `gemma` (43.0). |
-| Agentic tools (Cline) | `lite` | Prompt ingest 3354 tok/s vs `gemma` 1462 and `qwen` 1015. On tool calling `qwen` led both passes (39/39 vs `lite` 36 then 33), so pick `qwen` when accuracy matters more than ingest speed. |
-| Tool calling / agent loops | `qwen` | 39/39 in both passes vs `lite` 33/39 and `gemma` 30/39. `lite`'s score moved by 3 between two identical passes. |
-| Coding puzzles / small functions | `gemma` | 26/27 vs 25/27 for `qwen` and `lite`, and 25 to 27 in every pass since 2026-09-15. The runner calls this pass a tie, so the pick rests on that record. |
+| Fast local default | `lite` | 139.7 tok/s fully on GPU, 2.4× `qwen` (58.3) and 3.0× `gemma` (47.1). |
+| Agentic tools (Cline) | `lite` | Prompt ingest 3415 tok/s vs `gemma` 1541, `freedom` 1194 and `qwen` 1039. On tool calling `qwen` led all three passes (39, 39, 36 vs `lite` 36, 33, 33), so pick `qwen` when accuracy matters more than ingest speed. |
+| Tool calling / agent loops | `qwen` | 114 of 117 across three passes vs `lite` 102 and `gemma` 90. `freedom` 39/39 in one pass. `qwen`'s drop to 36 on 12155 is one pass and cannot be split from run-to-run spread. |
+| Coding puzzles / small functions | `gemma` | 25/27 vs 26/27 for `qwen`, a tie by the runner, and 25 to 27 in every pass since 2026-09-15. The pick rests on that record. `lite` 20/27, `freedom` 24/27. |
 | Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. |
-| Leak-gated tutoring | `gemma` | 0/15 leaks vs 5/15 (`qwen`) and 7/15 (`lite`), and 1 in 30 across both passes. Deterministic, not judge-scored. |
-| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8 with 12/12 on the code gate, inside the runner's tie threshold. |
-| Structured JSON / consumer-app smoke tests | `lite` | Three-way 100%, and `lite` averages 2.3s against 5.5s and 7.3s. |
-| Prompt-stack fidelity | `qwen` | 90% clean in both passes vs 57% for `gemma` and `lite`. |
+| Leak-gated tutoring | `gemma` | 2/15 leaks vs 6/15 (`qwen`, `lite`) and 8/15 (`freedom`), and 3 in 45 across three passes. Deterministic, not judge-scored. |
+| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8 with 12/12 on the code gate, inside the runner's tie threshold. `freedom` also 9.9, 12/12. Three judges per response in this pass. |
+| Structured JSON / consumer-app smoke tests | `lite` | Four-way 100%, and `lite` averages 2.3s against 5.5s, 6.7s and 7.1s. |
+| Prompt-stack fidelity | `qwen` | 18/21 (86%) vs `freedom` 16/21 and `gemma` and `lite` 14/21. 90% in both 12009 passes. |
+| Uncensored (Friends-Hermes) | `freedom` | Its only role. Matches `qwen` on learning and JSON in its one pass, and leaks the most on tutoring. |
 
 ## Hardware
 
