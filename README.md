@@ -288,6 +288,23 @@ would pin now:
 - The count moves with free VRAM, which is why it is pinned rather than
   re-fitted per run. Close anything holding VRAM first.
 
+A new value then gets the spike test before it is pinned:
+
+```bash
+# Runs in: local terminal, repo root, after make build with the new LOAD value.
+# Needs the router to hold no model in VRAM. Writes nothing on PASS.
+./eval/spike-test.py gemma
+```
+
+- A scratch CUDA process holds VRAM until other GPU use is about 3000 MiB
+  (`--target-mib`). A scratch router on a spare port then runs five cycles of
+  load, one request with the full prompt stack, and unload (`--cycles`).
+- It prints the rows *Pinned split history* records and PASS or FAIL. FAIL
+  means a cycle did not answer or the router log has an out-of-memory line, and
+  the log is kept for reading.
+- It refuses when other GPU use is already at the target, because the result
+  would then measure the desktop rather than the margin.
+
 Until 2026-11-11 this was a hand recipe (a backgrounded `llama-server` and a
 `grep` loop). It waited forever on a model that fits, and its flags were typed
 in rather than read from the preset.
@@ -494,6 +511,11 @@ repo's evals and editors are all clients of `http://localhost:8080`:
 - Jobhunt and SEO-LLM use `gemma`, `qwen` and `lite`.
 - Friends-Hermes uses `freedom` from a QEMU guest, which reaches the host's
   localhost at `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`.
+- The unit passes `--cors-origins localhost`. Only pages served from
+  `localhost` or `127.0.0.1` can read the router's responses in a browser. The
+  apps above send no `Origin` header, so they are unaffected. A page on another
+  site can still start a generation with a plain-text POST, which needs no
+  preflight. It just cannot read the answer. Only an API key would stop that.
 
 | Piece | Location |
 |---|---|

@@ -7,6 +7,10 @@
 #
 # %h is the user's home directory. The binary path is absolute because user units
 # do not inherit the login shell's PATH.
+#
+# --cors-origins localhost: the default (*) let any web page read the router's
+# responses. Now only localhost and 127.0.0.1 origins get CORS headers. The apps
+# and the QEMU guest send no Origin, so they are unaffected (checked 2026-11-14).
 
 [Unit]
 Description=llama.cpp router server (http://localhost:8080)
@@ -14,7 +18,7 @@ Documentation=https://github.com/ggml-org/llama.cpp/tree/master/tools/server
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/llama-server --models-preset %h/.config/llama.cpp/models.ini --models-max 1 --port 8080
+ExecStart=%h/.local/bin/llama-server --models-preset %h/.config/llama.cpp/models.ini --models-max 1 --port 8080 --cors-origins localhost
 Restart=on-failure
 RestartSec=5
 

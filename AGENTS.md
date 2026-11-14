@@ -1109,7 +1109,8 @@ repos, and one ended in a colon with no template after it.)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
   coding runner scored that crash as a model failure. A new value is derived with
   `--fit-target 2048` and must pass load-and-request cycles while about 3.0 GB of
-  the card is held by other processes. Lowering a value for speed needs Casey's
+  the card is held by other processes (`./eval/spike-test.py NAME`, tracked since
+  2026-11-14, after two hand-written runs). Lowering a value for speed needs Casey's
   approval, which he gave for the roughly 13% (gemma) and 9% (qwen) cost of this
   margin. (2026-09-14)
   The values were 21 and 34 at 32768 context, which passed that spike test. The
