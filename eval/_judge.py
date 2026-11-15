@@ -47,8 +47,8 @@ STRICT_SUFFIX = (
 
 def judge_scores(judge_model: str, topic: str, response: str, timeout: int,
                  template: str, rubric: list[str], strict: bool = False,
-                 options: dict | None = None) -> dict:
-    """Ask `judge_model` for rubric scores. Returns {dim: 0..2} plus `_parsed`
+                 options: dict | None = None, top: int = 2) -> dict:
+    """Ask `judge_model` for rubric scores. Returns {dim: 0..top} plus `_parsed`
     (False when the call failed or no JSON came back — those score 0 and are
     excluded from the panel average, but still counted against parse rate).
 
@@ -78,15 +78,15 @@ def judge_scores(judge_model: str, topic: str, response: str, timeout: int,
     out = {}
     for d in rubric:
         v = raw.get(d, 0)
-        out[d] = max(0, min(2, int(v))) if isinstance(v, (int, float)) else 0
+        out[d] = max(0, min(top, int(v))) if isinstance(v, (int, float)) else 0
     out["_parsed"] = True
     return out
 
 
 def judge_total(judge_model: str, topic: str, response: str, timeout: int,
                 template: str, rubric: list[str], strict: bool = False,
-                options: dict | None = None,
-                repeats: int = 1) -> tuple[float | None, list[bool], float]:
+                options: dict | None = None, repeats: int = 1,
+                top: int = 2) -> tuple[float | None, list[bool], float]:
     """Score one response with `judge_model`, `repeats` times, and take the median.
 
     Returns `(median_total, parse_flags, spread)`:
@@ -103,18 +103,24 @@ def judge_total(judge_model: str, topic: str, response: str, timeout: int,
     With a fixed seed every repeat would otherwise be byte-identical and the
     median would be a single sample wearing a disguise, so each repeat offsets
     the seed. Unseeded runs already vary per call and are left alone.
+
+    `top` is the highest mark per dimension. Totals are scaled to /10, which is
+    a factor of exactly 1 for the 5-dimension, 0-2 rubrics, so those stay the
+    integer sums they always were. learn's strict rubric scores 0-4 (2026-11-14).
     """
-    totals: list[int] = []
+    scale = 10 / (top * len(rubric))
+    totals: list[float] = []
     flags: list[bool] = []
     for i in range(max(1, repeats)):
         opts = dict(options) if options else None
         if opts and "seed" in opts:
             opts["seed"] = opts["seed"] + i
         sc = judge_scores(judge_model, topic, response, timeout, template,
-                          rubric, strict, options=opts)
+                          rubric, strict, options=opts, top=top)
         flags.append(bool(sc.get("_parsed")))
         if sc.get("_parsed"):
-            totals.append(sum(sc[d] for d in rubric))
+            raw = sum(sc[d] for d in rubric)
+            totals.append(raw if scale == 1 else raw * scale)
     if not totals:
         return None, flags, 0.0
     return statistics.median(totals), flags, float(max(totals) - min(totals))

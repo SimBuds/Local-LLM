@@ -190,9 +190,9 @@ Runner-specific flags:
 | `run-speed.py` | `--num-predict N`, `--thinking auto|on|off`, `--opt KEY=VAL` (per-request options only: `temperature`, `top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`, `seed`. Load-time settings such as `num_ctx` abort the run.) |
 | `run-code.py` | `--tasks ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-content.py` | `--tasks ...`, `--prompt-file PATH` (ad-hoc SEO prompt), `--keyword TEXT`, `--thinking auto|on|off` |
-| `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
+| `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--rescore LEARN_DIR`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
+| `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high|max`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 | `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
 
@@ -207,15 +207,20 @@ prompts, `medium` lands ~15-19k, and `high` ~39-52k. `high` was resized on
 prompt tokens, under half the 64k context served from 2026-09-16 to 2026-10-30,
 and at 12.0 it measured 39196 to 51307 on `lite` with no context error and a 100%
 score. At the 131072 context served since 2026-10-30, `high` fills about 40% of
-the window. `high`
+the window, so `max` (×28.0) was added on 2026-11-14 to fill most of it (see
+*JSON max pressure*). It requires 131072 served context. `high`
 results from before 2026-10-09 used half-length documents and are not comparable
 with later ones. A prompt that does overflow gets an HTTP 400 from
 llama-server and is recorded as a failed attempt, never silently truncated. `--position early|middle|late|all`
 moves the buried needle to measure position bias. Both are manual sweeps, not
-part of the default comparison. `--judge-rubric strict` on the learn/tutor
-runners pushes judges to reserve top marks when default grading saturates. On
-the learn suite it did not: measured 2026-10-31, answers whose code passed still
-scored 9.8 to 10.0 (*Strict-rubric learn run* under Historical Notes).
+part of the default comparison. `--judge-rubric strict` on the tutor runner
+pushes judges to reserve top marks when default grading saturates. On the learn
+suite that suffix did not work (2026-10-31, *Strict-rubric learn run*), so since
+2026-11-14 learn's strict mode scores each dimension 0 to 4 against depth
+anchors in `eval/prompts/learn-judge-strict.md`, scaled to /10. Learn strict
+scores from before that date are not comparable. `run-learn.py --rescore
+LEARN_DIR` judges a saved run's answers again without generating, so a rubric
+change is compared on identical answers (*Learn rubric at 0 to 4*).
 
 ### Offline unit tests
 
@@ -708,6 +713,15 @@ fault the journal holds, attributed on 2026-09-23 from the log lines before it:
 | 2026-10-30 06:35 | scratch router, build 12009, 131072 context | `gemma` | all | 24 | no | about 19 s (3) |
 | 2026-10-31 11:55 | scratch router, build 12009, 131072 context | `gemma` | all | 24 | no | 108 s (4) |
 | 2026-11-09 10:28 | service, build 12155, 131072 context | `gemma` | all | 24 | no | 148 s (5) |
+| 2026-11-14 16:10 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 0.4 s (6) |
+| 2026-11-14 16:30 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 43 s (6) |
+| 2026-11-14 16:55 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 4.8 s (6) |
+| 2026-11-14 17:12 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 38 s (6) |
+| 2026-11-14 17:30 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 12 s (6) |
+| 2026-11-14 17:48 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 67 s (6) |
+| 2026-11-14 17:57 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 12 s (6) |
+| 2026-11-14 18:43 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 12 s (6) |
+| 2026-11-14 19:09 | scratch router, build 12155, 131072 context | `gemma` | all | 24 | no | 16 s (6) |
 
 (1) This one ran on a scratch router whose log went to a file, not the journal.
 The model comes from the KV cache note above, and the journal's nearest service
@@ -746,6 +760,14 @@ abort in `ggml_backend_cuda_synchronize` called from
 the benchmark's own requests in suite order, so no other app was calling the
 router. The `nvidia-smi` capture came about two hours late and showed kwin and
 VS Code. The core dump (9.6 GB) is in systemd-coredump.
+
+(6) The 2026-11-14 soak (*Soak with HMM on* below). All nine have the signature
+of (4) and (5): abort in `ggml_backend_cuda_synchronize`, six of them called from
+`ggml_backend_sched_copy_input`, MMU fault at `GPC4 GPCCLIENT_T1_9`,
+`FAULT_PDE`, `VIRT_READ`, host-range addresses. Driver 620.70.06, kernel
+7.3.4. Only kwin (132 MiB) was on the GPU at each capture, taken seconds after
+the fault. Times are local. Seconds are from the model process's load-finished
+line to the abort.
 
 What the table settles:
 
@@ -845,6 +867,38 @@ Casey's call.
 three faults are all `gemma` at 24 MoE layers on CPU and 131072 context. The runner stopped the coding suite as designed, and the other seven
 suites of the pass finished clean, `gemma` included. Whether to resume the
 investigation is Casey's call.
+
+**Soak with HMM on, 2026-11-14.** The next step named on 2026-09-25, run after
+three faults in two weeks. A scratch router on port 8081 over the repo preset
+(build 12155, `gemma` at 24 MoE layers on CPU, 131072 context) ran
+`run-code.py --models gemma --attempts 3` in a loop from 21:02 UTC, unloading
+`gemma` after every pass so each pass began with a load. The live service was
+up and idle, and no pass overlapped app use. Results went to a gitignored
+`.scratch/soak/`, never `eval/runs/`. HMM was on (`uvm_disable_hmm = N`).
+
+| Passes | Failed (Xid 31) | Window | Other GPU use at each fault |
+|---:|---:|---|---|
+| 100 | 9 | 21:02 to 01:30 UTC (4.5 h) | kwin only, 132 MiB |
+
+Findings:
+
+- **The fault reproduces on demand.** Nine faults in 100 loads, against eight
+  in two months of router use since 2026-09-17. The soak is a usable test bed.
+- **Other GPU work is not needed.** No browser or VS Code was on the GPU at any
+  of the nine, which rules out the 2026-09-25 working explanation as the cause.
+  Casey started a browser video at about 01:13 UTC, an hour after the last
+  fault (00:10 UTC), and passes 74 to 100 ran clean before and during it.
+- **Every fault came soon after a load:** 0.4 to 67 s, within a pass's first
+  requests, never later in a pass. Under Ollama every crash also came within
+  67 s of a load. Each pass takes about 3 minutes, so a fault that struck at
+  random times would have landed later in a pass most of the time.
+- **The faults clustered.** All nine came in passes 4 to 73 (the first 3.1
+  hours), then 27 clean passes. Whether the rate falls with uptime is not known.
+
+Pass 101 was cut off by a reboot at 01:32 UTC and is not counted. The next step
+is the same soak with HMM off (`uvm_disable_hmm=1`, Casey's modprobe change,
+live from that reboot). At the HMM-on rate, a clean 100-pass run would happen
+by chance well under 1% of the time.
 
 ## Models Tested
 
@@ -970,6 +1024,76 @@ small context, and the 27B ran without its MTP heads (no `--spec-type`). Adding
 one to the lineup goes through `./add-model`. The 27B was added that way as
 `bigqwen` on 2026-11-08 to measure it with MTP: 12 of 66 layers on the GPU at
 131072 context, 7 tok/s. It was retired the next day (TESTING, *Models Tested*).
+
+### Learn rubric at 0 to 4 (2026-11-14)
+
+Under the 0 to 2 rubric, default or strict, every code-passing learn answer
+scored 9.8 to 10.0, so `qwen` and `gemma` could not be told apart. The task
+prompt asks for all five rubric parts, and strong answers include them all, so a
+presence checklist saturates. The new strict rubric grades depth instead: each
+dimension 0 to 4, where a 4 needs, for example, a trace on a concrete input, a
+derived complexity, or a failing input the code avoids.
+
+Method: `run-learn.py --rescore` on the saved answers of the 2026-11-09 pass
+(`eval/runs/20261109T155652Z/learn`, 48 answers, 4 judges leave-one-out, 3 calls
+per judge), on a scratch router on port 8081, build 12155, written to the
+scratchpad. Strict ran twice for its noise floor, and default once as a check on
+the re-score path.
+
+| Model | Saved default | Re-scored default | Strict, run 1 | Strict, run 2 |
+|---|---:|---:|---:|---:|
+| `freedom` | 9.9 | 9.9 | 8.1 | 8.0 |
+| `gemma` | 9.8 | 9.8 | 7.8 | 7.9 |
+| `qwen` | 9.9 | 9.9 | 7.7 | 7.9 |
+| `lite` | 8.2 | 8.2 | 6.2 (7.5 when correct) | 6.2 (7.4 when correct) |
+
+Findings:
+
+- **The re-score path reproduces the saved scores exactly** under the default
+  rubric, so `--rescore` changes nothing but the generation step.
+- **The ceiling is gone, the tie is not.** Strict puts passing answers near 8,
+  but `qwen` and `gemma` stay within 0.1 of each other in both runs, inside the
+  runner's 0.5 tie threshold. `freedom` leads by 0.1 to 0.3, also a tie. With
+  headroom available, the judges still find no difference in explanation
+  quality, so the learning pick stays a tie on evidence rather than on a
+  saturated scale.
+- **`lite` separates.** Its passing answers score 7.4 to 7.5 against 7.8 to 8.1
+  for the others, a gap the 0 to 2 rubric hid (9.8 for all four).
+- **Strict is noisier.** Within-judge spread 0.40 and 0.48/10 against 0.11 for
+  default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
+- Default stays the leaderboard rubric. Strict is opt-in.
+
+### JSON max pressure (2026-11-14)
+
+`run-json.py --context-pressure high` reached only about 40% of the 131072
+context served since 2026-10-30, so no suite exercised the full window. A new
+`max` level was added rather than resizing `high`, which keeps past `high` runs
+comparable. From `high` (×12.0, 51307 tokens for the 38438-word
+`needle_recall` document), about 1.26 prompt tokens per word plus the prompt
+stack put ×28.0 near 88% of the window for the longest task.
+
+Measured on a scratch router on port 8081 over the repo preset, build 12155,
+`lite` at 131072 context, 1 attempt per task, scratch out-root:
+
+| Task | Prompt tokens | Share of 131072 | Result |
+|---|---:|---:|---|
+| `needle_recall` | 115903 | 88.4% | ok |
+| `conflicting_correction` | 101808 | 77.7% | ok |
+| `multi_extract` | 101774 | 77.6% | ok |
+| `jd_extract` | 94734 | 72.3% | ok |
+| `no_infer` | 94721 | 72.3% | ok |
+| `enum_classify` | 94705 | 72.3% | ok |
+| `decline_guard` | 87676 | 66.9% | ok |
+
+Findings:
+
+- `max` fits with about 15k tokens to spare on the longest task. `MAX_WORDS`
+  in `run-json.py` is that task's 89602 words, and `test_json.py` fails if a
+  multiplier or task change makes any document longer.
+- `lite` scored 7/7 at `max`, as it did at `high`. One attempt is a fit check,
+  not a degradation result. Compare models at `max` with a full run.
+- At `max` the default `--num-ctx` is 131072, so a model served at less aborts
+  before any attempt rather than collecting HTTP 400s.
 
 ### MoE GPU cache at a refitted split (2026-11-11)
 

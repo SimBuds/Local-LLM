@@ -58,6 +58,38 @@ class RequireCtxTests(unittest.TestCase):
             self.assertEqual(rj.require_ctx(["qwen:think"], 65536), {"qwen:think": 65536})
 
 
+class PressureTests(unittest.TestCase):
+    """`max` fills most of the 131072 context served since 2026-10-30. The older
+    levels stay fixed so their past results remain comparable."""
+
+    def test_existing_levels_are_unchanged(self):
+        self.assertEqual({k: rj.PRESSURE[k] for k in ("normal", "medium", "high")},
+                         {"normal": 1.0, "medium": 4.0, "high": 12.0})
+
+    def test_max_is_the_largest_level(self):
+        self.assertGreater(rj.PRESSURE["max"], rj.PRESSURE["high"])
+
+    def test_max_needs_the_full_served_context(self):
+        self.assertEqual(rj.min_ctx("max"), 131072)
+
+    def test_other_levels_keep_the_65536_minimum(self):
+        for level in ("normal", "medium", "high"):
+            self.assertEqual(rj.min_ctx(level), 65536)
+
+    def test_max_runs_against_65536_abort_before_any_attempt(self):
+        with serving(lite=65536):
+            with self.assertRaises(SystemExit):
+                rj.require_ctx(["lite"], rj.min_ctx("max"))
+
+    def test_largest_max_document_stays_under_the_measured_word_bound(self):
+        # MAX_WORDS is the largest document measured to fit (TESTING.md,
+        # *JSON max pressure*). A higher multiplier or a longer task fails here
+        # before a live run truncates against the context.
+        tasks = rj.resolve_tasks(list(rj.TASKS.values()), "max", "default")
+        longest = max(len(t.context.split()) for t in tasks)
+        self.assertLessEqual(longest, rj.MAX_WORDS)
+
+
 class RunAttemptTests(unittest.TestCase):
     def test_request_carries_no_num_ctx(self):
         task = rj.ResolvedTask(key="t", instruction="Extract.", context="doc",

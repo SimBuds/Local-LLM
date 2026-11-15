@@ -23,7 +23,7 @@ Usage:
   ./eval/run-json.py --models gemma --tasks needle_recall --position all  # early/mid/late
 
 --num-ctx is the minimum context each model must be serving (default 65536, room
-for the high preset's largest prompt, 51307 tokens). The consumer apps need less:
+for the high preset's largest prompt, 51307 tokens, and 131072 at max). The consumer apps need less:
 SEO-LLM requires 32768 and Jobhunt sizes its prompts to fit 32768. llama.cpp
 fixes context size when a model loads (ctx-size in its build-* preset), so it is
 checked against the router before the run starts rather than sent per request; a
@@ -36,9 +36,9 @@ normal (default, ~6-7k prompt tok) reproduces the standard docs; medium and high
 lengthen them (~15-19k and ~39-52k tok). high was resized on 2026-10-09 to
 fill most of the 64k context served until 2026-10-30 (it was ~21-27k, sized for
 the old 32k), so high results before that date are not comparable. At today's
-131072 context it fills about 40%. It is a manual stress sweep, kept
-out of the
-default full comparison. --position moves the buried needle to the
+131072 context it fills about 40%. max (added 2026-11-14) fills 67-88% of 131072
+(87676 to 115903 prompt tokens on lite). high and max are manual stress sweeps,
+kept out of the default full comparison. --position moves the buried needle to the
 start/middle/end so position bias can be measured.
 
 Output:
@@ -74,7 +74,18 @@ CLOSE_PTS = 0.05  # score gaps within 5 points are a tie, not a quality win
 # 51307 prompt tokens across the tasks, about 14k under the 65536 context served
 # then. Served context is 131072 since 2026-10-30, so high now fills about 40%.
 # It was 6.0 (21016 to 27067), sized for the 32k context served until 2026-09-16.
-PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 12.0}
+# max (2026-11-14) fills most of the 131072 context, measured in TESTING.md, *JSON
+# max pressure*. A new level rather than a bigger high keeps past high runs comparable.
+PRESSURE = {"normal": 1.0, "medium": 4.0, "high": 12.0, "max": 28.0}
+# Longest document, in words, measured to fit 131072 at max with the prompt stack
+# and schema. test_json.py holds every task under it.
+MAX_WORDS = 89602
+
+
+def min_ctx(pressure: str) -> int:
+    """Served context a pressure level needs. max is sized for 131072, so a
+    65536 server would reject its longest prompts with HTTP 400 mid-run."""
+    return 131072 if pressure == "max" else 65536
 # Needle placement for single-needle tasks under --position (multi-needle tasks
 # keep their own spread). "default" leaves each task's baked-in position alone.
 POSITIONS = {"early": 0.15, "middle": 0.5, "late": 0.85}
@@ -247,22 +258,24 @@ def main() -> int:
     ap.add_argument("--tasks", nargs="+", default=list(TASKS),
                     help=f"Subset of: {', '.join(TASKS)}")
     ap.add_argument("--attempts", type=positive_int, default=3)
-    ap.add_argument("--num-ctx", type=int, default=65536,
+    ap.add_argument("--num-ctx", type=int, default=None,
                     help="minimum context each model must serve (checked against the "
-                         "router before the run; default 65536)")
+                         "router before the run; default 65536, or 131072 at max)")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off")
     ap.add_argument("--context-pressure", choices=list(PRESSURE), default="normal",
                     help="document length preset: normal (default, current docs), "
                          "medium (~15-19k prompt tok), high (~39-52k, sized for a "
-                         "64k context). high is a manual stress sweep, not part of "
-                         "the default run.")
+                         "64k context), max (~88-116k, sized for 131072). high and "
+                         "max are manual stress sweeps, not part of the default run.")
     ap.add_argument("--position", choices=["default", *POSITIONS, "all"], default="default",
                     help="single-needle placement: default (task's own), early/middle/late, "
                          "or all (run each as a separate variant). Multi-needle tasks ignore it.")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     add_seed_arg(ap)
     args = ap.parse_args()
+    if args.num_ctx is None:
+        args.num_ctx = min_ctx(args.context_pressure)
 
     unknown = [t for t in args.tasks if t not in TASKS]
     if unknown:

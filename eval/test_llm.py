@@ -526,6 +526,9 @@ class ChatSessionTests(CliCase):
 
     def test_router_error_keeps_the_session_and_drops_the_failed_turn(self):
         err = urllib.error.HTTPError("u", 500, "boom", {}, io.BytesIO(b'{"error":{"message":"busy"}}'))
+        # Unclosed, it warned at garbage collection inside another test's stderr
+        # capture, which failed that test once six more ran first (2026-11-14).
+        self.addCleanup(err.close)
         self.serve(listing(lite="loaded"), err, sse({"content": "OK"}))
         code, _, stderr = self.session(["first", "second", EOFError], "lite")
         self.assertEqual(code, 0)

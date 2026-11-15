@@ -25,6 +25,15 @@ Usage:
   ./eval/run-learn.py --models gemma qwen lite freedom                 # leave-one-out: each graded by the other three
   ./eval/run-learn.py --models gemma --judges qwen        # grade gemma with qwen
   ./eval/run-learn.py --models gemma qwen lite freedom --tasks lru_cache edit_distance --attempts 5
+  ./eval/run-learn.py --models gemma qwen lite freedom --judge-rubric strict \
+      --rescore eval/runs/<UTC>/learn --out-root /tmp/scratch   # re-judge saved answers
+
+--judge-rubric strict scores each dimension 0 to 4 against the anchors in
+prompts/learn-judge-strict.md and scales the total to /10 (since 2026-11-14,
+when the 0-2 rubric, lenient or strict, scored every passing answer 9.8 to 10).
+--rescore skips generation: it reads the responses and code results a saved
+learn folder holds and runs only the judge panel, so a rubric change is
+compared on identical answers.
 
 Leave-one-out means a response is graded only by judges other than its author, so
 every model under test needs at least one judge with a different name. A single
@@ -55,6 +64,7 @@ from _judge import judge_total, reliability_lines  # noqa: E402
 from learning_tasks import TASKS  # noqa: E402
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
+STRICT_TEMPLATE = Path(__file__).resolve().parent / "prompts" / "learn-judge-strict.md"
 CLOSE_PTS = 0.5  # teach scores within half a point (/10) are a tie, not a win
 RUBRIC = ["approach", "complexity", "alternative", "pitfall", "clarity"]  # 0–2 each
 
@@ -77,6 +87,43 @@ Return ONLY a JSON object, no other text, exactly these keys:
 --- END ---"""
 
 
+def judge_setup(rubric: str) -> tuple[str, int]:
+    """(judge template, highest mark per dimension) for --judge-rubric."""
+    if rubric == "strict":
+        return STRICT_TEMPLATE.read_text(encoding="utf-8"), 4
+    return JUDGE_TEMPLATE, 2
+
+
+def load_saved(learn_dir: Path, models: list[str], tasks: list) -> list[dict]:
+    """Records from a saved learn folder, as phase 1 would have built them.
+
+    Each <model>/<task>-attempt-<n>.md is the header main() writes, a `---` rule,
+    then the response. Only the first rule after the header splits them, so a rule
+    inside the response stays in it. Timing is not saved, so it reads 0.
+    """
+    by_name = {t.name: t for t in tasks}
+    records: list[dict] = []
+    for model in models:
+        mdir = learn_dir / model
+        files = sorted(mdir.glob("*-attempt-*.md")) if mdir.is_dir() else []
+        if not files:
+            raise SystemExit(f"ERROR: no saved responses for {model!r} in {learn_dir}")
+        for f in files:
+            task_name, _, attempt = f.stem.rpartition("-attempt-")
+            if task_name not in by_name:
+                continue
+            header, _, text = f.read_text(encoding="utf-8").partition("\n\n---\n\n")
+            code = next(line for line in header.splitlines() if line.startswith("- code: "))
+            result = code.removeprefix("- code: ")
+            passed = result == "PASS"
+            reason = "" if passed else result.removeprefix("FAIL (").removesuffix(")")
+            records.append({"model": model, "task": task_name,
+                            "topic": by_name[task_name].topic, "attempt": int(attempt),
+                            "text": text.removesuffix("\n"), "passed": passed,
+                            "reason": reason, "elapsed": 0.0, "eval_count": 0})
+    return records
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -92,7 +139,11 @@ def main() -> int:
                     help="Thinking mode: 'auto' respects suffix configuration, 'on' forces thinking tokens, 'off' strips thinking passes.")
     ap.add_argument("--exec-timeout", type=int, default=10)
     ap.add_argument("--judge-rubric", choices=["default", "strict"], default="default",
-                    help="strict pushes judges to reserve top marks (harsher grading)")
+                    help="strict scores each dimension 0-4 against depth anchors "
+                         "(prompts/learn-judge-strict.md), scaled to /10")
+    ap.add_argument("--rescore", type=Path, default=None, metavar="LEARN_DIR",
+                    help="judge the responses saved in LEARN_DIR (eval/runs/<UTC>/learn) "
+                         "instead of generating new ones")
     ap.add_argument("--judge-repeats", type=int, default=3,
                     help="score each response this many times per judge and take "
                          "the median (default 3). 1 restores single-call grading "
@@ -119,8 +170,11 @@ def main() -> int:
               f"Pass --judges with a different model.", file=sys.stderr)
         return 1
 
+    saved = load_saved(args.rescore, list(args.models), tasks) if args.rescore else None
+    if saved is not None:
+        args.attempts = max(r["attempt"] for r in saved)
     # Fail before creating a run dir, not after filling it with zeros.
-    preflight(list(args.models) + list(judges))
+    preflight(list(judges) if saved is not None else list(args.models) + list(judges))
 
     run_dir = new_run_dir(args.out_root) / "learn"
     run_dir.mkdir(parents=True)
@@ -132,8 +186,12 @@ def main() -> int:
     print(f"{sandbox_note()}\n")
 
     # --- Phase 1: generate + execution gate (each model loaded once) ---
-    records: list[dict] = []
-    for model in args.models:
+    records: list[dict] = saved or []
+    if saved is not None:
+        print(f"Rescore: {len(saved)} saved responses from {rel_path(args.rescore)}\n")
+        for model in args.models:
+            (run_dir / model).mkdir()
+    for model in (args.models if saved is None else []):
         print(f"=== generate: {model} ===")
         name, model_think = resolve_model(model)
 
@@ -175,7 +233,7 @@ def main() -> int:
         rec["judge_expl"] = {}    # judge spec -> median 0–10 total (parsed only)
         rec["judge_spread"] = {}  # judge spec -> max-min across its repeats
     judge_stats: dict[str, list[bool]] = {j: [] for j in judges}  # parse-rate tracking
-    strict = args.judge_rubric == "strict"
+    template, top = judge_setup(args.judge_rubric)
     for judge in judges:
         jname = resolve_model(judge)[0]
         eligible = [r for r in records if resolve_model(r["model"])[0] != jname]
@@ -183,9 +241,9 @@ def main() -> int:
               f"{args.judge_repeats} call(s), skipping its own) ===")
         for i, rec in enumerate(eligible, 1):
             median, flags, spread = judge_total(
-                judge, rec["topic"], rec["text"], args.timeout, JUDGE_TEMPLATE,
-                RUBRIC, strict, options=seed_opts(args.seed),
-                repeats=args.judge_repeats)
+                judge, rec["topic"], rec["text"], args.timeout, template,
+                RUBRIC, options=seed_opts(args.seed),
+                repeats=args.judge_repeats, top=top)
             judge_stats[judge].extend(flags)
             if median is not None:
                 rec["judge_expl"][judge] = median
@@ -233,8 +291,9 @@ def write_summary(run_dir, records, tasks, args, judges, judge_stats) -> None:
          f"- Tasks: {len(tasks)} ({', '.join(task_names)})",
          f"- Attempts per task: {args.attempts}",
          f"- Judges: {', '.join(f'`{j}`' for j in judges)} "
-         f"(leave-one-out panel — no model grades its own output; rubric 0–2 each: "
-         f"{', '.join(RUBRIC)} → /10; {args.judge_repeats} call(s) per judge per "
+         f"(leave-one-out panel — no model grades its own output; rubric "
+         f"0–{judge_setup(args.judge_rubric)[1]} each, scaled to /10: "
+         f"{', '.join(RUBRIC)}; {args.judge_repeats} call(s) per judge per "
          f"response, **median** within a judge then mean across judges; "
          f"grading: {args.judge_rubric})",
          "- **Teach score** = explanation (/10) counted only when the code passes "
