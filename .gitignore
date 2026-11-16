@@ -1,17 +1,6 @@
 __pycache__/
-
 eval/runs/
-
-# Verification scratch on disk (/tmp is tmpfs here). verify-build writes its
-# KL reference logits to .scratch/kld/ and deletes them after each model.
-.scratch/
-
 models/
-
-# The assembled prompt carries a real user profile, so only the templates are
-# published. memory/user.md was tracked until f107230 and older versions of it
-# remain in history.
 memory/*.md
 !memory/*.example.md
-
 IMPLEMENT.md

@@ -900,6 +900,21 @@ is the same soak with HMM off (`uvm_disable_hmm=1`, Casey's modprobe change,
 live from that reboot). At the HMM-on rate, a clean 100-pass run would happen
 by chance well under 1% of the time.
 
+**Soak with HMM off, 2026-11-15.** Same script and setup, with
+`uvm_disable_hmm = Y` (read again on 2026-11-16 after a later reboot, still Y).
+It ran from 01:36 UTC and stopped at 02:09 UTC when the agent session that
+owned it ended, not because of a fault.
+
+| Passes | Failed (Xid 31) | Window | Kernel Xid lines |
+|---:|---:|---|---|
+| 11 | 0 | 01:36 to 02:09 UTC (0.5 h) | 0 |
+
+Inconclusive. At the HMM-on rate about 1 fault was expected in 11 passes, and
+11 clean passes happen by chance about 37% of the time. HMM stays off as the
+working setting, since it costs nothing on this box. Phase 8 closed here on
+2026-11-16 by Casey's choice. Whether HMM off removes the fault is open: the
+check is a full 100-pass soak with HMM off, plus any Xid 31 seen in normal use.
+
 ## Models Tested
 
 | Model | Status | Notes |
