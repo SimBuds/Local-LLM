@@ -511,11 +511,12 @@ repo's evals and editors are all clients of `http://localhost:8080`:
 - Jobhunt and SEO-LLM use `gemma`, `qwen` and `lite`.
 - Friends-Hermes uses `freedom` from a QEMU guest, which reaches the host's
   localhost at `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`.
-- The unit passes `--cors-origins localhost`. Only pages served from
-  `localhost` or `127.0.0.1` can read the router's responses in a browser. The
-  apps above send no `Origin` header, so they are unaffected. A page on another
-  site can still start a generation with a plain-text POST, which needs no
-  preflight. It just cannot read the answer. Only an API key would stop that.
+- The unit passes `--cors-origins localhost`. Since llama.cpp 1.0 (build
+  12439) that allows only same-origin requests, such as the built-in web UI.
+  Any request carrying another `Origin`, including a page on a different
+  localhost port and a plain-text POST from another site, gets a 403 before any
+  generation runs (checked 2026-11-16). The apps above send no `Origin` header,
+  so they are unaffected.
 
 | Piece | Location |
 |---|---|
