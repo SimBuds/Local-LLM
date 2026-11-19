@@ -255,9 +255,81 @@ class TaskTableTests(SandboxCase):
 
 
 class SummaryTests(unittest.TestCase):
-    def row(self, passed: bool, steps: int) -> dict:
-        return {"task": "fix_failing_test", "passed": passed, "steps": steps,
-                "elapsed_s": 12.0, "tok_per_s": 100.0, "reason": "pass" if passed else "step-cap"}
+    def row(self, passed: bool, steps: int, task: str = "fix_failing_test",
+            reason: str | None = None, tests_ok: bool | None = None, bad_calls: int = 0,
+            prompt_tokens: int = 2000) -> dict:
+        return {"task": task, "passed": passed, "steps": steps,
+                "elapsed_s": 12.0, "tok_per_s": 100.0, "bad_calls": bad_calls,
+                "prompt_tokens": prompt_tokens,
+                "tests_ok": passed if tests_ok is None else tests_ok,
+                "reason": reason or ("pass" if passed else "step-cap")}
+
+    def summary(self, results: dict, tasks: list | None = None, attempts: int = 2) -> str:
+        with tempfile.TemporaryDirectory() as td, mock.patch("builtins.print"):
+            agent.write_summary(Path(td), results, tasks or [TASK], attempts, 30)
+            return (Path(td) / "summary.md").read_text()
+
+    def section(self, text: str, heading: str) -> str:
+        """The body of one `### ` section."""
+        self.assertIn(f"### {heading}", text)
+        return text.split(f"### {heading}", 1)[1].split("\n### ", 1)[0]
+
+    def test_per_task_matrix_counts_each_task_separately(self):
+        triage = TASKS["log_triage"]
+        text = self.summary({"lite": [self.row(True, 3), self.row(False, 9),
+                                      self.row(True, 5, triage.key), self.row(True, 6, triage.key)]},
+                            [TASK, triage])
+        body = self.section(text, "Per-task (passed / attempts)")
+        self.assertIn("| Model | fix_failing_test | log_triage |", body)
+        self.assertIn("| `lite` | 1/2 | 2/2 |", body)
+        self.assertIn(f"| `log_triage` | {triage.why} |", self.section(text, "What each task catches"))
+
+    def test_failure_shapes_count_reasons_and_mark_capped_attempts_that_were_correct(self):
+        text = self.summary({"lite": [
+            self.row(True, 3),
+            self.row(False, 4, reason="tests-failed", bad_calls=2),
+            self.row(False, 5, reason="tests-failed", bad_calls=1),
+            self.row(False, 30, reason="step-cap", tests_ok=True),
+            self.row(False, 30, reason="step-cap", tests_ok=False),
+            self.row(False, 2, reason="gen-timeout")]}, attempts=6)
+        body = self.section(text, "Failure shapes observed")
+        self.assertIn("- `lite`: tests-failed ×2, gen-timeout ×1, step-cap ×1, "
+                      "step-cap (tests passing) ×1. Malformed or unknown tool calls: 3.", body)
+
+    def test_model_with_no_failures_reports_none(self):
+        body = self.section(self.summary({"qwen": [self.row(True, 3), self.row(True, 4)]}),
+                            "Failure shapes observed")
+        self.assertIn("- `qwen`: none. Malformed or unknown tool calls: 0.", body)
+
+    def test_model_whose_every_call_failed_is_ranked_at_zero_without_error(self):
+        dead = [self.row(False, 0, reason="gen-fail", prompt_tokens=0) for _ in range(2)]
+        text = self.summary({"qwen": [self.row(True, 3), self.row(True, 4)], "gemma": dead})
+        rows = promote.parse_table(text)
+        self.assertEqual([(r["Model"], r["Passed"]) for r in rows],
+                         [("`qwen`", "2/2"), ("`gemma`", "0/2")])
+        self.assertIn("- `gemma`: gen-fail ×2.", self.section(text, "Failure shapes observed"))
+
+    def test_uncertainty_gives_interval_weakest_task_and_small_sample_flag(self):
+        triage = TASKS["log_triage"]
+        text = self.summary({"lite": [self.row(False, 9), self.row(False, 9),
+                                      self.row(True, 5, triage.key), self.row(True, 6, triage.key)]},
+                            [TASK, triage])
+        body = self.section(text, "Uncertainty")
+        self.assertIn(f"- `lite`: 50% (95% CI {gw.ci_str(2, 4)}); weakest `fix_failing_test` "
+                      f"at 0%; spread 0–100%; {gw.sample_caveat(4)}", body)
+
+    def test_single_model_gets_no_close_result_note_and_a_tie_does(self):
+        alone = self.summary({"lite": [self.row(True, 3), self.row(True, 4)]})
+        self.assertNotIn("Close result", alone)
+        tied = self.summary({"lite": [self.row(True, 3), self.row(False, 4)],
+                             "qwen": [self.row(True, 3), self.row(False, 9)]})
+        self.assertIn("Close result", tied)
+        self.assertEqual(promote.WINNER_RE.search(tied).group(1), "lite")
+
+    def test_table_reports_the_average_final_prompt_size(self):
+        text = self.summary({"lite": [self.row(True, 3, prompt_tokens=1000),
+                                      self.row(True, 4, prompt_tokens=2500)]})
+        self.assertEqual(promote.parse_table(text)[0]["Avg prompt tok"], "1750")
 
     def test_summary_is_readable_by_promote(self):
         with tempfile.TemporaryDirectory() as td:
@@ -271,6 +343,55 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual([(r["Model"], r["Passed"], r["Pass rate"]) for r in rows],
                          [("`qwen`", "2/2", "100%"), ("`lite`", "1/2", "50%")])
         self.assertEqual(rows[0]["Avg steps"], "5.0")
+
+
+class PromoteTests(unittest.TestCase):
+    """The README leaderboard is built by promote.py from the newest summary per suite."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.runs = Path(td.name)
+        patch = mock.patch.object(promote, "RUNS", self.runs)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def row(self, passed: bool, steps: int) -> dict:
+        return {"task": TASK.key, "passed": passed, "steps": steps, "elapsed_s": 12.0,
+                "tok_per_s": 100.0, "bad_calls": 0, "prompt_tokens": 2000, "tests_ok": passed,
+                "reason": "pass" if passed else "tests-failed"}
+
+    def agent_run(self, results: dict) -> None:
+        run_dir = self.runs / "20261119T120000Z" / "agent"
+        run_dir.mkdir(parents=True)
+        with mock.patch("builtins.print"):
+            agent.write_summary(run_dir, results, [TASK], 2, 30)
+
+    def agent_row(self) -> str:
+        block, _ = promote.build_block(None)
+        rows = [ln for ln in block.splitlines() if ln.startswith("| Agentic tasks |")]
+        self.assertEqual(len(rows), 1, block)
+        return rows[0]
+
+    def test_agent_summary_becomes_a_leaderboard_row_with_passed_and_steps(self):
+        self.agent_run({"lite": [self.row(True, 3), self.row(False, 15)],
+                        "qwen": [self.row(True, 4), self.row(True, 6)]})
+        self.assertEqual(self.agent_row(), "| Agentic tasks | `qwen` | 2/2, 5.0 | 1/2, 9.0 |")
+        block, _ = promote.build_block(None)
+        self.assertIn("- Agentic tasks: `eval/runs/20261119T120000Z/agent/summary.md`", block)
+
+    def test_tied_agent_result_reads_as_a_tie(self):
+        self.agent_run({"lite": [self.row(True, 3), self.row(False, 5)],
+                        "qwen": [self.row(True, 4), self.row(False, 6)]})
+        self.assertEqual(self.agent_row(), "| Agentic tasks | tie | 1/2, 4.0 | 1/2, 5.0 |")
+
+    def test_suite_reads_not_run_when_only_other_suites_have_results(self):
+        speed = self.runs / "20261119T120000Z" / "speed"
+        speed.mkdir(parents=True)
+        (speed / "summary.md").write_text(
+            "## 🏆 Fastest: `lite` — 130 tok/s\n\n| Rank | Model | Gen tok/s |\n"
+            "|---|---|---|\n| 1 | `lite` | 130 |\n", encoding="utf-8")
+        self.assertEqual(self.agent_row(), "| Agentic tasks | _not run_ | — |")
 
 
 class MainTests(unittest.TestCase):

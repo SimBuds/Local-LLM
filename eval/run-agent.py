@@ -42,8 +42,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
     REPO_ROOT, SandboxUnavailable, add_seed_arg, after_failure, attempt_seed, avg_tps, chat,
-    close_call_note, get_effective_think, new_run_dir, positive_int, preflight, rel_path,
-    resolve_model, sandbox_exec, seed_opts, served_ctx, tok_per_s,
+    ci_str, close_call_note, get_effective_think, new_run_dir, positive_int, preflight,
+    rel_path, resolve_model, sample_caveat, sandbox_exec, seed_opts, served_ctx, spread_note,
+    tok_per_s,
 )
 from agent_tasks import TASKS, AgentTask  # noqa: E402
 
@@ -246,6 +247,8 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
             "avg_steps": sum(r["steps"] for r in rs) / len(rs) if rs else 0.0,
             "avg_s": sum(r["elapsed_s"] for r in rs) / len(rs) if rs else 0.0,
             "avg_tps": avg_tps(rs),
+            "avg_prompt": sum(r["prompt_tokens"] for r in rs) / len(rs) if rs else 0.0,
+            "rs": rs,
         })
     ranked.sort(key=lambda r: (-r["rate"], r["avg_steps"], -r["avg_tps"]))
 
@@ -265,11 +268,57 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
                                f"{(w['rate'] - (runner_up or 0))*100:.0f} pts")
         if note:
             L += [note, ""]
-    L += ["| Rank | Model | Pass rate | Passed | Avg steps | Avg s | Tok/s |",
-          "|---|---|---|---|---|---|---|"]
+    L += ["| Rank | Model | Pass rate | Passed | Avg steps | Avg s | Tok/s | Avg prompt tok |",
+          "|---|---|---|---|---|---|---|---|"]
     for i, r in enumerate(ranked, 1):
         L.append(f"| {i} | `{r['model']}` | {r['rate']*100:.0f}% | {r['npass']}/{r['total']} | "
-                 f"{r['avg_steps']:.1f} | {r['avg_s']:.1f} | {r['avg_tps']:.0f} |")
+                 f"{r['avg_steps']:.1f} | {r['avg_s']:.1f} | {r['avg_tps']:.0f} | "
+                 f"{r['avg_prompt']:.0f} |")
+    L += ["", "`Avg prompt tok` is the size of the last prompt in an attempt, so it shows "
+          "how much context the work used."]
+
+    def task_counts(rs: list[dict], key: str) -> tuple[int, int]:
+        mine = [x for x in rs if x["task"] == key]
+        return sum(1 for x in mine if x["passed"]), len(mine)
+
+    L += ["", "### Per-task (passed / attempts)", "",
+          "| Model | " + " | ".join(t.key for t in tasks) + " |",
+          "|---|" + "---|" * len(tasks)]
+    for r in ranked:
+        cells = ["%d/%d" % task_counts(r["rs"], t.key) for t in tasks]
+        L.append(f"| `{r['model']}` | " + " | ".join(cells) + " |")
+
+    L += ["", "### What each task catches", "", "| Task | Failure it catches |", "|---|---|"]
+    L += [f"| `{t.key}` | {t.why} |" for t in tasks]
+
+    L += ["", "### Failure shapes observed", "",
+          "Counted over failed attempts. `tests-failed` means the model said it was done "
+          "and the hidden tests disagreed. `step-cap`, `wall-clock`, and `context` mean it "
+          "never ended the loop, and `(tests passing)` marks the ones where the work was "
+          "already correct. `gen-timeout` and `gen-fail` are model calls that did not return.", ""]
+    for r in ranked:
+        shapes: dict[str, int] = {}
+        for x in r["rs"]:
+            if not x["passed"]:
+                shape = x["reason"] + (" (tests passing)" if x["tests_ok"] else "")
+                shapes[shape] = shapes.get(shape, 0) + 1
+        listed = ", ".join(f"{k} ×{v}" for k, v in sorted(shapes.items(),
+                                                          key=lambda kv: (-kv[1], kv[0])))
+        L.append(f"- `{r['model']}`: {listed or 'none'}. Malformed or unknown tool calls: "
+                 f"{sum(x['bad_calls'] for x in r['rs'])}.")
+
+    L += ["", "### Uncertainty", "",
+          "Pass rate with a 95% Wilson CI, the weakest task, and a small-sample flag. "
+          "A pass is all-or-nothing per attempt, so intervals are wide at these counts.", ""]
+    for r in ranked:
+        rates = {}
+        for t in tasks:
+            npass, n = task_counts(r["rs"], t.key)
+            if n:
+                rates[t.key] = npass / n
+        bits = [f"{r['rate']*100:.0f}% (95% CI {ci_str(r['npass'], r['total'])})",
+                spread_note(rates), sample_caveat(r["total"])]
+        L.append(f"- `{r['model']}`: {'; '.join(b for b in bits if b)}")
     (run_dir / "summary.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Summary: {rel_path(run_dir / 'summary.md')}")
     if ranked:

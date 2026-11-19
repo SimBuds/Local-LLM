@@ -53,6 +53,7 @@ SUITES: dict[str, tuple[str, tuple[str, ...]]] = {
     "json":    ("JSON / long-context", ("Score",)),
     "persona": ("Prompt stack",        ("Clean rate",)),
     "tools":   ("Tool calling",        ("Passed", "Pass rate")),
+    "agent":   ("Agentic tasks",       ("Passed", "Pass rate")),
 }
 
 # Extra context column worth carrying into the README next to the headline
@@ -63,6 +64,7 @@ SECONDARY: dict[str, str] = {
     "learn": "Code pass",
     "tutor": "Leaks",
     "json": "Avg s",
+    "agent": "Avg steps",
 }
 
 
