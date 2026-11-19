@@ -196,6 +196,21 @@ because the split is sized from what is free at that moment.
 - A model that fits entirely gets no `n-cpu-moe`, and it says so.
 - `--no-probe` skips the probe and leaves the split for you.
 
+**Then it measures speed against the 20 tok/s floor.** On the same loaded
+server it sends one 128-token request with thinking off and reads the
+generation speed. A model must reach 20 tok/s to be a candidate for the lineup.
+
+- At or above the floor, the speed is printed and written into the builder's
+  comment.
+- Below it, the builder is still written and a `WARNING` says the model is too
+  slow to be a candidate. Delete the `build-*` file to drop it.
+- If the request fails or returns no timing, a `WARNING` says the speed was not
+  measured. An unmeasured model is never treated as fast.
+- `--no-probe` and `--refit` measure nothing.
+
+The floor exists because a dense 27B model (`qwen38`, 2026-11-19) was scaffolded
+and spike-tested before anyone saw that it generates at 6.7 tok/s.
+
 `make build` picks the new model up, because the lineup is discovered from the
 `build-*` files.
 

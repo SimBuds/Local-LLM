@@ -54,7 +54,7 @@ PROMPT = (Path(__file__).resolve().parent / "prompts" / "agent-system.md").read_
 DESK_PROMPT = (Path(__file__).resolve().parent / "prompts" / "desk-system.md").read_text(encoding="utf-8")
 
 CLOSE_PTS = 0.05       # pass-rate gaps within 5 points are a tie
-WALL_S = 600           # wall clock for one attempt's loop
+WALL_S = 600           # default wall clock for one attempt's loop (--wall-clock)
 CMD_TIMEOUT = 30       # one bash command (stated in the system prompt)
 EXEC_TIMEOUT = 30      # the hidden tests
 NUM_PREDICT = 2048     # generation ceiling per turn
@@ -203,7 +203,7 @@ def reason_for(stop: str, tests_ok: bool) -> str:
 
 def run_attempt(model: str, task: AgentTask | DeskTask, n: int, total: int, timeout: int,
                 thinking_mode: str, n_ctx: int, max_steps: int, out_dir: Path,
-                seed: int | None = None) -> dict:
+                seed: int | None = None, wall_s: int = WALL_S) -> dict:
     print(f"    {task.key:22s} [{n}/{total}] ", end="", flush=True)
     name, model_think = resolve_model(model)
     think = get_effective_think(thinking_mode, model_think)
@@ -216,7 +216,7 @@ def run_attempt(model: str, task: AgentTask | DeskTask, n: int, total: int, time
         shop = desk.new_state()
         loop = run_loop(name, think, task.instruction, desk.TOOLS, DESK_PROMPT,
                         lambda call: desk.dispatch(shop, call), options, timeout,
-                        t0 + WALL_S, n_ctx, max_steps)
+                        t0 + wall_s, n_ctx, max_steps)
         tests_ok = "exc" not in loop and desk.same_state(
             shop, desk.patched(desk.new_state(), task.changes))
     else:
@@ -230,7 +230,7 @@ def run_attempt(model: str, task: AgentTask | DeskTask, n: int, total: int, time
                 path.write_text(content, encoding="utf-8")
             loop = run_loop(name, think, task.instruction, TOOLS, PROMPT,
                             lambda call: execute_call(call, workdir), options, timeout,
-                            t0 + WALL_S, n_ctx, max_steps)
+                            t0 + wall_s, n_ctx, max_steps)
             tests_ok = False if "exc" in loop else score(task, workdir)
     elapsed = time.monotonic() - t0
 
@@ -255,7 +255,8 @@ def run_attempt(model: str, task: AgentTask | DeskTask, n: int, total: int, time
 
 
 def write_summary(run_dir: Path, results: dict[str, list[dict]],
-                  tasks: list[AgentTask], attempts: int, max_steps: int) -> None:
+                  tasks: list[AgentTask], attempts: int, max_steps: int,
+                  wall_s: int = WALL_S) -> None:
     ranked = []
     for model, rs in results.items():
         npass = sum(1 for r in rs if r["passed"])
@@ -273,7 +274,7 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
     L = ["# Agent benchmark", "",
          f"- Tasks: {len(tasks)} ({', '.join(t.key for t in tasks)})",
          f"- Attempts per task: {attempts}",
-         f"- Limits: {max_steps} steps, {WALL_S}s wall clock, {CMD_TIMEOUT}s per command",
+         f"- Limits: {max_steps} steps, {wall_s}s wall clock, {CMD_TIMEOUT}s per command",
          "- Score = fraction of attempts where the task's check passed and the model "
          "ended the loop itself."]
     if any(isinstance(t, AgentTask) for t in tasks):
@@ -360,6 +361,10 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=300, help="per model call timeout (s)")
     ap.add_argument("--max-steps", type=positive_int, default=30,
                     help="model calls allowed per attempt (default 30)")
+    ap.add_argument("--wall-clock", type=positive_int, default=WALL_S, metavar="SECONDS",
+                    help=f"wall clock allowed per attempt (default {WALL_S}). Raise it for "
+                         "a slow model, so slowness is not scored as failure. It applies "
+                         "to every model in the run and is printed in the summary.")
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="off",
                     help="Thinking mode (default off)")
     add_seed_arg(ap)
@@ -386,7 +391,8 @@ def main() -> int:
     print(f"Run dir: {rel_path(run_dir)}")
     print(f"Tasks:   {', '.join(keys)}  ({len(tasks)} × {args.attempts} = {total}/model)")
     print(f"Models:  {', '.join(args.models)}")
-    print(f"Limits:  {args.max_steps} steps, {WALL_S}s wall clock, {CMD_TIMEOUT}s per command")
+    print(f"Limits:  {args.max_steps} steps, {args.wall_clock}s wall clock, "
+          f"{CMD_TIMEOUT}s per command")
     if needs_sandbox:
         print("Sandbox: bwrap (read-only /usr, no network, no $HOME, no host environment)")
     print()
@@ -401,7 +407,8 @@ def main() -> int:
         for task in tasks:
             for n in range(1, args.attempts + 1):
                 r = run_attempt(model, task, n, args.attempts, args.timeout, args.thinking,
-                                served[model], args.max_steps, mdir, args.seed)
+                                served[model], args.max_steps, mdir, args.seed,
+                                wall_s=args.wall_clock)
                 streak = streak + 1 if "exc" in r else 0
                 if "exc" in r:
                     after_failure(resolve_model(model)[0], r["exc"], streak)
@@ -409,7 +416,7 @@ def main() -> int:
         results[model] = rs
         print(f"  -> {sum(1 for r in rs if r['passed'])}/{len(rs)} passed\n")
 
-    write_summary(run_dir, results, tasks, args.attempts, args.max_steps)
+    write_summary(run_dir, results, tasks, args.attempts, args.max_steps, args.wall_clock)
     return 0
 
 

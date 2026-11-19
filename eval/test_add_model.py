@@ -405,7 +405,38 @@ case "$FAKE_MODE" in
   silent)
     ;;  # prints nothing, never becomes ready: the timeout case
 esac
-while true; do sleep 1; done
+# After loading, the real server listens on --port. The speed measurement needs
+# that, so the fake answers /health and one chat completion. FAKE_SPEED is the
+# generation speed it reports: a number, "missing" for a reply with no timings,
+# "error" for a 500, or "down" for a server that never listens.
+port=""; prev=""
+for a in "$@"; do [ "$prev" = "--port" ] && port="$a"; prev="$a"; done
+if [ "${FAKE_SPEED:-40}" = "down" ] || [ "$FAKE_MODE" = "silent" ] || [ -z "$port" ]; then
+  while true; do sleep 1; done
+fi
+exec python3 - "$port" <<'PYFAKE'
+import http.server, json, os, sys
+speed = os.environ.get("FAKE_SPEED", "40")
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def do_GET(self):
+        self._send(200, {"status": "ok"})
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        if os.environ.get("FAKE_POSTS"):
+            open(os.environ["FAKE_POSTS"], "a").write(raw + "\n")
+        if speed == "error":
+            return self._send(500, {"error": "boom"})
+        reply = {"choices": [{"message": {"role": "assistant", "content": "text"}}]}
+        if speed != "missing":
+            reply["timings"] = {"predicted_n": 128, "predicted_per_second": float(speed)}
+        self._send(200, reply)
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PYFAKE
 """
 
 
@@ -580,6 +611,76 @@ class ProbeFitTests(AddModelTestCase):
         left = subprocess.run(["pgrep", "-f", "FAKE_MODE|llama-server -m"],
                               capture_output=True, text=True)
         self.assertNotIn(str(self.bin), left.stdout)
+
+    # --- the speed floor ------------------------------------------------------
+    # Casey, 2026-11-19: a model under 20 tok/s is not a candidate. qwen38, a
+    # dense 27B model, was scaffolded and spike-tested before anyone measured
+    # that it generates at 6.7 tok/s.
+
+    def speed_run(self, speed: str, name: str = "paced", extra: dict | None = None):
+        self.body_file = Path(self.tmp.name) / "body.jsonl"
+        # Its own file each time: a GGUF that already has a builder is refused.
+        write_gguf(self.gguf_dir / f"{name}.gguf")
+        return self.probe_run("spill", f"{name}\n", f"{name}.gguf",
+                              {"FAKE_SPEED": speed, "FAKE_POSTS": str(self.body_file),
+                               "SPEED_TIMEOUT": "5", **(extra or {})})
+
+    def test_model_above_the_floor_is_added_with_its_speed_recorded(self):
+        r = self.speed_run("43.2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("speed:     43.2 tok/s", r.stdout)
+        self.assertNotIn("WARNING", r.stdout + r.stderr)
+        self.assertIn("# Speed at probe time: 43.2 tok/s generation, thinking off (floor 20).",
+                      self.builder("paced"))
+
+    def test_model_below_the_floor_gets_a_warning_and_is_still_written(self):
+        r = self.speed_run("6.7")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("speed:     6.7 tok/s", r.stdout)
+        self.assertIn("WARNING: 6.7 tok/s is below the 20 tok/s floor", r.stderr)
+        self.assertIn("build-paced", r.stderr)
+        self.assertIn("# Speed at probe time: 6.7 tok/s generation, thinking off. "
+                      "BELOW the 20 tok/s floor.", self.builder("paced"))
+
+    def test_exactly_the_floor_passes_and_just_under_it_warns(self):
+        at = self.speed_run("20", name="atfloor")
+        self.assertNotIn("WARNING", at.stdout + at.stderr)
+        under = self.speed_run("19.9", name="under")
+        self.assertIn("WARNING: 19.9 tok/s is below the 20 tok/s floor", under.stderr)
+
+    def test_unmeasured_speed_is_a_warning_and_never_read_as_fast(self):
+        for speed, extra in (("missing", {}), ("error", {}), ("down", {"FIT_TIMEOUT": "4"})):
+            with self.subTest(speed):
+                name = f"blind{speed}"
+                r = self.speed_run(speed, name=name, extra=extra)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("speed:     not measured", r.stdout)
+                self.assertIn("WARNING: the generation speed was not measured", r.stderr)
+                self.assertIn("# Speed not measured at probe time", self.builder(name))
+                self.assertNotIn("tok/s generation", self.builder(name))
+
+    def test_split_is_still_pinned_when_the_speed_is_low_or_unknown(self):
+        for speed in ("6.7", "error"):
+            with self.subTest(speed):
+                name = "kept" + speed.replace(".", "")
+                self.speed_run(speed, name=name)
+                self.assertIn("'n-cpu-moe = 21'", self.builder(name))
+
+    def test_speed_request_is_one_short_untooled_call_with_thinking_off(self):
+        self.speed_run("40")
+        bodies = [json.loads(ln) for ln in self.body_file.read_text().splitlines()]
+        self.assertEqual(len(bodies), 1)
+        body = bodies[0]
+        self.assertEqual(body["max_tokens"], 128)
+        self.assertIs(body["stream"], False)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual([m["role"] for m in body["messages"]], ["user"])
+        self.assertNotIn("tools", body)
+
+    def test_no_probe_says_the_speed_was_not_measured(self):
+        r = self.run_add_model(stdin="unprobed\n", args=["--no-probe", "free-plain.gguf"])
+        self.assertIn("speed:     not measured (--no-probe)", r.stdout)
+        self.assertNotIn("Speed at probe time", self.builder("unprobed"))
 
     def test_no_probe_flag_skips_the_probe_entirely(self):
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_MODE": "spill",
@@ -849,6 +950,13 @@ class RefitTests(AddModelTestCase):
         self.assertIn("pinned n-cpu-moe = 30, the fitter now picks n-cpu-moe = 21", r.stdout)
         self.assertIn("Changed", r.stdout)
         self.assertIn("locked", r.stdout)
+
+    def test_refit_does_not_measure_speed(self):
+        posts = Path(self.tmp.name) / "posts.jsonl"
+        r = self.refit("spill", "moe", env={"FAKE_POSTS": str(posts)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(posts.exists(), "a refit sent a generation request")
+        self.assertNotIn("speed", r.stdout)
 
     def test_refit_writes_nothing(self):
         before = self.tree()

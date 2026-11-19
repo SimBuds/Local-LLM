@@ -1140,6 +1140,10 @@ repos, and one ended in a colon with no template after it.)
   passed the spike test on 2026-11-09: 5 of 5 cycles at 2961 to 3002 MiB of other
   GPU use, about 1.07 GB still free at peak. Details in `TESTING.md`, *Spike test
   of freedom*. (2026-11-09)
+  `nemotron` is pinned at 52, not the 48 the fitter chose, by Casey's decision
+  on 2026-11-19. At 48 it failed the spike test 0 of 5, because the fitter left
+  no room for the MTP draft context. At 52 it passed 5 of 5 with about 2.3 GB
+  free at peak. Details in `TESTING.md`, *nemotron added*. (2026-11-19)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and

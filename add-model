@@ -62,6 +62,17 @@ LLM_URL = os.environ.get("LLM_URL", "http://localhost:8080")
 # wedged probe fails instead of hanging.
 FIT_TIMEOUT = int(os.environ.get("FIT_TIMEOUT", "300"))
 
+# A model must generate at least this fast to be a candidate for the lineup
+# (Casey, 2026-11-19). The probe measures it and warns below it. qwen38, a dense
+# 27B model with 56 of 66 layers on the CPU, was scaffolded and spike-tested
+# before anyone measured that it generates at 6.7 tok/s.
+MIN_TOK_S = 20.0
+SPEED_TOKENS = 128
+SPEED_PROMPT = "Explain how a hash table works, in plain prose, for a new programmer."
+# Seconds for the one speed request. 128 tokens from a model under 1 tok/s still
+# fits, and anything slower is reported as not measured.
+SPEED_TIMEOUT = int(os.environ.get("SPEED_TIMEOUT", "300"))
+
 
 def die(msg: str) -> None:
     sys.exit(f"ERROR: {msg}")
@@ -279,6 +290,52 @@ class Fit:
 
     def __init__(self, key: str = "", n: str = "", line: str = "", note: str = ""):
         self.key, self.n, self.line, self.note = key, n, line, note
+        # Generation speed at the fitted split: tok/s, or None with the reason
+        # in `unmeasured`. Left at None/"" when no measurement was asked for.
+        self.tok_s: float | None = None
+        self.unmeasured = ""
+
+
+def measure_speed(proc: subprocess.Popen, port: int, deadline: float) -> tuple[float | None, str]:
+    """Generation tok/s from one short request to the probe server.
+
+    Returns (speed, "") or (None, why not). The server is the one the fit probe
+    started, so the speed is measured at the split about to be pinned. Thinking
+    is off and no system prompt is sent: this is the raw speed the 20 tok/s floor
+    is stated in, the figure run-speed.py reports.
+    """
+    base = f"http://127.0.0.1:{port}"
+    # Straight to the probe server: a proxy set in the environment has no
+    # business between this script and a port it opened on localhost.
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    while True:  # the offload line comes before the server is ready to answer
+        if proc.poll() is not None:
+            return None, "the probe server exited before it could answer"
+        try:
+            with direct.open(f"{base}/health", timeout=5) as resp:
+                if resp.status == 200:
+                    break
+        except (urllib.error.URLError, OSError):
+            pass
+        if time.monotonic() >= deadline:
+            return None, "the probe server did not become ready in time"
+        time.sleep(1)
+    body = json.dumps({
+        "messages": [{"role": "user", "content": SPEED_PROMPT}],
+        "max_tokens": SPEED_TOKENS, "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(f"{base}/v1/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with direct.open(req, timeout=SPEED_TIMEOUT) as resp:
+            reply = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, f"the speed request failed ({e})"
+    speed = (reply.get("timings") or {}).get("predicted_per_second")
+    if not isinstance(speed, (int, float)) or speed <= 0:
+        return None, "the reply carried no generation timing"
+    return float(speed), ""
 
 
 def shared_settings() -> dict[str, str]:
@@ -300,8 +357,11 @@ def shared_settings() -> dict[str, str]:
     return settings
 
 
-def probe_fit(gguf: Path, settings: dict[str, str]) -> Fit:
+def probe_fit(gguf: Path, settings: dict[str, str], speed: bool = False) -> Fit:
     """Load the model once with llama.cpp's fitter and read what it pushed off the GPU.
+
+    With `speed`, the same loaded server also answers one short request and the
+    generation speed is recorded on the Fit. A refit does not ask for it.
 
     `settings` are what the router serves the model with: server.ini's [*] for a
     new model, its merged preset section for a refit. Only PROBE_FLAGS and
@@ -319,8 +379,9 @@ def probe_fit(gguf: Path, settings: dict[str, str]) -> Fit:
     # cache twice the one the router serves. Callers check it, this is the guard.
     ctx, ub, spec = settings["ctx-size"], settings.get("ubatch-size"), settings.get("spec-type")
 
+    port = free_port()
     cmd = ["llama-server", "-m", str(gguf), "-np", "1", "--no-mmproj", "--fit-target", "2048",
-           "--port", str(free_port()), "-lv", "4"]
+           "--port", str(port), "-lv", "4"]
     for key, flag in PROBE_FLAGS:
         if settings.get(key):
             cmd += [flag, settings[key]]
@@ -359,6 +420,11 @@ def probe_fit(gguf: Path, settings: dict[str, str]) -> Fit:
             if time.monotonic() >= deadline:
                 die(f"the fit probe timed out after {FIT_TIMEOUT}s. Read the log: {log}")
             time.sleep(1)
+        tok_s, unmeasured = (None, "")
+        if speed:
+            print(f"  Measuring generation speed ({SPEED_TOKENS} tokens, thinking off).")
+            sys.stdout.flush()
+            tok_s, unmeasured = measure_speed(proc, port, deadline)
     finally:
         stop(proc)
 
@@ -390,12 +456,15 @@ def probe_fit(gguf: Path, settings: dict[str, str]) -> Fit:
     # spilling MoE model still reports every layer on the GPU: gemma4-26b prints
     # `offloaded 31/31 layers to GPU` beside `31 layers (20 overflowing)`.
     if overflow:
-        return Fit("n-cpu-moe", overflow, fit_line)
-    if on == total:
-        return Fit(line=fit_line)
-    return Fit("n-gpu-layers", on, fit_line,
-               f"dense model: the fitter kept {on} of {total} layers on the GPU rather "
-               f"than offloading experts")
+        fit = Fit("n-cpu-moe", overflow, fit_line)
+    elif on == total:
+        fit = Fit(line=fit_line)
+    else:
+        fit = Fit("n-gpu-layers", on, fit_line,
+                  f"dense model: the fitter kept {on} of {total} layers on the GPU rather "
+                  f"than offloading experts")
+    fit.tok_s, fit.unmeasured = tok_s, unmeasured
+    return fit
 
 
 # --- choosing the GGUF ------------------------------------------------------
@@ -490,6 +559,12 @@ def builder_text(name: str, gguf: str, mtp: bool, fit: Fit, probed: bool) -> str
                 "# until you add one this model is loaded entirely onto the GPU. Derive it",
                 f"# with ./add-model --refit {name} after make build, then add:",
                 "#   'n-cpu-moe = N'"]
+    if fit.tok_s is not None:
+        verdict = (f" (floor {MIN_TOK_S:g})." if fit.tok_s >= MIN_TOK_S
+                   else f". BELOW the {MIN_TOK_S:g} tok/s floor.")
+        out.append(f"# Speed at probe time: {fit.tok_s:.1f} tok/s generation, thinking off{verdict}")
+    elif fit.unmeasured:
+        out.append(f"# Speed not measured at probe time: {fit.unmeasured}.")
     out.append("LOAD=(")
     if fit.n:
         out.append(f"  '{fit.key} = {fit.n}'")
@@ -649,7 +724,7 @@ def main(argv: list[str]) -> int:
     # Probe before writing: a failed probe must not leave a half-written builder
     # behind for someone to find later and assume was measured.
     settings = {**shared_settings(), **({'spec-type': 'draft-mtp'} if mtp else {})}
-    fit = probe_fit(GGUF_DIR / gguf, settings) if probe else Fit()
+    fit = probe_fit(GGUF_DIR / gguf, settings, speed=True) if probe else Fit()
 
     write_builder(name, builder_text(name, gguf, mtp, fit, probe))
 
@@ -658,6 +733,24 @@ def main(argv: list[str]) -> int:
     print(f"  base:      {gguf}")
     print(f"  MTP:       {'yes (spec-type = draft-mtp)' if mtp else 'no'}")
     print("  samplers:  shared baseline from server.ini [*]")
+    if fit.tok_s is not None:
+        print(f"  speed:     {fit.tok_s:.1f} tok/s generation, thinking off "
+              f"(floor {MIN_TOK_S:g})")
+        if fit.tok_s < MIN_TOK_S:
+            sys.stdout.flush()  # keep the warning after the lines above when piped
+            print(f"\nWARNING: {fit.tok_s:.1f} tok/s is below the {MIN_TOK_S:g} tok/s floor. "
+                  f"This model is too slow to be a candidate for the lineup.\n"
+                  f"  build-{name} was still written. Delete it to drop the model.\n",
+                  file=sys.stderr)
+    elif probe:
+        print(f"  speed:     not measured: {fit.unmeasured}")
+        sys.stdout.flush()
+        print(f"\nWARNING: the generation speed was not measured, so build-{name} has not "
+              f"been checked against the {MIN_TOK_S:g} tok/s floor.\n"
+              f"  Measure it before relying on the model:  ./eval/run-speed.py --models "
+              f"{name}\n", file=sys.stderr)
+    else:
+        print("  speed:     not measured (--no-probe)")
     if fit.n:
         print(f"  split:     {fit.key} = {fit.n}  ({fit.line})")
         print()

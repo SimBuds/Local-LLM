@@ -85,7 +85,7 @@ attempt. It uses the same bubblewrap confinement through the gateway's
   model has touched.
 
 Each attempt is limited to 30 model calls (`--max-steps`), 600 seconds of wall
-clock, and 30 seconds per command. The sandbox has no memory or process-count
+clock (`--wall-clock`), and 30 seconds per command. The sandbox has no memory or process-count
 limit yet.
 
 The agent suite's desk tasks run no model-written code at all. Their tools are
@@ -226,7 +226,7 @@ Runner-specific flags:
 | `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high|max`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 | `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
-| `run-agent.py` | `--tasks ...`, `--max-steps N` (model calls per attempt, default 30), `--thinking auto|on|off` (defaults off) |
+| `run-agent.py` | `--tasks ...`, `--max-steps N` (model calls per attempt, default 30), `--wall-clock SECONDS` (per attempt, default 600, for every model in the run), `--thinking auto|on|off` (defaults off) |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
@@ -1118,6 +1118,110 @@ Findings:
 - **Strict is noisier.** Within-judge spread 0.40 and 0.48/10 against 0.11 for
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
+
+### nemotron added (2026-11-19)
+
+NVIDIA Nemotron 3.5 Lightning 30B-A3B, a sparse model with 31.6B parameters and
+about 3B active. File: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` from
+`bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`, 25.5 GB. Router name
+`nemotron`. It is in the repo's build and is not deployed or benchmarked yet.
+
+`./add-model` at `--fit-target 2048` and 131072 context, with 1,525 MiB held by
+other processes: 54 layers with 48 overflowing, 5,973 MiB used, 2,170 MiB free,
+MTP on, 23.9 tok/s. That clears the 20 tok/s floor.
+
+The fitter's split failed the spike test. With about 3,000 MiB held elsewhere
+the model loaded, and then the MTP draft context could not allocate its 309 MiB
+compute buffer. The fitter does not leave room for it on this model.
+
+Spike tests, five cycles each unless noted:
+
+| `n-cpu-moe` | Result | Free VRAM at peak | Generation |
+|---|---|---|---|
+| 48, the fitter's choice | FAIL, 0 of 5 | out of memory at load | |
+| 50 | PASS, 5 of 5 | 1,200 to 1,236 MiB | 24.6 to 35.5 tok/s |
+| 52 | PASS, 5 of 5 | 2,313 to 2,321 MiB | 24.4 to 28.2 tok/s |
+| 54, one cycle | PASS | 3,004 MiB | 26.3 tok/s |
+
+Casey pinned 52. It leaves about twice the room that 50 does, and speed did not
+fall as more of the model moved to the CPU: the spread between cycles at one
+split is wider than the gap between splits. The spike test was then repeated on
+the built preset at 52:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3001 MiB | 7888 MiB | 2352 MiB | 17.7 s | 29.9 tok/s |
+| 2 | 3680 MiB | 7895 MiB | 2345 MiB | 18.7 s | 28.0 tok/s |
+| 3 | 2980 MiB | 7905 MiB | 2335 MiB | 16.8 s | 25.1 tok/s |
+| 4 | 2973 MiB | 7891 MiB | 2349 MiB | 16.6 s | 26.1 tok/s |
+| 5 | 2980 MiB | 7887 MiB | 2353 MiB | 16.0 s | 28.5 tok/s |
+
+PASS, 5 of 5 with no out-of-memory line.
+
+### Speed floor and the two dense candidates (2026-11-19)
+
+Casey set a floor on the same day: a model must generate at 20 tok/s or more to
+be a candidate. `./add-model` now measures it when a model is added and warns
+below it (README, *Adding A Model*).
+
+| Candidate | Shape | GPU layers | Generation | Outcome |
+|---|---|---|---|---|
+| `qwen38`, Qwen3.8-27B | dense | 10 of 66 | 6.4 to 7.0 tok/s | ruled out |
+| `granite30`, Granite 4.2 30B | dense | 12 of 66 | 3.0 tok/s | ruled out |
+| `nemotron`, Nemotron 3.5 Lightning 30B-A3B | sparse | all, with 52 of 54 expert layers on the CPU | 24 to 30 tok/s | kept |
+
+Both dense builders were deleted. On this 10 GB card only a sparse model near 3B
+active, or a model small enough to sit on the GPU, clears the floor. The `qwen38`
+measurements below are kept as the record of why.
+
+### qwen38 (Qwen3.8-27B) added as a candidate (2026-11-19)
+
+Qwen3.8-27B is a dense 27B model, tried because accuracy and tool use matter
+more than speed for the coding, agent, content, and teaching roles. File:
+`Qwen3.8-27B-UD-Q4_K_M.gguf` from `unsloth/Qwen3.8-27B-GGUF`, 16.6 GB. Router
+name `qwen38`, scaffolded by `./add-model`. It was served from a scratch router
+on port 8081, never deployed, and removed the same day for failing the speed
+floor above.
+
+Fit at `--fit-target 2048` and 131072 context, with 1,818 MiB held by other
+processes: 10 of 66 layers on the GPU, 5,722 MiB used, 2,136 MiB free. The file
+carries MTP heads, so speculative decoding is on.
+
+Measured on build 12439 through the scratch router, thinking off:
+
+| | Value |
+|---|---|
+| Load time | 21.3 s |
+| Generation | 6.4 to 7.0 tok/s |
+| Prompt ingest | 433 to 473 tok/s |
+| GPU use with the model loaded | 7,905 MiB in total, desktop included |
+| System RAM | 22 GB used of 31, 8 GB available |
+
+Spike test, `./eval/spike-test.py qwen38`:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 2983 MiB | 9086 MiB | 1154 MiB | 14.2 s | 6.4 tok/s |
+| 2 | 2983 MiB | 9389 MiB | 851 MiB | 12.6 s | 5.7 tok/s |
+| 3 | 2994 MiB | 8693 MiB | 1547 MiB | 11.0 s | 6.1 tok/s |
+| 4 | 2508 MiB | 8606 MiB | 1634 MiB | 11.5 s | 6.1 tok/s |
+| 5 | 2510 MiB | 8606 MiB | 1634 MiB | 10.7 s | 5.8 tok/s |
+
+PASS, 5 of 5 cycles with no out-of-memory line. Other GPU use fell to about
+2,500 MiB for the last two cycles, under the 3,000 MiB target, so three cycles
+ran at the full hold.
+
+What the speed means for the suites:
+
+- At about 6.5 tok/s a 700-token answer takes close to two minutes. The coding,
+  content, tutor, learn, and persona runners cut a model call at 120 seconds by
+  default, so `qwen38` runs need `--timeout 600` or its slowness is scored as
+  failure.
+- `qwen` generates at about 64 tok/s and `gemma` at about 41, so `qwen38` is 6
+  to 10 times slower.
+- `run-speed.py` labels `qwen38` "all GPU". It reads only the MoE split, so a
+  dense model with some layers on the CPU is mislabelled. The pinned split
+  above is the truth.
 
 ### Desk tasks, first measurement (2026-11-19)
 

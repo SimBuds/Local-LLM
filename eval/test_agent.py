@@ -530,6 +530,17 @@ class DeskAttemptTests(unittest.TestCase):
         self.assertEqual(saved["reason"], "pass")
         self.assertEqual(saved["messages"][0]["content"], self.task.instruction)
 
+    def test_attempt_stops_at_its_own_wall_clock_limit(self):
+        # A limit already spent stops the loop before the first model call, and
+        # the same script passes under the default limit.
+        script = self.turns(self.task.solution) + [done()]
+        with mock.patch.object(agent, "chat", side_effect=list(script)) as chat:
+            r = agent.run_attempt("lite", self.task, 1, 1, 300, "off", N_CTX, 15, self.tmp,
+                                  wall_s=0)
+        self.assertEqual((r["reason"], r["steps"], chat.call_count), ("wall-clock", 0, 0))
+        r, _ = self.attempt(list(script))
+        self.assertEqual(r["reason"], "pass")
+
     def test_model_that_replies_without_acting_fails(self):
         r, _ = self.attempt([done("I have cancelled it for you.")])
         self.assertEqual((r["passed"], r["reason"]), (False, "tests-failed"))
@@ -730,12 +741,13 @@ class MainTests(unittest.TestCase):
             preflight.assert_not_called()
             self.assertEqual(list(Path(td).iterdir()), [])
 
-    def run_main(self, keys: list[str]) -> tuple[str, mock.Mock]:
+    def run_main(self, keys: list[str], *extra: str) -> tuple[str, mock.Mock]:
         """main() with a model that replies at once and never calls a tool."""
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
+        self.out_root = Path(td.name)
         argv = ["run-agent.py", "--models", "lite", "--tasks", *keys, "--attempts", "1",
-                "--out-root", td.name]
+                "--out-root", td.name, *extra]
         with mock.patch.object(agent, "preflight"), \
                 mock.patch.object(agent, "require_ctx", return_value={"lite": N_CTX}), \
                 mock.patch.object(agent, "require_sandbox") as probe, \
@@ -756,6 +768,28 @@ class MainTests(unittest.TestCase):
         printed, probe = self.run_main(["desk_forbidden", "fix_failing_test"])
         probe.assert_called_once_with()
         self.assertIn("Sandbox: bwrap", printed)
+
+    def test_wall_clock_defaults_to_600_seconds(self):
+        printed, _ = self.run_main(["desk_forbidden"])
+        self.assertIn("600s wall clock", printed)
+        summary = next(self.out_root.rglob("summary.md")).read_text(encoding="utf-8")
+        self.assertIn("600s wall clock", summary)
+
+    def test_wall_clock_flag_reaches_the_banner_the_summary_and_the_attempt(self):
+        with mock.patch.object(agent, "run_attempt", wraps=agent.run_attempt) as attempt:
+            printed, _ = self.run_main(["desk_forbidden"], "--wall-clock", "1800")
+        self.assertIn("1800s wall clock", printed)
+        self.assertNotIn("600s wall clock", printed)
+        summary = next(self.out_root.rglob("summary.md")).read_text(encoding="utf-8")
+        self.assertIn("1800s wall clock", summary)
+        self.assertEqual(attempt.call_args.kwargs["wall_s"], 1800)
+
+    def test_wall_clock_must_be_a_positive_whole_number(self):
+        for bad in ("0", "-5", "ten"):
+            with self.subTest(bad), mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                with mock.patch.object(sys, "argv", ["run-agent.py", "--models", "lite",
+                                                     "--wall-clock", bad]):
+                    agent.main()
 
 
 if __name__ == "__main__":
