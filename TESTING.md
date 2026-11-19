@@ -99,7 +99,7 @@ All runners write to `eval/runs/<UTC>/`.
 | `run-code.py` | Real pass@1 against hidden Python asserts | yes | 5 per task | Medium-high for the covered task shapes |
 | `run-learn.py` | Code + explanation, leave-one-out judge panel (median of `--judge-repeats` calls per judge) | yes | 3 per task | Medium because explanation quality is judge-scored; the code gate half is deterministic |
 | `run-tutor.py` | Leak-gated tutoring guidance, same judge panel | yes | 3 per task | Medium because teaching quality is judge-scored; the leak gate is deterministic execution and does not depend on judges |
-| `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
+| `run-json.py` | Schema-constrained JSON + long-context fact recall, on 7 single-passage tasks and 3 multi-hop tasks | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
 | `run-tools.py` | Tool calling: right tool, right arguments, no call when none fits, and what the model does with the result it gets back | no | 3 per task |
 | `run-agent.py` | Multi-step tasks with a real shell: hidden tests pass and the model ends the loop itself | yes, shell commands | 2 per task | Medium for the eight task shapes. Each task's hidden tests are checked against two correct solutions and one cheat. Two attempts per task is a gate, not a measurement |
 | `run-persona.py` | Prompt-stack compliance: identity, skill-bucket honesty, `Unverified:`, output shape | no | 5 per task | Medium-high for the rule shapes encoded; regex scorers miss novel phrasings |
@@ -1164,6 +1164,43 @@ Findings:
 - `gemma` crashed twice during its high-pressure cells, at 08:58:58 and 09:04:21,
   both Xid 31. The first was retried. The second was the last call of the sweep,
   so `gemma` has one attempt at ledger 6x10.
+
+**Ledger task changed and measured again, the same day.** Because of the
+arithmetic finding, `ledger_sum` became `ledger_match`: the model lists the
+record number of every matching record, and is checked for none missed and none
+extra. Same settings as above, 88 results, no failed call and no crash.
+
+| Model | Pressure | 2x3 | 3x5 | 4x8 | 6x10 | 12x24 | 30x60 |
+|---|---|---|---|---|---|---|---|
+| `lite` | normal | 2 | 2 | 2 | 2 | 2 | 2 |
+| `lite` | high | 2 | 2 | 2 | 0 | 0 | not run |
+| `qwen` | normal | 2 | 2 | 2 | 2 | 2 | 2 |
+| `qwen` | high | 2 | 2 | 0 | 2 | 0 | not run |
+| `freedom` | normal | 2 | 2 | 2 | 2 | 2 | 0 |
+| `freedom` | high | 2 | 2 | 2 | 2 | 2 | not run |
+| `gemma` | normal | 2 | 2 | 2 | 2 | 2 | 2 |
+| `gemma` | high | 2 | 2 | 0 | 0 | 0 | not run |
+
+- With the arithmetic gone the task is easy at about 6,600 tokens. Every model
+  finds 12 records among 24 others, and three of four find 30 among 60.
+- At about 48,000 tokens it separates the models. `freedom` passes every size,
+  and `lite`, `qwen`, and `gemma` each fail at 12x24 and at one or two smaller
+  sizes.
+- Fifteen of the sixteen wrong answers missed records and listed no wrong one.
+  The exception was `lite` at high 6x10, which also listed records that did not
+  match.
+- So `ledger_match` is a long-context task. At normal pressure it only confirms
+  the model can do the job, and the signal is at `--context-pressure high`.
+- `freedom` is the model that lost a chain size to context length above, and it
+  is the one that holds up here. The two tasks do not rank the models the same
+  way.
+- The two attempts in a cell agreed on pass or fail in every cell.
+
+**Registered the same day** in the default task set as `chain_trace_2x3`,
+`chain_trace_3x3`, and `ledger_match_12x24`. The size is part of each key, so a
+later size change shows up as a different task. From the next pass on, the JSON
+score covers 10 tasks and does not compare with the 7-task scores before it. The
+per-task table in each summary keeps the original seven comparable.
 
 ### JSON fact checks were never counted (2026-11-19)
 

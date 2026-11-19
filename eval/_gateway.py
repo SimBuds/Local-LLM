@@ -19,6 +19,7 @@ import math
 import os
 import re
 import resource
+import secrets
 import shutil
 import subprocess
 import sys
@@ -700,10 +701,15 @@ def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:
     wall-clock timeout and a fresh CWD, which is NOT isolation: run trusted
     models/tasks only. Runners print sandbox_note() so the active mode is on the
     record for every run.
+
+    A pass needs exit 0 and a random token printed by a line added after the
+    source. Exit 0 alone is not enough: code that calls sys.exit(0) before the
+    appended asserts would pass without running them.
     """
+    token = secrets.token_hex(16)
     with tempfile.TemporaryDirectory() as td:
         prog = Path(td) / "sol.py"
-        prog.write_text(source, encoding="utf-8")
+        prog.write_text(f"{source}\nprint({token!r})\n", encoding="utf-8")
         argv = [sys.executable, str(prog)]
         if _sandbox_works():
             argv = _bwrap_argv(td) + argv
@@ -714,7 +720,8 @@ def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:
         except subprocess.TimeoutExpired:
             return False, "timeout"
     if proc.returncode == 0:
-        return True, "pass"
+        reached_end = proc.stdout.splitlines()[-1:] == [token]
+        return (True, "pass") if reached_end else (False, "exited-early")
     err = (proc.stderr or proc.stdout).strip().splitlines()
     last = err[-1] if err else f"exit {proc.returncode}"
     if "AssertionError" in last:

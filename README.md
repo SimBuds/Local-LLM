@@ -725,7 +725,12 @@ Single runners, for targeted sweeps:
   system prompt, not the prompt stack.
 - **`run-json.py`** is the structured-output test Jobhunt and SEO-LLM depend on.
   It constrains decode with a JSON schema, buries facts in a long document, and
-  scores schema conformance and fact recall. It first checks that every model
+  scores schema conformance and fact recall. Seven tasks each need one buried
+  passage. Three more, added 2026-11-19, need several passages combined:
+  `chain_trace_2x3` and `chain_trace_3x3` follow chains of sites that share an
+  access code, and `ledger_match_12x24` lists every expense record of one kind
+  among near misses. The chain tasks separate the models in a default run. The
+  ledger task separates them at `--context-pressure high`. It first checks that every model
   serves at least `--num-ctx` (default 65536, room for its `high` preset's
   largest prompt of 51,307 tokens) and aborts otherwise. SEO-LLM requires 32768,
   and Jobhunt sizes its prompts to fit 32768.

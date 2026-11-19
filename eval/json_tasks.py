@@ -427,7 +427,7 @@ NO_INFER = JsonTask(
 # --- multi-hop tasks (generated, sized by argument) ---------------------------
 # The seven tasks above each need one planted passage, and every model scores
 # 100% on them. These two need several passages combined: a chain followed link
-# by link, or a set of records counted and summed. Their size is an argument
+# by link, or every record of one kind found among near misses. Their size is an argument
 # because the useful size is the one where models land between 0% and 100%,
 # which only a measurement can find. Documents are built from a seed fixed by
 # the arguments, so the same size is the same document on every run.
@@ -464,7 +464,7 @@ def chain_trace_task(hops: int, chains: int) -> JsonTask:
         asked.append((sites[-1].lower().replace(" ", "_"), code))
     rng.shuffle(statements)
     return JsonTask(
-        key="chain_trace",
+        key=f"chain_trace_{hops}x{chains}",
         instruction=(
             "The document below has site register entries scattered among other "
             "text. Some sites state their own access code. Others say only that "
@@ -489,52 +489,64 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "Augu
            "September", "October", "November", "December"]
 
 
-def ledger_sum_task(records: int, distractors: int) -> JsonTask:
-    """`records` expense records to count and total, among `distractors` others.
+def _record_numbers(parsed: Any) -> set[int] | None:
+    """The record numbers an answer lists, or None when it lists none properly."""
+    listed = parsed.get("record_numbers") if isinstance(parsed, dict) else None
+    if not isinstance(listed, list) or not all(type(n) is int for n in listed):
+        return None
+    return set(listed)
+
+
+def ledger_match_task(records: int, distractors: int) -> JsonTask:
+    """`records` expense records to find among `distractors` others.
 
     One office and one category are asked for. Distractors differ from them in
     the category, the office, or both, in turn, so matching on one field alone
-    gives a wrong count and a wrong total.
+    lists a wrong record. The answer is the list of record numbers. An earlier
+    version asked for a count and a total, and the 2026-11-19 sweep showed the
+    models finding the records and then adding them up wrong, which scored
+    arithmetic and not recall (TESTING.md, *Multi-hop JSON task sweep*).
     """
     if records < 1 or distractors < 0:
-        raise ValueError("ledger_sum needs at least 1 record and no fewer than 0 distractors")
-    rng = random.Random(f"ledger_sum:{records}:{distractors}")
+        raise ValueError("ledger_match needs at least 1 record and no fewer than 0 distractors")
+    rng = random.Random(f"ledger_match:{records}:{distractors}")
     office, category = rng.choice(_OFFICES), rng.choice(_EXPENSES)
     other_offices = [o for o in _OFFICES if o != office]
     other_categories = [c for c in _EXPENSES if c != category]
-    while True:
-        amounts = rng.sample(range(120, 4900), records + distractors)
-        total = sum(amounts[:records])
-        if total not in amounts[records:]:  # no single distractor reads as the total
-            break
-    rows = [(office, amount, category) for amount in amounts[:records]]
-    for i, amount in enumerate(amounts[records:]):
-        rows.append([(office, amount, rng.choice(other_categories)),
-                     (rng.choice(other_offices), amount, category),
-                     (rng.choice(other_offices), amount, rng.choice(other_categories))][i % 3])
+    rows = [(office, category)] * records
+    for i in range(distractors):
+        rows.append([(office, rng.choice(other_categories)),
+                     (rng.choice(other_offices), category),
+                     (rng.choice(other_offices), rng.choice(other_categories))][i % 3])
     rng.shuffle(rows)
     ids = rng.sample(range(100, 1000), len(rows))
+    wanted = {rid for rid, row in zip(ids, rows) if row == (office, category)}
+
+    def none_missed(parsed: Any) -> bool:
+        listed = _record_numbers(parsed)
+        return listed is not None and wanted <= listed
+
+    def none_extra(parsed: Any) -> bool:
+        listed = _record_numbers(parsed)
+        return listed is not None and listed <= wanted
+
     return JsonTask(
-        key="ledger_sum",
+        key=f"ledger_match_{records}x{distractors}",
         instruction=(
-            "The document below has expense records scattered among other text. "
-            f"Count the records where the {office} office spent money on {category}, "
-            "and add up their amounts in CAD. Ignore records for other offices and "
-            "records for other kinds of spending."
+            "The document below has numbered expense records scattered among other "
+            "text. List the record number of every record where the "
+            f"{office} office spent money on {category}. Leave out records for "
+            "other offices and records for other kinds of spending."
         ),
-        needles=[f"EXPENSE RECORD {rid}: The {o} office spent {amount} CAD on {c} in "
-                 f"{rng.choice(_MONTHS)}." for rid, (o, amount, c) in zip(ids, rows)],
+        needles=[f"EXPENSE RECORD {rid}: The {o} office spent {rng.randrange(120, 4900)} "
+                 f"CAD on {c} in {rng.choice(_MONTHS)}." for rid, (o, c) in zip(ids, rows)],
         base_words=3000,
         schema={"type": "object",
-                "properties": {"matching_records": {"type": "integer"},
-                               "total_cad": {"type": "integer"}},
-                "required": ["matching_records", "total_cad"]},
-        checks=[
-            (f"matching_records={records}",
-             lambda p: isinstance(p, dict) and p.get("matching_records") == records),
-            (f"total_cad={total}",
-             lambda p: isinstance(p, dict) and p.get("total_cad") == total),
-        ],
+                "properties": {"record_numbers": {"type": "array",
+                                                  "items": {"type": "integer"}}},
+                "required": ["record_numbers"]},
+        checks=[(f"all {records} matching records listed", none_missed),
+                ("no other record listed", none_extra)],
     )
 
 
@@ -542,5 +554,9 @@ TASKS: dict[str, JsonTask] = {
     t.key: t for t in (
         JD_EXTRACT, NEEDLE_RECALL, DECLINE_GUARD,
         CONFLICTING_CORRECTION, ENUM_CLASSIFY, MULTI_EXTRACT, NO_INFER,
+        # Sizes from the 2026-11-19 sweep (TESTING.md, *Multi-hop JSON task
+        # sweep*). chain 2x3 and 3x3 split the models at normal length. The
+        # ledger reads 100% at normal length and splits them at high pressure.
+        chain_trace_task(2, 3), chain_trace_task(3, 3), ledger_match_task(12, 24),
     )
 }

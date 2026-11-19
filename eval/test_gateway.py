@@ -650,6 +650,55 @@ class AfterFailureTests(GatewayCase):
         self.assertTrue(issubclass(gw.ModelCrashed, SystemExit))
 
 
+class RunProgramTests(unittest.TestCase):
+    """run_program on real programs. It scores the coding suite, the learn code
+    gate, and the tutor leak check, so a wrong pass here is a wrong published
+    number in three places."""
+
+    TESTS = "\n# --- hidden tests ---\nassert add(2, 2) == 4\n"
+    GOOD = "def add(a, b):\n    return a + b\n"
+
+    def test_program_that_passes_its_asserts_passes(self):
+        self.assertEqual(gw.run_program(self.GOOD + self.TESTS, 10), (True, "pass"))
+
+    def test_failing_assert_is_a_wrong_answer(self):
+        bad = "def add(a, b):\n    return a - b\n"
+        self.assertEqual(gw.run_program(bad + self.TESTS, 10), (False, "wrong-answer"))
+
+    def test_syntax_error_is_reported_as_syntax(self):
+        self.assertEqual(gw.run_program("def add(a, b:\n" + self.TESTS, 10), (False, "syntax"))
+
+    def test_endless_loop_times_out(self):
+        self.assertEqual(gw.run_program("while True:\n    pass\n" + self.TESTS, 1),
+                         (False, "timeout"))
+
+    def test_exiting_zero_before_the_asserts_does_not_pass(self):
+        # Exit 0 alone used to pass, so a wrong answer followed by sys.exit(0)
+        # scored as correct. Closed 2026-11-19.
+        dodge = "import sys\ndef add(a, b):\n    return 0\nsys.exit(0)\n"
+        self.assertEqual(gw.run_program(dodge + self.TESTS, 10), (False, "exited-early"))
+
+    def test_hard_exit_before_the_asserts_does_not_pass(self):
+        dodge = "import os\ndef add(a, b):\n    return 0\nos._exit(0)\n"
+        self.assertEqual(gw.run_program(dodge + self.TESTS, 10), (False, "exited-early"))
+
+    def test_program_that_prints_its_own_output_still_passes(self):
+        chatty = self.GOOD + "print('adding')\n" + self.TESTS + "print('all done')\n"
+        self.assertEqual(gw.run_program(chatty, 10), (True, "pass"))
+
+    def test_source_ending_inside_a_block_still_passes(self):
+        nested = self.GOOD + "if True:\n    assert add(1, 1) == 2"
+        self.assertEqual(gw.run_program(nested, 10), (True, "pass"))
+
+    def test_empty_source_passes(self):
+        self.assertEqual(gw.run_program("", 10), (True, "pass"))
+
+    def test_source_is_run_as_given_with_nothing_added_to_the_callers_copy(self):
+        source = self.GOOD + self.TESTS
+        gw.run_program(source, 10)
+        self.assertEqual(source, self.GOOD + self.TESTS)
+
+
 class SandboxExecTests(unittest.TestCase):
     """sandbox_exec against real bwrap. No model, no network."""
 

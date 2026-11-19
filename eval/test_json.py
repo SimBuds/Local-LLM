@@ -234,10 +234,35 @@ class LedgerMatchTests(unittest.TestCase):
 
 
 class MultiHopRegistrationTests(unittest.TestCase):
-    def test_generators_are_not_in_the_default_task_set_yet(self):
-        self.assertEqual(list(jt.TASKS), ["jd_extract", "needle_recall", "decline_guard",
-                                          "conflicting_correction", "enum_classify",
-                                          "multi_extract", "no_infer"])
+    """Sizes chosen from the 2026-11-19 sweep (TESTING.md, *Multi-hop JSON task
+    sweep*). A size change is a different task, so the size is in the key."""
+
+    ORIGINAL = ["jd_extract", "needle_recall", "decline_guard", "conflicting_correction",
+                "enum_classify", "multi_extract", "no_infer"]
+
+    def test_three_sized_tasks_follow_the_original_seven(self):
+        self.assertEqual(list(jt.TASKS), self.ORIGINAL + [
+            "chain_trace_2x3", "chain_trace_3x3", "ledger_match_12x24"])
+
+    def test_registered_tasks_are_the_generators_at_those_sizes(self):
+        for key, built in (("chain_trace_2x3", jt.chain_trace_task(2, 3)),
+                           ("chain_trace_3x3", jt.chain_trace_task(3, 3)),
+                           ("ledger_match_12x24", jt.ledger_match_task(12, 24))):
+            with self.subTest(key):
+                task = jt.TASKS[key]
+                self.assertEqual((task.key, task.needles, task.instruction, task.schema),
+                                 (key, built.needles, built.instruction, built.schema))
+
+    def test_every_generated_size_names_itself_in_its_key(self):
+        self.assertEqual(jt.chain_trace_task(4, 3).key, "chain_trace_4x3")
+        self.assertEqual(jt.ledger_match_task(6, 10).key, "ledger_match_6x10")
+
+    def test_default_run_builds_every_task_with_all_its_needles(self):
+        built = rj.resolve_tasks(list(jt.TASKS.values()), "normal", "default")
+        self.assertEqual([t.key for t in built], list(jt.TASKS))
+        for task, source in zip(built, jt.TASKS.values()):
+            for needle in source.needles:
+                self.assertIn(needle, task.context)
 
     def test_largest_sizes_fit_the_measured_word_bound_at_max_pressure(self):
         for task in (jt.chain_trace_task(8, 4), jt.ledger_match_task(12, 24)):
