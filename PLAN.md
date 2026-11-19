@@ -150,9 +150,10 @@ Nothing that uses the server may depend on this repo at runtime. That is why
 
 ## Measurement design
 
-The suites answer five questions: content-instruction following, code
-correctness, teaching without leaking, driving an agent loop (`run-tools.py`,
-added 2026-09-17), and whether the prompt stack actually holds. The last is the
+The suites answer six questions: content-instruction following, code
+correctness, teaching without leaking, making one tool call correctly
+(`run-tools.py`, added 2026-09-17), finishing a multi-step task with a real shell
+(`run-agent.py`, added 2026-11-19), and whether the prompt stack actually holds. The last is the
 odd one out and the reason `run-persona.py` exists: the others measure the base
 model *through* the stack, so a prompt edit that silently breaks a rule passes
 all of them. The stack is what this repo builds, so it gets its own regression
@@ -163,6 +164,17 @@ speed, which says nothing about whether a model calls the right function or uses
 what the function returned. Its scoring is deterministic, and its tool results
 are fixtures rather than live calls, so it stays inside the no-network rule the
 rest of the automated suite follows.
+
+The agent suite exists because the tool suite makes at most two model calls per
+attempt, and the apps that use the router depend on long tool loops. Each task is
+a small project with hidden tests, and a pass needs the tests to pass and the
+model to end the loop itself. The tasks are written for this repo, so no model
+has seen them. Every task carries two correct solutions that must pass its
+hidden tests and one cheat that must fail them, and the tests check behaviour,
+never how the code is written. That is what keeps a hidden test from failing a
+model that is right or passing one that gamed the visible check. The suite sends
+its own system prompt, because the prompt stack is written for chat and not for
+tool loops.
 
 Speed is tracked separately, because a better model that is too slow is not a
 usable local default.
@@ -180,7 +192,9 @@ Two design consequences worth stating plainly:
 Model-generated Python is executed by three runners, confined by bubblewrap since
 2026-07-27 when `bwrap` is available. The fallback is not isolation, it is a bare
 subprocess, and the runner prints which mode is active at startup. That banner is
-the source of truth, not this paragraph.
+the source of truth, not this paragraph. `run-agent.py` runs model-written shell
+commands in the same sandbox and has no fallback: without a working `bwrap` it
+does not start.
 
 ---
 

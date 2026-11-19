@@ -708,12 +708,21 @@ Single runners, for targeted sweeps:
   `memory/user.md` honesty rules about Casey's skill buckets, `Unverified:`
   marking, and output shape. It is the only runner that notices when a prompt
   edit breaks a rule. Scoring is deterministic regex, with no judge.
-- **`run-tools.py`** is the agent test. Each task offers a small tool list with
+- **`run-tools.py`** is the single-call tool test. Each task offers a small tool list with
   distractors and scores the right tool, the right arguments, nothing extra, and
   no call where none fits. Five tasks feed the model's call a canned result and
   score what it does next: inventing an address instead of using the one it
   looked up, answering from memory after a search, or claiming success on an
   error. Every tool result is a fixture, with no network.
+- **`run-agent.py`** is the agent test. The model gets a small project and one
+  `bash` tool, and works in a loop until it says it is done: reading files,
+  running tests, editing code. Eight tasks cover a bug one file away from its
+  failing test, a crash buried in a log, a signature change across five files, a
+  refactor, a module built from a spec, a config migration, an order-dependent
+  test, and a two-bug CLI. Hidden tests the model never sees decide the result,
+  and a pass also needs the model to end the loop itself. Commands really run, so
+  this runner refuses to start without a working `bwrap`. It sends its own short
+  system prompt, not the prompt stack.
 - **`run-json.py`** is the structured-output test Jobhunt and SEO-LLM depend on.
   It constrains decode with a JSON schema, buries facts in a long document, and
   scores schema conformance and fact recall. It first checks that every model
@@ -724,7 +733,7 @@ Single runners, for targeted sweeps:
   Python inside **bubblewrap**: read-only `/usr`, no network, no host PID or IPC
   namespace, no `$HOME`, and writes only to a throwaway CWD. The banner shows the
   mode. Without a working `bwrap` it falls back loudly to a timeout-bounded
-  subprocess. Flags and sandbox details are in [`TESTING.md`](TESTING.md).
+  subprocess. `run-agent.py` uses the same sandbox with no fallback. Flags and sandbox details are in [`TESTING.md`](TESTING.md).
 
 Offline unit tests need no server, GPU or model:
 

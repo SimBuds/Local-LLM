@@ -49,6 +49,7 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-persona.py", "--tasks", "identity", "familiar_skill", "--attempts", "2"],
         ["run-json.py", "--tasks", "jd_extract", "--attempts", "2"],
         ["run-tools.py", "--tasks", "pick_tool", "grounded_answer", "--attempts", "2"],
+        ["run-agent.py", "--tasks", "fix_failing_test", "--attempts", "1"],
     ],
     "standard": [
         ["run-speed.py"],
@@ -72,6 +73,9 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-json.py", "--context-pressure", "medium", "--attempts", "2"],
         ["run-json.py", "--context-pressure", "high", "--attempts", "1"],
         ["run-tools.py", "--attempts", "5"],
+        # The whole suite at its own default attempts. Not in `standard` until
+        # its cost on the large models is measured.
+        ["run-agent.py"],
         ["run-learn.py", "--attempts", "5"],
         ["run-tutor.py", "--attempts", "5"],
     ],

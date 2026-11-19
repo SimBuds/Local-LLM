@@ -7,7 +7,7 @@ only carries the operational summary and compact leaderboards.
 
 ## Goals
 
-The suite answers five practical questions:
+The suite answers six practical questions:
 
 1. **Can the model follow content instructions?** Format discipline, SEO keyword
    control, length, and Markdown structure.
@@ -15,14 +15,20 @@ The suite answers five practical questions:
    tasks with hidden asserts.
 3. **Can the model teach without leaking?** Explanation quality, code gate, and
    solution-leak checks for tutor use.
-4. **Can the model drive an agent loop?** The right tool with the right
+4. **Can the model make one tool call correctly?** The right tool with the right
    arguments, no call where none fits, and an answer that uses the tool result
    it was handed instead of the model's own memory (`run-tools.py`, added
    2026-09-17). This is the suite behind the Cline pick, which until then rested
-   on prompt-ingest speed alone.
+   on prompt-ingest speed alone. It makes at most two model calls per attempt
+   against canned results, so it does not show whether a model can finish a
+   task.
 5. **Does the prompt stack actually hold?** Whether the rules in `prompts/`,
    `memory/` is obeyed — identity, honesty about Casey's skill
    buckets, `Unverified:` marking, output shape.
+6. **Can the model finish a multi-step task on its own?** Reading a project,
+   running commands, editing files, and stopping when the work is done
+   (`run-agent.py`, added 2026-11-19). Hidden tests decide the result. It sends
+   its own system prompt, so it measures the base model without the stack.
 
 Question 5 is the odd one out and the reason `run-persona.py` exists: suites 1-4
 measure the *base model* through the stack, so a prompt edit that silently breaks
@@ -62,6 +68,26 @@ Verified behavior under the sandbox: normal programs pass, `$HOME` reads raise
 succeed, and the `wrong-answer` / `syntax` / `timeout` failure classifications are
 all preserved.
 
+`run-agent.py` goes further than the three runners above: it runs shell commands
+the model writes, many per attempt, in one project directory that lasts for the
+attempt. It uses the same bubblewrap confinement through the gateway's
+`sandbox_exec()`, with four differences.
+
+- **No fallback.** Without a working `bwrap` the runner exits before it creates a
+  run directory.
+- **A scrubbed environment.** Commands see only `PATH=/usr/bin`, `LANG`, and a
+  `HOME` that points at the project directory. Nothing from the host environment
+  reaches them.
+- **Bounded output.** Command output goes to a temp file with a 16 MiB file-size
+  limit, and the model is shown at most 4000 characters of it, head and tail.
+- **Hidden tests stay off disk.** They are piped to Python on stdin inside the
+  sandbox after the model stops, and the host never writes into a directory the
+  model has touched.
+
+Each attempt is limited to 30 model calls (`--max-steps`), 600 seconds of wall
+clock, and 30 seconds per command. The sandbox has no memory or process-count
+limit yet.
+
 ## Runner Matrix
 
 All runners write to `eval/runs/<UTC>/`.
@@ -75,6 +101,7 @@ All runners write to `eval/runs/<UTC>/`.
 | `run-tutor.py` | Leak-gated tutoring guidance, same judge panel | yes | 3 per task | Medium because teaching quality is judge-scored; the leak gate is deterministic execution and does not depend on judges |
 | `run-json.py` | Schema-constrained JSON + long-context fact recall | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
 | `run-tools.py` | Tool calling: right tool, right arguments, no call when none fits, and what the model does with the result it gets back | no | 3 per task |
+| `run-agent.py` | Multi-step tasks with a real shell: hidden tests pass and the model ends the loop itself | yes, shell commands | 2 per task | Medium for the eight task shapes. Each task's hidden tests are checked against two correct solutions and one cheat. Two attempts per task is a gate, not a measurement |
 | `run-persona.py` | Prompt-stack compliance: identity, skill-bucket honesty, `Unverified:`, output shape | no | 5 per task | Medium-high for the rule shapes encoded; regex scorers miss novel phrasings |
 
 Common flags:
@@ -94,8 +121,8 @@ median; default 3).
 Every runner preflights the router, the model names, and each model's built
 `prompt.txt` before it creates a run directory, so a down router or an unbuilt
 model stops the run with a message instead of showing up as failed attempts
-(all eight, pinned by `eval/test_preflight.py`). `run-json.py`
-then also checks each model's served context. See the 2026-07-28 note in
+(all nine, pinned by `eval/test_preflight.py`). `run-json.py` and `run-agent.py`
+then also check each model's served context. See the 2026-07-28 note in
 **Historical Notes** for why preflight matters:
 a restart during a run previously produced complete, exit-0 summaries reporting
 that every model scored zero.
@@ -195,6 +222,7 @@ Runner-specific flags:
 | `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high|max`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 | `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
+| `run-agent.py` | `--tasks ...`, `--max-steps N` (model calls per attempt, default 30), `--thinking auto|on|off` (defaults off) |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
@@ -302,6 +330,7 @@ Confidence by signal:
 | Prompt-stack compliance | Medium-high | Deterministic and repeatable, but each scorer only catches the violation shapes written into it. Read a clean score as evidence, not proof; read a failure as reliable. |
 | Learning explanation score | Medium | Leave-one-out judging reduces self-bias, but judges are still models. |
 | Tutor score | Medium | Leak failures are strong. Teaching scores are judge-sensitive. |
+| Agent task pass/fail | Medium | Real execution against hidden tests, scoped to eight tasks. The same task passed and failed on `lite` across single attempts, so read one run as a gate. |
 
 
 ## Benchmark Profiles
@@ -319,9 +348,9 @@ individual runners so routine testing doesn't drift across hand-typed flags.
 
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
-| `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each |
-| `standard` | When picking models or after prompt-stack changes | ~2 hours with four models | All eight suites, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
-| `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs |
+| `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each, then 1 agent task once |
+| `standard` | When picking models or after prompt-stack changes | ~2 hours with four models | Every suite except `run-agent.py`, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
+| `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs, and the agent suite at its default 2 attempts |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
 54/46.7 tok/s running fully or mostly on GPU. Two things have since inflated it.
