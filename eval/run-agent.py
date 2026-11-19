@@ -274,8 +274,16 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
          f"- Tasks: {len(tasks)} ({', '.join(t.key for t in tasks)})",
          f"- Attempts per task: {attempts}",
          f"- Limits: {max_steps} steps, {WALL_S}s wall clock, {CMD_TIMEOUT}s per command",
-         "- Score = fraction of attempts where the hidden tests passed and the model "
-         "ended the loop itself. Commands really run, in a sandbox.", ""]
+         "- Score = fraction of attempts where the task's check passed and the model "
+         "ended the loop itself."]
+    if any(isinstance(t, AgentTask) for t in tasks):
+        L += ["- Shell tasks: the model runs real commands in a sandbox, and hidden tests "
+              "it never sees decide the result."]
+    if any(isinstance(t, DeskTask) for t in tasks):
+        L += ["- Desk tasks: the model works a simulated shop through function tools "
+              "under a written policy the tools do not enforce, and the shop's final "
+              "records decide the result."]
+    L += [""]
     if ranked:
         w = ranked[0]
         L += [f"## 🏆 Winner: `{w['model']}` — "
@@ -311,7 +319,7 @@ def write_summary(run_dir: Path, results: dict[str, list[dict]],
 
     L += ["", "### Failure shapes observed", "",
           "Counted over failed attempts. `tests-failed` means the model said it was done "
-          "and the hidden tests disagreed. `step-cap`, `wall-clock`, and `context` mean it "
+          "and the hidden tests, or a desk task's final records, disagreed. `step-cap`, `wall-clock`, and `context` mean it "
           "never ended the loop, and `(tests passing)` marks the ones where the work was "
           "already correct. `gen-timeout` and `gen-fail` are model calls that did not return.", ""]
     for r in ranked:
@@ -367,7 +375,9 @@ def main() -> int:
 
     # Fail before creating a run dir, not after filling it with zeros.
     preflight(list(args.models))
-    require_sandbox()
+    needs_sandbox = any(isinstance(t, AgentTask) for t in tasks)
+    if needs_sandbox:
+        require_sandbox()
     served = require_ctx(list(args.models), REQUIRED_CTX)
 
     run_dir = new_run_dir(args.out_root) / "agent"
@@ -377,7 +387,8 @@ def main() -> int:
     print(f"Tasks:   {', '.join(keys)}  ({len(tasks)} × {args.attempts} = {total}/model)")
     print(f"Models:  {', '.join(args.models)}")
     print(f"Limits:  {args.max_steps} steps, {WALL_S}s wall clock, {CMD_TIMEOUT}s per command")
-    print("Sandbox: bwrap (read-only /usr, no network, no $HOME, no host environment)")
+    if needs_sandbox:
+        print("Sandbox: bwrap (read-only /usr, no network, no $HOME, no host environment)")
     print()
 
     results: dict[str, list[dict]] = {}

@@ -435,9 +435,32 @@ class DeskTaskTableTests(unittest.TestCase):
     def expected(self, task: DeskTask) -> dict:
         return desk.patched(desk.new_state(), task.changes)
 
-    def test_there_are_desk_tasks(self):
-        self.assertGreaterEqual(len(DESK_TASKS), 2)
-        self.assertEqual(len(TASKS), len(SHELL_TASKS) + len(DESK_TASKS))
+    def test_the_six_desk_tasks_follow_the_eight_shell_tasks(self):
+        self.assertEqual([t.key for t in DESK_TASKS],
+                         ["desk_cancel", "desk_two_changes", "desk_forbidden",
+                          "desk_half_allowed", "desk_which_lamp", "desk_not_yours"])
+        self.assertEqual(len(SHELL_TASKS), 8)
+        self.assertEqual(list(TASKS.values()), SHELL_TASKS + DESK_TASKS)
+
+    def test_some_tasks_need_a_refusal_and_some_need_a_change(self):
+        refusals = [t.key for t in DESK_TASKS if not t.changes]
+        self.assertEqual(refusals, ["desk_forbidden", "desk_not_yours"])
+
+    def test_every_shortcut_makes_at_least_one_change(self):
+        # A shortcut that only reads would leave the shop untouched, which is
+        # the right answer for a refusal task.
+        writes = {"cancel_order", "update_address", "refund_order"}
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                self.assertTrue(any(name in writes for name, _ in task.exploit))
+
+    def test_refusal_solutions_make_no_change(self):
+        writes = {"cancel_order", "update_address", "refund_order"}
+        for task in DESK_TASKS:
+            if not task.changes:
+                with self.subTest(task.key):
+                    self.assertFalse(any(name in writes for name, _ in
+                                         task.solution + task.alt_solution))
 
     def test_untouched_shop_passes_only_a_task_that_asks_for_no_change(self):
         for task in DESK_TASKS:
@@ -612,6 +635,22 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("Close result", tied)
         self.assertEqual(promote.WINNER_RE.search(tied).group(1), "lite")
 
+    def desk_row(self, passed: bool) -> dict:
+        return self.row(passed, 4, task="desk_cancel", reason="pass" if passed else "tests-failed")
+
+    def test_header_says_how_each_kind_of_task_is_scored(self):
+        shell = self.summary({"lite": [self.row(True, 3)]})
+        desk_only = self.summary({"lite": [self.desk_row(True)]}, [TASKS["desk_cancel"]])
+        mixed = self.summary({"lite": [self.row(True, 3), self.desk_row(False)]},
+                             [TASK, TASKS["desk_cancel"]])
+        self.assertIn("in a sandbox", shell)
+        self.assertNotIn("simulated shop", shell)
+        self.assertIn("simulated shop", desk_only)
+        self.assertNotIn("in a sandbox", desk_only)
+        self.assertIn("in a sandbox", mixed)
+        self.assertIn("simulated shop", mixed)
+        self.assertIn("| `lite` | 1/1 | 0/1 |", mixed)
+
     def test_table_reports_the_average_final_prompt_size(self):
         text = self.summary({"lite": [self.row(True, 3, prompt_tokens=1000),
                                       self.row(True, 4, prompt_tokens=2500)]})
@@ -690,6 +729,33 @@ class MainTests(unittest.TestCase):
             self.assertEqual(agent.main(), 1)
             preflight.assert_not_called()
             self.assertEqual(list(Path(td).iterdir()), [])
+
+    def run_main(self, keys: list[str]) -> tuple[str, mock.Mock]:
+        """main() with a model that replies at once and never calls a tool."""
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        argv = ["run-agent.py", "--models", "lite", "--tasks", *keys, "--attempts", "1",
+                "--out-root", td.name]
+        with mock.patch.object(agent, "preflight"), \
+                mock.patch.object(agent, "require_ctx", return_value={"lite": N_CTX}), \
+                mock.patch.object(agent, "require_sandbox") as probe, \
+                mock.patch.object(agent, "chat", side_effect=lambda *a, **k: done("Done.")), \
+                mock.patch.object(sys, "argv", argv), mock.patch("builtins.print") as out:
+            self.assertEqual(agent.main(), 0)
+        printed = "\n".join(str(c.args[0]) for c in out.call_args_list if c.args)
+        return printed, probe
+
+    def test_desk_only_run_needs_no_sandbox(self):
+        printed, probe = self.run_main(["desk_forbidden"])
+        probe.assert_not_called()
+        self.assertNotIn("Sandbox:", printed)
+
+    def test_run_with_a_shell_task_still_requires_the_sandbox(self):
+        if not gw._sandbox_works():
+            self.skipTest("bwrap is not usable on this machine")
+        printed, probe = self.run_main(["desk_forbidden", "fix_failing_test"])
+        probe.assert_called_once_with()
+        self.assertIn("Sandbox: bwrap", printed)
 
 
 if __name__ == "__main__":

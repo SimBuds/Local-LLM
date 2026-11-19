@@ -49,7 +49,7 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-persona.py", "--tasks", "identity", "familiar_skill", "--attempts", "2"],
         ["run-json.py", "--tasks", "jd_extract", "--attempts", "2"],
         ["run-tools.py", "--tasks", "pick_tool", "grounded_answer", "--attempts", "2"],
-        ["run-agent.py", "--tasks", "fix_failing_test", "--attempts", "1"],
+        ["run-agent.py", "--tasks", "fix_failing_test", "desk_cancel", "--attempts", "1"],
     ],
     "standard": [
         ["run-speed.py"],

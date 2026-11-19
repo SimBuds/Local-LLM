@@ -722,7 +722,11 @@ Single runners, for targeted sweeps:
   test, and a two-bug CLI. Hidden tests the model never sees decide the result,
   and a pass also needs the model to end the loop itself. Commands really run, so
   this runner refuses to start without a working `bwrap`. It sends its own short
-  system prompt, not the prompt stack.
+  system prompt, not the prompt stack. Six more tasks, added 2026-11-19, put the
+  model on a simulated order desk: it looks up customers and orders through
+  function tools and must follow a written policy the tools do not enforce, such
+  as refusing to cancel an order that has shipped. Those pass when the shop's
+  final records are exactly right.
 - **`run-json.py`** is the structured-output test Jobhunt and SEO-LLM depend on.
   It constrains decode with a JSON schema, buries facts in a long document, and
   scores schema conformance and fact recall. Seven tasks each need one buried

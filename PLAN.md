@@ -176,6 +176,14 @@ model that is right or passing one that gamed the visible check. The suite sends
 its own system prompt, because the prompt stack is written for chat and not for
 tool loops.
 
+The agent suite has a second kind of task, on a simulated order desk. It exists
+because following a rule is a different skill from fixing code: the tools will
+carry out anything, and a written policy says what may be done. Scoring is the
+final state of the records and not the calls made, since two different call
+orders can both be right and only the end state says whether the request was
+carried out and nothing else was touched. The customer's side is one fixed
+message, so no second model is involved.
+
 The tutor suite checks more than the first response. A tutor that refuses once
 and gives the answer when asked again has not held the line, so a scripted
 student pushes three more times and each reply goes through the leak gate. The

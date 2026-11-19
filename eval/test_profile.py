@@ -74,11 +74,11 @@ class AgentSuiteTests(unittest.TestCase):
         _, text = run_main([name, "--models", "lite", "qwen", *extra, "--dry-run"])
         return [ln for ln in text.splitlines() if ln.startswith(str(EVAL / "run-agent.py"))]
 
-    def test_smoke_runs_one_agent_task_once_and_passes_out_root_through(self):
+    def test_smoke_runs_one_shell_and_one_desk_task_once_and_passes_out_root_through(self):
         with tempfile.TemporaryDirectory() as d:
             lines = self.agent_lines("smoke", "--out-root", d)
-            self.assertEqual(lines, [f"{EVAL / 'run-agent.py'} --models lite qwen "
-                                     f"--tasks fix_failing_test --attempts 1 --out-root {d}"])
+            self.assertEqual(lines, [f"{EVAL / 'run-agent.py'} --models lite qwen --tasks "
+                                     f"fix_failing_test desk_cancel --attempts 1 --out-root {d}"])
 
     def test_deep_runs_the_whole_agent_suite_at_its_default_attempts(self):
         self.assertEqual(self.agent_lines("deep"),
@@ -87,11 +87,14 @@ class AgentSuiteTests(unittest.TestCase):
     def test_standard_does_not_run_the_agent_suite(self):
         self.assertEqual(self.agent_lines("standard"), [])
 
-    def test_smoke_task_exists_in_the_task_table(self):
+    def test_smoke_tasks_exist_in_the_task_table(self):
         sys.path.insert(0, str(EVAL))
         from agent_tasks import TASKS
         step = next(s for s in profile.PROFILES["smoke"] if s[0] == "run-agent.py")
-        self.assertIn(step[step.index("--tasks") + 1], TASKS)
+        named = step[step.index("--tasks") + 1:step.index("--attempts")]
+        self.assertEqual(len(named), 2)
+        for key in named:
+            self.assertIn(key, TASKS)
 
 
 class RealRunTests(unittest.TestCase):
