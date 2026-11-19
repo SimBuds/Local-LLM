@@ -1115,6 +1115,56 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
+### Multi-hop JSON task sweep (2026-11-19)
+
+A sizing sweep for two generated tasks in `eval/json_tasks.py`, to find sizes
+where the models land between 0% and 100%. Neither task is in the default set
+yet. Build 12439, thinking off, temperature 0, two attempts per cell at seeds
+1001 and 1002, results written to a scratch directory.
+
+- `chain_trace` at `HxC`: `C` chains of sites, each `H` links long. Only the first
+  site in a chain states its access code, and the model reports the code of the
+  last.
+- `ledger_sum` at `RxD`: `R` expense records to count and total, among `D`
+  records for another office or another kind of spending.
+
+Attempts fully right, out of 2. Normal pressure is about 6,600 prompt tokens and
+high is about 48,000.
+
+| Model | Pressure | chain 1x2 | 2x2 | 2x3 | 3x3 | 4x3 | ledger 2x3 | 3x5 | 4x8 | 6x10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `lite` | normal | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `lite` | high | 2 | 2 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `qwen` | normal | 2 | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `qwen` | high | 2 | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `freedom` | normal | 2 | 2 | 2 | 2 | 0 | 2 | 0 | 0 | 0 |
+| `freedom` | high | 2 | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `gemma` | normal | 2 | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `gemma` | high | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 of 1 |
+
+Findings:
+
+- Both tasks have a sharp edge. Every model passes the smallest sizes, and none
+  passes a 4-link chain or a ledger of 3 or more records.
+- `chain_trace` at 2x3 and 3x3 separates the models at normal pressure: `lite`
+  fails 2x3, and only `freedom` passes 3x3.
+- Context length costs `gemma` and `freedom`, and not `lite` or `qwen`. At about
+  48,000 tokens `gemma` fails three sizes it passes at 6,600 (chain 2x2, chain
+  2x3, ledger 2x3), and `freedom` fails chain 3x3. `lite` and `qwen` score the
+  same at both lengths. This is the first long-context difference the JSON suite
+  has shown. One sweep cannot say whether the locked `q4_0` KV cache plays a
+  part.
+- `ledger_sum` mostly measures arithmetic. From 3 records up, most wrong answers
+  have the right count and the wrong total, so the task fails models on adding
+  numbers without thinking, not on finding the records.
+- An earlier pass on `lite` alone found no attempt right at larger sizes (chain
+  8x4 and 15x5, ledger 12x24 and 30x60) at up to about 109,000 prompt tokens.
+- The two attempts in a cell gave identical text in 67 of 71 cells. All four
+  that differed were `freedom`, and none changed a pass to a fail.
+- `gemma` crashed twice during its high-pressure cells, at 08:58:58 and 09:04:21,
+  both Xid 31. The first was retried. The second was the last call of the sweep,
+  so `gemma` has one attempt at ledger 6x10.
+
 ### JSON fact checks were never counted (2026-11-19)
 
 `run-json.py` counted every fact check as passed, whether it passed or not, so

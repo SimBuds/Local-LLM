@@ -166,59 +166,71 @@ class ChainTraceTests(unittest.TestCase):
                 jt.chain_trace_task(hops, chains)
 
 
-class LedgerSumTests(unittest.TestCase):
-    RECORD = re.compile(r"The (\w+) office spent (\d+) CAD on (\w+) in \w+\.")
-    ASKED = re.compile(r"where the (\w+) office spent money on (\w+),")
+class LedgerMatchTests(unittest.TestCase):
+    """The expected record numbers are read from the document text here, not
+    taken from the generator."""
 
-    def tally(self, task) -> tuple[dict, list[int]]:
-        office, category = self.ASKED.search(task.instruction).groups()
+    RECORD = re.compile(r"EXPENSE RECORD (\d+): The (\w+) office spent \d+ CAD on (\w+) in \w+\.")
+    ASKED = re.compile(r"where the (\w+) office spent money on (\w+)\.")
+
+    def split(self, task) -> tuple[list[int], list[int]]:
+        """(matching record numbers, the other record numbers), in document order."""
+        asked = self.ASKED.search(task.instruction).groups()
         rows = [self.RECORD.search(n).groups() for n in task.needles]
-        mine = [int(amount) for o, amount, c in rows if (o, c) == (office, category)]
-        others = [int(amount) for o, amount, c in rows if (o, c) != (office, category)]
-        return {"matching_records": len(mine), "total_cad": sum(mine)}, others
+        return ([int(rid) for rid, o, c in rows if (o, c) == asked],
+                [int(rid) for rid, o, c in rows if (o, c) != asked])
 
     def test_same_arguments_build_the_same_document(self):
-        a, b = jt.ledger_sum_task(6, 10), jt.ledger_sum_task(6, 10)
+        a, b = jt.ledger_match_task(6, 10), jt.ledger_match_task(6, 10)
         self.assertEqual(a.needles, b.needles)
         self.assertEqual(a.instruction, b.instruction)
 
-    def test_tallied_answer_passes_every_check_and_the_schema(self):
+    def test_matching_record_numbers_pass_both_checks_in_any_order(self):
         for records, distractors in ((1, 0), (1, 5), (6, 10), (12, 24)):
             with self.subTest(records=records, distractors=distractors):
-                task = jt.ledger_sum_task(records, distractors)
-                self.assertEqual(len(task.needles), records + distractors)
-                answer, others = self.tally(task)
-                self.assertEqual((answer["matching_records"], len(others)), (records, distractors))
-                self.assertEqual(passes(task, answer), [True, True])
-                self.assertEqual(rj.schema_errors(answer, task.schema), [])
-                self.assertNotIn(answer["total_cad"], others)
+                task = jt.ledger_match_task(records, distractors)
+                mine, others = self.split(task)
+                self.assertEqual((len(mine), len(others)), (records, distractors))
+                self.assertEqual(len(set(mine + others)), records + distractors)
+                for answer in ({"record_numbers": mine}, {"record_numbers": mine[::-1]}):
+                    self.assertEqual(passes(task, answer), [True, True])
+                    self.assertEqual(rj.schema_errors(answer, task.schema), [])
 
-    def test_miscounting_or_adding_a_distractor_fails(self):
-        task = jt.ledger_sum_task(6, 10)
-        answer, others = self.tally(task)
-        self.assertEqual(passes(task, {**answer, "matching_records": 7}), [False, True])
-        self.assertEqual(passes(task, {**answer, "total_cad": answer["total_cad"] + others[0]}),
-                         [True, False])
-        self.assertEqual(passes(task, []), [False, False])
+    def test_a_missed_record_fails_only_the_first_check(self):
+        task = jt.ledger_match_task(6, 10)
+        mine, _ = self.split(task)
+        self.assertEqual(passes(task, {"record_numbers": mine[1:]}), [False, True])
+
+    def test_a_listed_distractor_fails_only_the_second_check(self):
+        task = jt.ledger_match_task(6, 10)
+        mine, others = self.split(task)
+        self.assertEqual(passes(task, {"record_numbers": mine + others[:1]}), [True, False])
+
+    def test_empty_and_malformed_answers_fail(self):
+        task = jt.ledger_match_task(6, 10)
+        self.assertEqual(passes(task, {"record_numbers": []}), [False, True])
+        for answer in ({"record_numbers": 417}, {"record_numbers": None}, {}, [], None):
+            with self.subTest(answer=answer):
+                self.assertEqual(passes(task, answer), [False, False])
 
     def test_distractors_include_near_misses_on_office_and_on_category(self):
-        task = jt.ledger_sum_task(6, 10)
+        task = jt.ledger_match_task(6, 10)
         office, category = self.ASKED.search(task.instruction).groups()
         rows = [self.RECORD.search(n).groups() for n in task.needles]
-        self.assertTrue(any(o == office and c != category for o, _, c in rows))
-        self.assertTrue(any(o != office and c == category for o, _, c in rows))
+        self.assertTrue(any(o == office and c != category for _, o, c in rows))
+        self.assertTrue(any(o != office and c == category for _, o, c in rows))
 
     def test_matching_records_are_spread_among_the_distractors(self):
-        task = jt.ledger_sum_task(6, 10)
-        office, category = self.ASKED.search(task.instruction).groups()
-        flags = [self.RECORD.search(n).group(1, 3) == (office, category) for n in task.needles]
+        task = jt.ledger_match_task(6, 10)
+        asked = self.ASKED.search(task.instruction).groups()
+        flags = [self.RECORD.search(n).group(2, 3) == asked for n in task.needles]
         self.assertNotEqual(flags, sorted(flags))
         self.assertNotEqual(flags, sorted(flags, reverse=True))
 
     def test_sizes_below_the_minimum_are_rejected(self):
         for records, distractors in ((0, 5), (-1, 5), (3, -1)):
             with self.subTest(records=records), self.assertRaises(ValueError):
-                jt.ledger_sum_task(records, distractors)
+                jt.ledger_match_task(records, distractors)
 
 
 class MultiHopRegistrationTests(unittest.TestCase):
@@ -228,7 +240,7 @@ class MultiHopRegistrationTests(unittest.TestCase):
                                           "multi_extract", "no_infer"])
 
     def test_largest_sizes_fit_the_measured_word_bound_at_max_pressure(self):
-        for task in (jt.chain_trace_task(8, 4), jt.ledger_sum_task(12, 24)):
+        for task in (jt.chain_trace_task(8, 4), jt.ledger_match_task(12, 24)):
             with self.subTest(task.key):
                 built = rj.resolve_tasks([task], "max", "default")[0]
                 self.assertLessEqual(len(built.context.split()), rj.MAX_WORDS)
