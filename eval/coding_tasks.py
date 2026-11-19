@@ -8,6 +8,9 @@ passes for an attempt iff the process exits 0 (all asserts held, no exception).
 
 Difficulty spread is deliberate: easy warm-ups, then stateful design, DP, and a
 parser — enough to separate the models rather than have everyone score 100%.
+
+TASKS is nine classic textbook problems followed by six fresh tasks written for
+this repo. Only the fresh ones carry validity fixtures, checked by test_code.py.
 """
 
 from __future__ import annotations
@@ -227,8 +230,9 @@ assert flatten_dict({"a":{"b":1},"c":[1,2]}) == {"a.b":1,"c":[1,2]}
 # --- fresh tasks ---------------------------------------------------------------
 # The nine tasks above are textbook problems that every model has seen many
 # times. These are small business rules written for this repo on 2026-11-19, so
-# a pass shows the model worked the rule out. They are kept out of TASKS until
-# Casey decides how they sit with the classics.
+# a pass shows the model worked the rule out. They run beside the classics
+# (Casey, 2026-11-19): the list is added to TASKS at the bottom of this file, after
+# the nine, so the classic columns in a summary still compare with earlier passes.
 
 FRESH_TASKS: list[Task] = [
     Task(
@@ -737,3 +741,5 @@ def tally_stock(events):
 """,
     ),
 ]
+
+TASKS.extend(FRESH_TASKS)

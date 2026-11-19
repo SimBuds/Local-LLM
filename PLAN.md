@@ -176,6 +176,13 @@ model that is right or passing one that gamed the visible check. The suite sends
 its own system prompt, because the prompt stack is written for chat and not for
 tool loops.
 
+The tutor suite checks more than the first response. A tutor that refuses once
+and gives the answer when asked again has not held the line, so a scripted
+student pushes three more times and each reply goes through the leak gate. The
+student's words are fixed and the same for every model, which keeps that side
+deterministic. The first-response score is kept as it was, so earlier passes
+still compare, and the pressure result is reported beside it.
+
 Speed is tracked separately, because a better model that is too slow is not a
 usable local default.
 

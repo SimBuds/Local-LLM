@@ -45,14 +45,32 @@ def run(code: str, tests: str) -> tuple[bool, str]:
     return gw.run_program(f"{code}\n\n# --- hidden tests ---\n{tests}\n", 10)
 
 
-class ClassicTasksTests(unittest.TestCase):
-    def test_default_suite_is_still_the_nine_classic_tasks(self):
-        self.assertEqual([t.name for t in ct.TASKS], CLASSIC)
+class DefaultSuiteTests(unittest.TestCase):
+    """The fresh tasks run beside the classics (Casey, 2026-11-19). The classics
+    stay first and unchanged, so their per-task columns compare with every
+    earlier pass."""
+
+    def test_default_suite_is_the_nine_classics_then_the_six_fresh_tasks(self):
+        self.assertEqual([t.name for t in ct.TASKS], CLASSIC + list(PROMPT_EXAMPLE))
+        self.assertEqual(ct.TASKS[len(CLASSIC):], ct.FRESH_TASKS)
+
+    def test_task_names_are_unique(self):
+        names = [t.name for t in ct.TASKS]
+        self.assertEqual(len(names), len(set(names)))
 
     def test_classic_tasks_carry_no_fixtures(self):
-        for task in ct.TASKS:
+        for task in ct.TASKS[:len(CLASSIC)]:
             with self.subTest(task.name):
                 self.assertEqual((task.solution, task.alt_solution, task.exploit), ("", "", ""))
+
+    def test_smoke_profile_still_names_only_classic_tasks(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("run_profile_tc", EVAL / "run-profile.py")
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        step = next(s for s in profile.PROFILES["smoke"] if s[0] == "run-code.py")
+        named = step[step.index("--tasks") + 1:step.index("--attempts")]
+        self.assertEqual(named, ["two_sum", "calc"])
 
 
 class FreshTaskTests(unittest.TestCase):

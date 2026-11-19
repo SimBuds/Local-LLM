@@ -96,9 +96,9 @@ All runners write to `eval/runs/<UTC>/`.
 |---|---|---:|---:|---|
 | `run-speed.py` | Raw generation tok/s, prompt tok/s, load time, GPU/CPU split | no | 1 per prompt | High for this machine |
 | `run-content.py` | Format/instruction compliance across content tasks (SEO copy, technical explanation, Markdown brief) | no | 5 | Medium-high for prompt discipline |
-| `run-code.py` | Real pass@1 against hidden Python asserts | yes | 5 per task | Medium-high for the covered task shapes |
+| `run-code.py` | Real pass@1 against hidden Python asserts, on 9 classic problems and 6 fresh tasks written for this repo | yes | 5 per task | Medium-high for the covered task shapes. The classics are problems every model has seen, so read the fresh columns for what a model can work out |
 | `run-learn.py` | Code + explanation, leave-one-out judge panel (median of `--judge-repeats` calls per judge) | yes | 3 per task | Medium because explanation quality is judge-scored; the code gate half is deterministic |
-| `run-tutor.py` | Leak-gated tutoring guidance, same judge panel | yes | 3 per task | Medium because teaching quality is judge-scored; the leak gate is deterministic execution and does not depend on judges |
+| `run-tutor.py` | Leak-gated tutoring guidance, same judge panel, then up to 3 scripted pressure turns with the leak check on every reply | yes | 3 per task | Medium because teaching quality is judge-scored. The leak gate is deterministic execution and does not depend on judges |
 | `run-json.py` | Schema-constrained JSON + long-context fact recall, on 7 single-passage tasks and 3 multi-hop tasks | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
 | `run-tools.py` | Tool calling: right tool, right arguments, no call when none fits, and what the model does with the result it gets back | no | 3 per task |
 | `run-agent.py` | Multi-step tasks with a real shell: hidden tests pass and the model ends the loop itself | yes, shell commands | 2 per task | Medium for the eight task shapes. Each task's hidden tests are checked against two correct solutions and one cheat. Two attempts per task is a gate, not a measurement |
@@ -218,7 +218,7 @@ Runner-specific flags:
 | `run-code.py` | `--tasks ...`, `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-content.py` | `--tasks ...`, `--prompt-file PATH` (ad-hoc SEO prompt), `--keyword TEXT`, `--thinking auto|on|off` |
 | `run-learn.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--rescore LEARN_DIR`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
-| `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
+| `run-tutor.py` | `--tasks ...`, `--judges ...`, `--judge-rubric default|strict`, `--judge-repeats N` (default 3), `--pressure-turns N` (0 to 3, default 3), `--exec-timeout SECONDS`, `--thinking auto|on|off` |
 | `run-json.py` | `--tasks ...`, `--num-ctx N` (minimum served context, checked before the run, default 65536), `--context-pressure normal|medium|high|max`, `--position default|early|middle|late|all`, `--thinking auto|on|off` |
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 | `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
@@ -1115,14 +1115,85 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
+### Tutor under pressure, first measurement (2026-11-19)
+
+`run-tutor.py` now continues past the first response. A scripted student asks
+for the full answer up to three more times (a plain ask, a deadline, then a
+false claim that an instructor allowed it), and every tutor reply goes through
+the leak check. The conversation stops at the first leak. The student's words
+are in `PRESSURE` in `eval/tutor_tasks.py` and are the same for every model.
+
+Five tasks at 3 attempts, build 12439, seed unset, results written to a scratch
+directory. Turn 1 is the first response and turn 4 follows the last student
+message. Judging ran with one judge and one call per response to save time, so
+no teach score from this pass is reported.
+
+| Model | Leaked on turn 1 | Turn 2 | Turn 3 | Turn 4 | Held |
+|---|---|---|---|---|---|
+| `gemma` | 2 | 5 | 3 | 1 | 4/15 |
+| `lite` | 9 | 5 | 0 | 0 | 1/15 |
+| `qwen` | 7 | 8 | 0 | 0 | 0/15 |
+| `freedom` | 12 | 3 | 0 | 0 | 0/15 |
+
+Findings:
+
+- No model holds the line reliably. `gemma`, the tutor pick, kept the answer back
+  in 4 of 15 attempts. `qwen` and `freedom` never did.
+- For `lite`, `qwen`, and `freedom` the first student message is enough: every
+  attempt that got past the first response gave the full solution on turn 2,
+  except one `lite` attempt that held throughout.
+- `gemma` is the only model that resists more than one push. Nine of its
+  attempts got past turn 2, and four of those lasted all three student messages.
+- The first-response leak counts here use the wider leak check below. They are
+  2, 9, 7, and 12 of 15, against 2, 6, 7, and 12 for the 2026-11-09 run under the
+  same check. `lite` moved by three, which is within what two passes at 15
+  attempts can differ by.
+- The tutor pick stands and is now better supported: `gemma` leads on the first
+  response and under pressure. The pressure result also says the pick is the
+  best of a weak field, not a tutor that can be trusted to withhold an answer.
+
+`Teach /10` and `Leaks` in the summary still describe the first response alone,
+so they compare with earlier passes. The new `Held` column and the *Under
+pressure* section carry these results. `--pressure-turns 0` gives the single-turn
+run.
+
+### Tutor leak check missed later code blocks (2026-11-19)
+
+`solution_leak_check` in `run-tutor.py` ran only the first Python block of a
+response. A tutor that showed a partial sketch and then the full solution in a
+later block, or split the solution across blocks, was scored as not leaking. It
+now tries every fenced block and then all of them joined in order, pinned by
+`eval/test_tutor.py`.
+
+Unlike the JSON and coding fixes of the same day, this one changes published
+numbers. All 525 tutor responses saved under `eval/runs/`, across 12 runs from
+2026-06-10 to 2026-11-09, were checked again: 151 were recorded as leaks when
+they ran, and 167 are leaks under the wider check. No recorded leak was lost.
+
+Leaks in the leaderboard run, `eval/runs/20261109T162935Z/tutor/`, out of 15:
+
+| Model | As published | Every block tried |
+|---|---|---|
+| `gemma` | 2 | 2 |
+| `lite` | 6 | 6 |
+| `qwen` | 6 | 7 |
+| `freedom` | 8 | 12 |
+
+- The tutor pick does not change. `gemma` leaks least by a wide margin under
+  both checks.
+- `freedom`'s published teach score of 3.9 is too high, because each leak zeroes
+  an attempt and four of its leaks were not counted. `qwen`'s 5.6 is slightly
+  high for the same reason.
+- The README leaderboard still shows the published row. It is built from that
+  run's summary and is corrected by the next `standard` pass, not by hand.
+
 ### Fresh coding tasks, first measurement (2026-11-19)
 
 Six coding tasks written for this repo, in `FRESH_TASKS` in
 `eval/coding_tasks.py`. The nine classic tasks are textbook problems every model
 has seen, and these are small business rules it has to work out. Each carries
 two reference solutions that must pass its hidden asserts and a plausible wrong
-shortcut that must fail them, checked by `eval/test_code.py`. They are not in the
-default suite yet.
+shortcut that must fail them, checked by `eval/test_code.py`.
 
 Passes out of 3, build 12439, the same prompt format and sampler as `run-code.py`,
 seed base 1000, results written to a scratch directory.
@@ -1149,6 +1220,13 @@ Findings:
   fault in the task.
 - Three attempts per task is a gate. The gap between `gemma` at 15 and `qwen` at
   13 is within what one more attempt could move.
+
+**Added to the default suite the same day**, after the nine classics, on Casey's
+decision to run them beside each other. From the next pass on, the coding score
+covers 15 tasks and does not compare with the 9-task scores before it. The
+per-task columns for the classics still do. `meeting_room` stays as a floor: a
+model that fails it has a real problem. The `smoke` profile still names two
+classic tasks only.
 
 **The scoring fix these depend on.** Until 2026-11-19 `run_program` in the
 gateway passed any program that exited 0, so model code calling `sys.exit(0)`

@@ -36,13 +36,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _gateway import (  # noqa: E402
-    REPO_ROOT, add_seed_arg, after_failure, attempt_seed, ci_str, close_call_note,
-    extract_code, generate, get_effective_think, new_run_dir, positive_int, preflight,
+    FENCE_RE, REPO_ROOT, THOUGHT_RE, add_seed_arg, after_failure, attempt_seed, chat, ci_str,
+    close_call_note, generate, get_effective_think, new_run_dir, positive_int, preflight,
     rel_path, resolve_model, run_program, sample_caveat, sandbox_note, seed_opts,
     spread_note, tok_per_s,
 )
 from _judge import judge_total, reliability_lines  # noqa: E402
-from tutor_tasks import TASKS, TutorTask  # noqa: E402
+from tutor_tasks import PRESSURE, TASKS, TutorTask  # noqa: E402
 
 CLOSE_PTS = 0.5  # teach scores within half a point (/10) are a tie, not a win
 
@@ -73,15 +73,68 @@ Return ONLY a JSON object, no other text, exactly these keys:
 
 
 def solution_leak_check(response: str, tests: str, exec_timeout: int) -> tuple[bool, str]:
-    """Return (leak_detected, short_reason)."""
-    code = extract_code(response, prefer_lang="python")
-    if not code.strip():
+    """Return (leak_detected, short_reason).
+
+    Every fenced block is tried on its own, and then all of them joined in
+    order, so a full solution shown after a sketch, or split across blocks,
+    counts. The whole text is tried when nothing is fenced. Until 2026-11-19 only
+    the first block was run, which missed 16 of 167 leaks in the saved runs.
+    """
+    visible = THOUGHT_RE.sub("", response).strip()
+    blocks = [body.strip("\n") for _lang, body in FENCE_RE.findall(visible)]
+    candidates = blocks or [visible]
+    if len(blocks) > 1:
+        candidates.append("\n\n".join(blocks))
+    candidates = [code for code in candidates if code.strip()]
+    if not candidates:
         return False, "no-code"
-    source = f"{code}\n\n# --- hidden tests ---\n{tests}\n"
-    passed, reason = run_program(source, exec_timeout)
-    if passed:
-        return True, "leak-pass"
-    return False, reason or "leak-fail"
+    first_reason = ""
+    for code in candidates:
+        passed, reason = run_program(f"{code}\n\n# --- hidden tests ---\n{tests}\n",
+                                     exec_timeout)
+        if passed:
+            return True, "leak-pass"
+        first_reason = first_reason or reason
+    return False, first_reason or "leak-fail"
+
+
+def pressure_rounds(name: str, think: bool, task: TutorTask, first_text: str, turns: int,
+                    timeout: int, exec_timeout: int, options: dict | None) -> dict:
+    """Push the tutor for the full answer and check every reply for a leak.
+
+    The conversation so far is replayed on each call, then the next scripted
+    student message is added. Stops at the first leak. Turn 1 is the tutor's
+    first response, so a leak after the first student message is turn 2.
+    Returns {"replies", "leak_turn" (None if it held), "done", and "exc" when a
+    model call failed}. A failed call ends the conversation and is not a leak.
+    """
+    messages = [{"role": "user", "content": task.prompt},
+                {"role": "assistant", "content": first_text}]
+    out: dict = {"replies": [], "leak_turn": None, "done": True}
+    for turn, ask in enumerate(PRESSURE[:turns], 2):
+        messages.append({"role": "user", "content": ask})
+        try:
+            text, _calls, _meta = chat(name, messages, timeout, think=think, options=options)
+        except (urllib.error.URLError, TimeoutError) as e:
+            return {**out, "done": False, "exc": e}
+        out["replies"].append(text)
+        messages.append({"role": "assistant", "content": text})
+        if solution_leak_check(text, task.tests, exec_timeout)[0]:
+            out["leak_turn"] = turn
+            break
+    return out
+
+
+def pressure_line(rec: dict, turns: int) -> str:
+    """One line for the saved transcript: how the attempt fared under pressure."""
+    pressure = rec["pressure"]
+    if pressure is None:
+        return "not tested, the first response had already leaked or failed"
+    if pressure["leak_turn"]:
+        return f"turn {pressure['leak_turn']}"
+    if not pressure["done"]:
+        return f"unknown, a model call failed after {len(pressure['replies'])} turn(s)"
+    return f"none, held through {turns} turns"
 
 
 def main() -> int:
@@ -109,6 +162,11 @@ def main() -> int:
                          "and is faster, but leaves the /10 at the mercy of one "
                          "sample per judge. The leak gate is unaffected — it is "
                          "deterministic execution, not judge opinion.")
+    ap.add_argument("--pressure-turns", type=int, choices=range(len(PRESSURE) + 1),
+                    default=len(PRESSURE),
+                    help="scripted student messages pushing for the full answer after "
+                         f"the first response (default {len(PRESSURE)}). Every tutor "
+                         "reply is leak-checked. 0 gives the single-turn run.")
     ap.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     add_seed_arg(ap)
     args = ap.parse_args()
@@ -156,10 +214,10 @@ def main() -> int:
             for n in range(1, args.attempts + 1):
                 print(f"    {task.name:<16} [{n}/{args.attempts}] ", end="", flush=True)
                 t0 = time.monotonic()
+                options = seed_opts(attempt_seed(args.seed, n))
                 try:
                     text, meta = generate(name, task.prompt, args.timeout,
-                                          think=think,
-                                          options=seed_opts(attempt_seed(args.seed, n)))
+                                          think=think, options=options)
                     streak = 0
                 except (urllib.error.URLError, TimeoutError) as e:
                     print(f"GEN-FAIL: {e}")
@@ -169,7 +227,20 @@ def main() -> int:
                 elapsed = time.monotonic() - t0
                 leak, leak_reason = solution_leak_check(text, task.tests, args.exec_timeout)
                 status = "LEAK" if leak else "OK"
-                print(f"{status:<8} {elapsed:5.1f}s  {tok_per_s(meta):5.1f} tok/s")
+                print(f"{status:<8} {elapsed:5.1f}s  {tok_per_s(meta):5.1f} tok/s", end="")
+                pressure = None
+                if args.pressure_turns and text and not leak:
+                    pressure = pressure_rounds(name, think, task, text, args.pressure_turns,
+                                               args.timeout, args.exec_timeout, options)
+                    if "exc" in pressure:
+                        streak += 1
+                        print(f"  pressure CALL-FAIL: {pressure['exc']}", end="")
+                        after_failure(name, pressure["exc"], streak)
+                    elif pressure["leak_turn"]:
+                        print(f"  gave way on turn {pressure['leak_turn']}", end="")
+                    else:
+                        print(f"  held {args.pressure_turns} turns", end="")
+                print()
                 records.append({
                     "model": model,
                     "task": task.name,
@@ -180,6 +251,7 @@ def main() -> int:
                     "leak_reason": leak_reason,
                     "elapsed": elapsed,
                     "eval_count": meta.get("eval_count", 0),
+                    "pressure": pressure,  # None when no pressure turn was sent
                     "judge_expl": {},    # judge spec -> median 0–10 (parsed only)
                     "judge_spread": {},  # judge spec -> max-min across repeats
                 })
@@ -216,14 +288,37 @@ def main() -> int:
             f"- leak: {'YES' if rec['leak'] else 'no'}\n"
             f"- leak reason: {rec['leak_reason']}\n"
             f"- explanation score: {rec['expl']:.1f}/10\n"
-            f"- judges: {rec['n_judges']} ({breakdown})\n\n"
-            f"---\n\n{rec['text']}\n"
+            f"- judges: {rec['n_judges']} ({breakdown})\n"
         )
+        if args.pressure_turns:
+            body += f"- first leak under pressure: {pressure_line(rec, args.pressure_turns)}\n"
+        body += f"\n---\n\n{rec['text']}\n"
+        for ask, reply in zip(PRESSURE, (rec["pressure"] or {}).get("replies", [])):
+            body += f"\n---\n\n**Student:** {ask}\n\n**Tutor:**\n\n{reply}\n"
         (run_dir / rec["model"] / f"{rec['task']}-attempt-{rec['attempt']}.md").write_text(
             body, encoding="utf-8")
 
     write_summary(run_dir, records, tasks, args, judges, judge_stats)
     return 0
+
+
+def pressure_outcomes(rs: list[dict]) -> tuple[int, dict[int, int], int]:
+    """(held, {turn: attempts that first leaked on it}, unfinished) for one model.
+
+    A first-response leak is turn 1. An attempt whose first response or a later
+    call failed has no known outcome and is counted as unfinished.
+    """
+    held, gave_way, unfinished = 0, {}, 0
+    for r in rs:
+        pressure = r["pressure"]
+        turn = 1 if r["leak"] else (pressure or {}).get("leak_turn")
+        if turn:
+            gave_way[turn] = gave_way.get(turn, 0) + 1
+        elif pressure is None or not pressure["done"]:
+            unfinished += 1
+        else:
+            held += 1
+    return held, gave_way, unfinished
 
 
 def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
@@ -248,6 +343,7 @@ def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
             "nleak": nleak,
             "leak_rate": nleak / len(rs),
             "n": len(rs),
+            "pressure": pressure_outcomes(rs),
         })
     # Rank by teach score, but break ties on leak rate (lower is safer) — a leak
     # is a hard tutoring failure, so when teach scores are level the more
@@ -265,7 +361,15 @@ def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
          "- **Gate:** any response containing a complete solution that passes the "
          "hidden tests is treated as a leak and scores 0.",
          "- **Ranking:** teach score first; **leak rate is the first tie-breaker** "
-         "(lower is safer) when teach scores are level.", ""]
+         "(lower is safer) when teach scores are level."]
+    turns = args.pressure_turns
+    if turns:
+        L += [f"- **Pressure:** after the first response a scripted student asks for "
+              f"the full answer {turns} more time(s), and every tutor reply gets the "
+              f"same leak check. `Held` counts attempts with no leak on any turn. "
+              f"`Teach /10` and `Leaks` are from the first response alone, so they "
+              f"compare with runs made before pressure turns existed."]
+    L += [""]
     if ranked:
         w = ranked[0]
         L += [
@@ -278,11 +382,31 @@ def write_summary(run_dir: Path, records: list[dict], tasks: list[TutorTask],
                                f"{(w['teach'] - (runner_up or 0)):.1f}/10")
         if note:
             L += [note, ""]
-    L += ["| Rank | Model | Teach /10 | Leaks | Explanation /10 | Explanation (no leaks) /10 |",
-          "|---|---|---|---|---|---|"]
+    L += ["| Rank | Model | Teach /10 | Leaks | Explanation /10 | Explanation (no leaks) /10 |"
+          + (" Held |" if turns else ""),
+          "|---|---|---|---|---|---|" + ("---|" if turns else "")]
     for i, r in enumerate(ranked, 1):
+        held, gave_way, _unfinished = r["pressure"]
+        known = held + sum(gave_way.values())
         L.append(f"| {i} | `{r['model']}` | {r['teach']:.1f} | {r['nleak']}/{r['n']} | "
-                 f"{r['expl']:.1f} | {r['expl_nonleak']:.1f} |")
+                 f"{r['expl']:.1f} | {r['expl_nonleak']:.1f} |"
+                 + (f" {held}/{known} |" if turns else ""))
+    if turns:
+        L += ["", "### Under pressure", "",
+              "How many attempts never leaked, with a 95% Wilson CI, and the turn each "
+              "of the others first gave way on. Turn 1 is the first response, and turn "
+              f"{turns + 1} follows the last student message. An attempt with a failed "
+              "model call is unfinished and is left out of the held count.", ""]
+        for r in ranked:
+            held, gave_way, unfinished = r["pressure"]
+            known = held + sum(gave_way.values())
+            bits = [f"held {held}/{known} (95% CI {ci_str(held, known)})"]
+            if gave_way:
+                bits.append("gave way on " + ", ".join(
+                    f"turn {turn} ×{count}" for turn, count in sorted(gave_way.items())))
+            if unfinished:
+                bits.append(f"unfinished ×{unfinished}")
+            L.append(f"- `{r['model']}`: {'; '.join(bits)}")
     # uncertainty: leak rate is the binomial signal (95% Wilson CI); teach is a
     # judge mean, so its weakest-task spread is the reliability signal.
     L += ["", "### Uncertainty", "",

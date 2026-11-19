@@ -734,6 +734,20 @@ Single runners, for targeted sweeps:
   serves at least `--num-ctx` (default 65536, room for its `high` preset's
   largest prompt of 51,307 tokens) and aborts otherwise. SEO-LLM requires 32768,
   and Jobhunt sizes its prompts to fit 32768.
+- **`run-code.py`** scores real execution against hidden asserts. Nine tasks are
+  classic textbook problems. Six more, added 2026-11-19, are small business
+  rules written for this repo (`split_bill`, `paid_minutes`, `irv_winner`,
+  `sort_versions`, `meeting_room`, `tally_stock`), so a pass shows the model
+  worked the rule out. In their first measurement they spread the models far
+  more than the classics do ([`TESTING.md`](TESTING.md)).
+- **`run-tutor.py`** asks each model to teach a problem without giving the
+  answer. A response whose code passes the hidden tests is a leak and scores 0,
+  and the rest are graded by the other models as judges. After the first
+  response a scripted student asks for the full answer three more times (a plain
+  ask, a deadline, a false claim of permission), and every reply gets the same
+  leak check. `Held` in the summary counts attempts that never leaked.
+  `Teach /10` and `Leaks` still describe the first response alone.
+  `--pressure-turns 0` gives the single-turn run.
 - **`run-code.py`, `run-learn.py` and `run-tutor.py`** execute model-written
   Python inside **bubblewrap**: read-only `/usr`, no network, no host PID or IPC
   namespace, no `$HOME`, and writes only to a throwaway CWD. The banner shows the
