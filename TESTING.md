@@ -1115,6 +1115,51 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
+### Fresh coding tasks, first measurement (2026-11-19)
+
+Six coding tasks written for this repo, in `FRESH_TASKS` in
+`eval/coding_tasks.py`. The nine classic tasks are textbook problems every model
+has seen, and these are small business rules it has to work out. Each carries
+two reference solutions that must pass its hidden asserts and a plausible wrong
+shortcut that must fail them, checked by `eval/test_code.py`. They are not in the
+default suite yet.
+
+Passes out of 3, build 12439, the same prompt format and sampler as `run-code.py`,
+seed base 1000, results written to a scratch directory.
+
+| Model | split_bill | paid_minutes | irv_winner | sort_versions | meeting_room | tally_stock | Total |
+|---|---|---|---|---|---|---|---|
+| `gemma` | 2 | 3 | 2 | 2 | 3 | 3 | 15/18 |
+| `qwen` | 1 | 2 | 2 | 3 | 3 | 2 | 13/18 |
+| `freedom` | 0 | 3 | 0 | 0 | 3 | 0 | 6/18 |
+| `lite` | 0 | 0 | 2 | 0 | 3 | 0 | 5/18 |
+
+Findings:
+
+- The fresh tasks spread the models far more than the classics do. On the nine
+  classics in the 2026-11-09 pass the four scored 26, 25, 24, and 20 of 27, and
+  the top was called a tie. Here `freedom` drops from 24 of 27 to 6 of 18 and
+  `lite` from 20 of 27 to 5 of 18.
+- `meeting_room` is passed by every model on every attempt, so it separates
+  nothing at this size.
+- Five of the six tasks have at least one model at 0 of 3 and one at 3 of 3 or
+  close to it.
+- `freedom` wrote the same invalid line in all three `sort_versions` answers, a
+  signature with two return annotations. That is its own syntax error and not a
+  fault in the task.
+- Three attempts per task is a gate. The gap between `gemma` at 15 and `qwen` at
+  13 is within what one more attempt could move.
+
+**The scoring fix these depend on.** Until 2026-11-19 `run_program` in the
+gateway passed any program that exited 0, so model code calling `sys.exit(0)`
+before the hidden asserts would have passed. It now also needs a random token
+printed by a line added after the asserts, and an early exit is reported as
+`exited-early`. All 1,260 coding programs saved under `eval/runs/` were run again
+under the new rule in the sandbox: 1,118 pass, 142 fail, and none exits early, so
+no published coding number depended on the hole. The learn code gate and the
+tutor leak check use the same function. Their saved runs were not rescored,
+because they keep responses and not assembled programs.
+
 ### Multi-hop JSON task sweep (2026-11-19)
 
 A sizing sweep for two generated tasks in `eval/json_tasks.py`, to find sizes
