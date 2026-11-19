@@ -137,6 +137,7 @@ EOF
 ├── build-*               # one per model (gemma, qwen, lite, freedom), discovered by make
 ├── add-model             # scaffolds a new build-* from a staged or remote GGUF
 ├── apply-universal.py    # ports the portable half of AGENTS.md between repos
+├── check-agents.py       # read-only size and repeated-rule report for AGENTS.md
 ├── Makefile              # see the target table below
 ├── AGENTS.md             # working rules for AI agents in this repo
 ├── PLAN.md               # the blueprint and the reasoning behind decisions
@@ -901,3 +902,15 @@ leaderboard above was measured on build 12155.
   up as drift and would be overwritten, so copy it here first. A file without
   the `## Project-specific rules` header or its intro comment stops the run with
   nothing written. It is safe to re-run and never commits.
+
+  `check-agents.py` reports on the file without changing it: the size of the
+  universal body and of each section, and which rules are mentioned in more
+  than one section. Run it before and after an edit to `AGENTS.md`, and diff
+  `--rules` to confirm no rule was lost.
+
+  ```bash
+  # Runs in: local terminal, from this repo.
+  ./check-agents.py                    # sizes and repeated rules
+  ./check-agents.py --rules            # every bold rule lead-in, one per line
+  ./check-agents.py --max-words 8641   # exit 1 if the universal body has grown past this
+  ```
