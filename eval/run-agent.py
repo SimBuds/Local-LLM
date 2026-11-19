@@ -46,10 +46,12 @@ from _gateway import (  # noqa: E402
     rel_path, resolve_model, sample_caveat, sandbox_exec, seed_opts, served_ctx, spread_note,
     tok_per_s,
 )
-from agent_tasks import TASKS, AgentTask  # noqa: E402
+import desk  # noqa: E402
+from agent_tasks import TASKS, AgentTask, DeskTask  # noqa: E402
 
 DEFAULT_OUT_ROOT = REPO_ROOT / "eval" / "runs"
 PROMPT = (Path(__file__).resolve().parent / "prompts" / "agent-system.md").read_text(encoding="utf-8")
+DESK_PROMPT = (Path(__file__).resolve().parent / "prompts" / "desk-system.md").read_text(encoding="utf-8")
 
 CLOSE_PTS = 0.05       # pass-rate gaps within 5 points are a tie
 WALL_S = 600           # wall clock for one attempt's loop
@@ -121,13 +123,18 @@ def _timed_out(exc: BaseException) -> bool:
     return isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
 
 
-def run_loop(name: str, think: bool, task: AgentTask, workdir: str, options: dict,
-             timeout: int, deadline: float, n_ctx: int, max_steps: int) -> dict:
+def run_loop(name: str, think: bool, instruction: str, tools: list[dict], system: str,
+             execute, options: dict, timeout: int, deadline: float, n_ctx: int,
+             max_steps: int) -> dict:
     """Drive one attempt until the model stops, a limit is hit, or a call fails.
+
+    The caller supplies the tools on offer, the system prompt, and `execute`,
+    which takes one parsed tool call and returns (text for the model, whether the
+    call was well formed). The loop itself knows nothing about what a tool does.
 
     `stop` is one of: done, step-cap, wall-clock, context, gen-timeout, gen-fail.
     """
-    messages: list[dict] = [{"role": "user", "content": task.instruction}]
+    messages: list[dict] = [{"role": "user", "content": instruction}]
     out = {"stop": "step-cap", "steps": 0, "bad_calls": 0, "prompt_tokens": 0,
            "tok_per_s": 0.0, "messages": messages}
     speeds = []
@@ -138,7 +145,7 @@ def run_loop(name: str, think: bool, task: AgentTask, workdir: str, options: dic
             break
         try:
             text, calls, meta = chat(name, messages, max(1, min(timeout, int(remaining))),
-                                     think=think, options=options, tools=TOOLS, system=PROMPT)
+                                     think=think, options=options, tools=tools, system=system)
         except (urllib.error.URLError, TimeoutError) as e:
             if _timed_out(e) and time.monotonic() >= deadline:
                 out["stop"] = "wall-clock"      # the attempt's own deadline cut the call short
@@ -161,7 +168,7 @@ def run_loop(name: str, think: bool, task: AgentTask, workdir: str, options: dic
                            for c in calls]})
         fed = 0
         for c in calls:
-            result, well_formed = execute_call(c, workdir)
+            result, well_formed = execute(c)
             out["bad_calls"] += 0 if well_formed else 1
             fed += len(result)
             messages.append({"role": "tool", "tool_call_id": c.get("id") or "", "content": result})
@@ -194,7 +201,7 @@ def reason_for(stop: str, tests_ok: bool) -> str:
     return "pass" if tests_ok else "tests-failed"
 
 
-def run_attempt(model: str, task: AgentTask, n: int, total: int, timeout: int,
+def run_attempt(model: str, task: AgentTask | DeskTask, n: int, total: int, timeout: int,
                 thinking_mode: str, n_ctx: int, max_steps: int, out_dir: Path,
                 seed: int | None = None) -> dict:
     print(f"    {task.key:22s} [{n}/{total}] ", end="", flush=True)
@@ -203,17 +210,28 @@ def run_attempt(model: str, task: AgentTask, n: int, total: int, timeout: int,
     options = seed_opts(attempt_seed(seed, n), {"num_predict": NUM_PREDICT})
 
     t0 = time.monotonic()
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workdir:
-        # Seed files are written before the model acts. Nothing on the host
-        # writes into this directory afterwards: a model-made symlink could
-        # redirect a later host-side write outside the sandbox.
-        for rel, content in task.files.items():
-            path = Path(workdir) / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-        loop = run_loop(name, think, task, workdir, options, timeout,
+    if isinstance(task, DeskTask):
+        # No sandbox: the tools are Python functions over one in-memory shop,
+        # and the score is whether its records ended up as the task requires.
+        shop = desk.new_state()
+        loop = run_loop(name, think, task.instruction, desk.TOOLS, DESK_PROMPT,
+                        lambda call: desk.dispatch(shop, call), options, timeout,
                         t0 + WALL_S, n_ctx, max_steps)
-        tests_ok = False if "exc" in loop else score(task, workdir)
+        tests_ok = "exc" not in loop and desk.same_state(
+            shop, desk.patched(desk.new_state(), task.changes))
+    else:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workdir:
+            # Seed files are written before the model acts. Nothing on the host
+            # writes into this directory afterwards: a model-made symlink could
+            # redirect a later host-side write outside the sandbox.
+            for rel, content in task.files.items():
+                path = Path(workdir) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            loop = run_loop(name, think, task.instruction, TOOLS, PROMPT,
+                            lambda call: execute_call(call, workdir), options, timeout,
+                            t0 + WALL_S, n_ctx, max_steps)
+            tests_ok = False if "exc" in loop else score(task, workdir)
     elapsed = time.monotonic() - t0
 
     reason = reason_for(loop["stop"], tests_ok)

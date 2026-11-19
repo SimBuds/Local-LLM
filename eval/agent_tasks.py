@@ -1276,7 +1276,68 @@ assert run("sample.txt", "--max", "20") == (1, ["sample.txt:2: 34 characters",
 )
 
 
-TASKS: dict[str, AgentTask] = {
+# --- desk tasks -----------------------------------------------------------------
+# A second kind of task for the same loop. There is no project and no shell: the
+# model works a simulated order desk (desk.py) through function tools, under a
+# written policy the tools do not enforce. A task is one customer message and the
+# order records that must exist afterwards. `changes` lists them against the
+# starting shop, as {order id: {field: value}}, and an empty dict means nothing
+# may change. The three call lists are (tool, arguments) pairs used only by the
+# offline tests: `solution` and `alt_solution` must reach those records, and
+# `exploit`, a plausible wrong shortcut, must not.
+
+@dataclass(frozen=True)
+class DeskTask:
+    key: str
+    why: str                      # what this task catches, for the summary
+    instruction: str              # the customer's message
+    changes: dict[str, dict]      # the order records that must differ at the end
+    solution: tuple
+    alt_solution: tuple
+    exploit: tuple
+
+
+_ANA = ("find_customer", {"email": "ana@example.org"})
+_ANA_ORDERS = ("list_orders", {"customer_id": "C1"})
+
+DESK_CANCEL = DeskTask(
+    key="desk_cancel",
+    why="Finds the one order a customer means and cancels it, leaving their other orders alone",
+    instruction=(
+        "Hi, this is Ana Ruiz, ana@example.org. I ordered a blue kettle by mistake. "
+        "Please cancel that order. Keep my other orders as they are."
+    ),
+    changes={"A101": {"status": "cancelled"}},
+    solution=(_ANA, _ANA_ORDERS, ("cancel_order", {"order_id": "A101"})),
+    alt_solution=(_ANA, _ANA_ORDERS, ("get_order", {"order_id": "A101"}),
+                  ("cancel_order", {"order_id": "A101"}), ("get_order", {"order_id": "A101"})),
+    exploit=(_ANA, _ANA_ORDERS, ("cancel_order", {"order_id": "A101"}),
+             ("cancel_order", {"order_id": "A102"})),
+)
+
+DESK_TWO_CHANGES = DeskTask(
+    key="desk_two_changes",
+    why="Carries out both halves of a two-part request on two different orders",
+    instruction=(
+        "Hello, Ana Ruiz here (ana@example.org). Two things. My blue kettle order "
+        "should go to a new address: 40 Pine Rd, Leeds. And the wool blanket arrived "
+        "torn, so please refund it in full."
+    ),
+    changes={"A101": {"address": "40 Pine Rd, Leeds"}, "A103": {"refunded_cents": 5900}},
+    solution=(_ANA, _ANA_ORDERS, ("get_order", {"order_id": "A103"}),
+              ("update_address", {"order_id": "A101", "address": "40 Pine Rd, Leeds"}),
+              ("refund_order", {"order_id": "A103", "amount_cents": 5900})),
+    alt_solution=(_ANA, _ANA_ORDERS, ("get_order", {"order_id": "A101"}),
+                  ("get_order", {"order_id": "A103"}),
+                  ("refund_order", {"order_id": "A103", "amount_cents": 5900}),
+                  ("update_address", {"order_id": "A101", "address": "40 pine rd, leeds."})),
+    exploit=(_ANA, _ANA_ORDERS,
+             ("update_address", {"order_id": "A101", "address": "40 Pine Rd, Leeds"})),
+)
+
+
+TASKS: dict[str, AgentTask | DeskTask] = {
     t.key: t for t in (FIX_FAILING_TEST, LOG_TRIAGE, SIGNATURE_CHANGE, REFACTOR_KEEP_TESTS,
-                       IMPLEMENT_SPEC, CONFIG_MIGRATION, FLAKY_TEST, CLI_BUG)
+                       IMPLEMENT_SPEC, CONFIG_MIGRATION, FLAKY_TEST, CLI_BUG,
+                       DESK_CANCEL, DESK_TWO_CHANGES)
 }

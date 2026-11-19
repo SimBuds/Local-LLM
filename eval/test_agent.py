@@ -31,9 +31,12 @@ _spec.loader.exec_module(agent)
 
 import _gateway as gw  # noqa: E402
 import promote  # noqa: E402
-from agent_tasks import TASKS, AgentTask  # noqa: E402
+import desk  # noqa: E402
+from agent_tasks import TASKS, AgentTask, DeskTask  # noqa: E402
 
 TASK = TASKS["fix_failing_test"]
+SHELL_TASKS = [t for t in TASKS.values() if isinstance(t, AgentTask)]
+DESK_TASKS = [t for t in TASKS.values() if isinstance(t, DeskTask)]
 META = {"prompt_eval_count": 500, "eval_count": 20, "eval_duration": 1e9}
 FIX = "sed -i 's/qty > BULK_MIN_QTY/qty >= BULK_MIN_QTY/' shop/pricing.py"
 N_CTX = 131072
@@ -73,7 +76,9 @@ class SandboxCase(unittest.TestCase):
     def loop(self, script: list, workdir: str | None = None, max_steps: int = 15,
              deadline: float | None = None, n_ctx: int = N_CTX):
         with mock.patch.object(agent, "chat", side_effect=script) as chat:
-            out = agent.run_loop("lite", False, TASK, workdir or self.seeded(), {}, 300,
+            wd = workdir or self.seeded()
+            out = agent.run_loop("lite", False, TASK.instruction, agent.TOOLS, agent.PROMPT,
+                                 lambda call: agent.execute_call(call, wd), {}, 300,
                                  deadline or time.monotonic() + 600, n_ctx, max_steps)
         return out, chat
 
@@ -163,6 +168,46 @@ class LoopTests(SandboxCase):
         self.assertEqual([c["id"] for c in out["messages"][1]["tool_calls"]], ["a", "b"])
 
 
+class InjectedToolsTests(unittest.TestCase):
+    """run_loop takes its tools, prompt, and executor from the caller, so a task
+    kind with no sandbox can use the same loop. No bwrap needed here."""
+
+    LOOKUP = [{"type": "function", "function": {
+        "name": "lookup", "description": "Look something up.",
+        "parameters": {"type": "object", "properties": {"key": {"type": "string"}},
+                       "required": ["key"]}}}]
+
+    def call(self, key: str) -> dict:
+        return {"id": "k1", "name": "lookup", "arguments": {"key": key},
+                "arguments_ok": True, "arguments_raw": json.dumps({"key": key})}
+
+    def loop(self, script: list, execute):
+        with mock.patch.object(agent, "chat", side_effect=script) as chat:
+            out = agent.run_loop("lite", False, "Find the code.", self.LOOKUP, "DESK PROMPT",
+                                 execute, {}, 300, time.monotonic() + 600, N_CTX, 15)
+        return out, chat
+
+    def test_loop_offers_the_callers_tools_prompt_and_instruction(self):
+        out, chat = self.loop([done("It is 7.")], lambda call: ("unused", True))
+        kwargs = chat.call_args.kwargs
+        self.assertEqual((kwargs["tools"], kwargs["system"]), (self.LOOKUP, "DESK PROMPT"))
+        self.assertEqual(chat.call_args.args[1][0], {"role": "user", "content": "Find the code."})
+        self.assertEqual(out["stop"], "done")
+
+    def test_loop_routes_calls_to_the_callers_executor_and_feeds_back_its_text(self):
+        seen = []
+
+        def execute(call):
+            seen.append(call["arguments"])
+            return ("value: 7", True) if call["arguments"]["key"] == "code" else ("no such key", False)
+
+        out, _ = self.loop([turn(self.call("code")), turn(self.call("nope")), done()], execute)
+        self.assertEqual(seen, [{"key": "code"}, {"key": "nope"}])
+        tools = [m["content"] for m in out["messages"] if m["role"] == "tool"]
+        self.assertEqual(tools, ["value: 7", "no such key"])
+        self.assertEqual((out["steps"], out["bad_calls"], out["stop"]), (3, 1, "done"))
+
+
 class ExecuteCallTests(SandboxCase):
     def test_command_timeout_is_reported(self):
         text, ok = agent.execute_call(bash("sleep 5"), self.seeded(), cmd_timeout=1)
@@ -203,31 +248,31 @@ class TaskTableTests(SandboxCase):
     """Every task's hidden tests must be sound in both directions."""
 
     def test_seed_project_fails_the_hidden_tests(self):
-        for task in TASKS.values():
+        for task in SHELL_TASKS:
             with self.subTest(task.key):
                 self.assertFalse(agent.score(task, self.seeded(task)))
 
     def test_reference_solution_passes(self):
-        for task in TASKS.values():
+        for task in SHELL_TASKS:
             with self.subTest(task.key):
                 self.assertTrue(task.solution)
                 self.assertTrue(agent.score(task, self.seeded(task, task.solution)))
 
     def test_alternate_solution_passes(self):
-        for task in TASKS.values():
+        for task in SHELL_TASKS:
             with self.subTest(task.key):
                 self.assertTrue(task.alt_solution)
                 self.assertNotEqual(task.alt_solution, task.solution)
                 self.assertTrue(agent.score(task, self.seeded(task, task.alt_solution)))
 
     def test_cheating_solution_fails(self):
-        for task in TASKS.values():
+        for task in SHELL_TASKS:
             with self.subTest(task.key):
                 self.assertTrue(task.exploit)
                 self.assertFalse(agent.score(task, self.seeded(task, task.exploit)))
 
     def test_hidden_tests_are_not_in_the_project_files(self):
-        for task in TASKS.values():
+        for task in SHELL_TASKS:
             asserts = [ln for ln in task.tests.splitlines() if ln.startswith("assert")]
             self.assertTrue(asserts)
             for content in task.files.values():
@@ -252,6 +297,247 @@ class TaskTableTests(SandboxCase):
                 code, out = gw.sandbox_exec([sys.executable, visible],
                                             self.seeded(task, task.exploit), 30)
                 self.assertEqual(code, 0, out)
+
+
+def desk_call(name: str, arguments: dict, call_id: str = "d1") -> dict:
+    """A parsed tool call in the shape _gateway.chat() returns."""
+    return {"id": call_id, "name": name, "arguments": arguments, "arguments_ok": True,
+            "arguments_raw": json.dumps(arguments)}
+
+
+def replay(calls) -> tuple[dict, list[bool]]:
+    """A fresh shop after a sequence of (tool, arguments) calls, and whether each
+    call was well formed."""
+    state = desk.new_state()
+    return state, [desk.dispatch(state, desk_call(name, args))[1] for name, args in calls]
+
+
+class DeskToolTests(unittest.TestCase):
+    """The simulated shop. Pure Python, no sandbox and no model."""
+
+    def run_tool(self, state: dict, name: str, **arguments) -> tuple[str, bool]:
+        return desk.dispatch(state, desk_call(name, arguments))
+
+    def test_new_state_is_a_fresh_copy_each_time(self):
+        a, b = desk.new_state(), desk.new_state()
+        a["orders"]["A101"]["status"] = "cancelled"
+        self.assertEqual(b["orders"]["A101"]["status"], "pending")
+        self.assertEqual(desk.new_state(), b)
+
+    def test_every_offered_tool_has_a_handler_and_the_reverse(self):
+        offered = [t["function"]["name"] for t in desk.TOOLS]
+        self.assertEqual(sorted(offered), sorted(desk.HANDLERS))
+        self.assertEqual(len(offered), len(set(offered)))
+
+    def test_read_tools_report_the_records_and_change_nothing(self):
+        state = desk.new_state()
+        text, ok = self.run_tool(state, "find_customer", email="ANA@example.org ")
+        self.assertEqual((ok, "C1" in text, "Ana Ruiz" in text), (True, True, True))
+        text, ok = self.run_tool(state, "list_orders", customer_id="C1")
+        self.assertTrue(ok)
+        for order_id in ("A101", "A102", "A103"):
+            self.assertIn(order_id, text)
+        self.assertNotIn("B201", text)
+        text, ok = self.run_tool(state, "get_order", order_id="A103")
+        self.assertEqual((ok, "delivered" in text, "5900" in text), (True, True, True))
+        self.assertEqual(state, desk.new_state())
+
+    def test_write_tools_change_the_records(self):
+        state = desk.new_state()
+        self.assertTrue(self.run_tool(state, "cancel_order", order_id="A101")[1])
+        self.assertTrue(self.run_tool(state, "update_address", order_id="A101", address="1 New Rd")[1])
+        self.run_tool(state, "refund_order", order_id="A103", amount_cents=1000)
+        self.run_tool(state, "refund_order", order_id="A103", amount_cents=500)
+        order = state["orders"]
+        self.assertEqual((order["A101"]["status"], order["A101"]["address"],
+                          order["A103"]["refunded_cents"]), ("cancelled", "1 New Rd", 1500))
+
+    def test_tools_do_not_enforce_the_policy(self):
+        # The model has to. A tool that refused would do the model's job for it.
+        state = desk.new_state()
+        self.run_tool(state, "cancel_order", order_id="A102")            # shipped
+        self.run_tool(state, "update_address", order_id="A103", address="x")   # delivered
+        self.run_tool(state, "refund_order", order_id="A101", amount_cents=99999)  # pending, over
+        order = state["orders"]
+        self.assertEqual((order["A102"]["status"], order["A103"]["address"],
+                          order["A101"]["refunded_cents"]), ("cancelled", "x", 99999))
+
+    def test_unknown_ids_are_reported_and_change_nothing(self):
+        state = desk.new_state()
+        for name, arguments in (("find_customer", {"email": "nobody@example.org"}),
+                                ("list_orders", {"customer_id": "C9"}),
+                                ("get_order", {"order_id": "Z1"}),
+                                ("cancel_order", {"order_id": "Z1"}),
+                                ("update_address", {"order_id": "Z1", "address": "x"}),
+                                ("refund_order", {"order_id": "Z1", "amount_cents": 5})):
+            with self.subTest(name):
+                text, ok = self.run_tool(state, name, **arguments)
+                self.assertTrue(text.startswith("error:"), text)
+                self.assertTrue(ok, "a well-formed call about a missing record is not malformed")
+        self.assertEqual(state, desk.new_state())
+
+    def test_malformed_calls_are_reported_and_never_raise(self):
+        state = desk.new_state()
+        bad = [desk_call("delete_everything", {}),
+               desk_call("cancel_order", {}),
+               desk_call("cancel_order", {"order_id": 101}),
+               desk_call("cancel_order", {"order_id": ["A101"]}),
+               desk_call("update_address", {"order_id": "A101"}),
+               desk_call("update_address", {"order_id": "A101", "address": ""}),
+               desk_call("refund_order", {"order_id": "A103", "amount_cents": "5900"}),
+               desk_call("refund_order", {"order_id": "A103", "amount_cents": -5}),
+               desk_call("refund_order", {"order_id": "A103", "amount_cents": 0}),
+               desk_call("refund_order", {"order_id": "A103", "amount_cents": True}),
+               desk_call("refund_order", {"order_id": "A103", "amount_cents": 12.5}),
+               {**desk_call("cancel_order", {}), "arguments_ok": False,
+                "arguments_raw": '{"order_id": "A1'},
+               {"id": "x", "name": None, "arguments": None, "arguments_ok": True},
+               {}]
+        for call in bad:
+            with self.subTest(call=call):
+                text, ok = desk.dispatch(state, call)
+                self.assertEqual((text.startswith("error:"), ok), (True, False), text)
+        self.assertEqual(state, desk.new_state())
+
+    def test_same_state_ignores_case_spacing_and_end_punctuation_in_text(self):
+        a, b = desk.new_state(), desk.new_state()
+        a["orders"]["A101"]["address"] = "40 Pine Rd, Leeds"
+        b["orders"]["A101"]["address"] = "  40 pine  rd, leeds. "
+        self.assertTrue(desk.same_state(a, b))
+        b["orders"]["A101"]["address"] = "40 Pine Road, Leeds"
+        self.assertFalse(desk.same_state(a, b))
+
+    def test_same_state_sees_any_other_difference(self):
+        base = desk.new_state()
+        for change in (lambda s: s["orders"]["A103"].update(refunded_cents=1),
+                       lambda s: s["orders"]["B201"].update(status="cancelled"),
+                       lambda s: s["orders"].pop("C301"),
+                       lambda s: s["customers"]["C1"].update(email="x@example.org")):
+            other = desk.new_state()
+            change(other)
+            self.assertFalse(desk.same_state(base, other))
+        self.assertTrue(desk.same_state(base, desk.new_state()))
+
+    def test_patched_applies_order_changes_to_a_copy(self):
+        start = desk.new_state()
+        after = desk.patched(start, {"A101": {"status": "cancelled"}})
+        self.assertEqual(after["orders"]["A101"]["status"], "cancelled")
+        self.assertEqual(start, desk.new_state())
+        with self.assertRaises(KeyError):
+            desk.patched(start, {"Z9": {"status": "cancelled"}})
+        with self.assertRaises(KeyError):
+            desk.patched(start, {"A101": {"colour": "red"}})
+
+
+class DeskTaskTableTests(unittest.TestCase):
+    """Every desk task's expected records must be sound in both directions."""
+
+    def expected(self, task: DeskTask) -> dict:
+        return desk.patched(desk.new_state(), task.changes)
+
+    def test_there_are_desk_tasks(self):
+        self.assertGreaterEqual(len(DESK_TASKS), 2)
+        self.assertEqual(len(TASKS), len(SHELL_TASKS) + len(DESK_TASKS))
+
+    def test_untouched_shop_passes_only_a_task_that_asks_for_no_change(self):
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                self.assertEqual(desk.same_state(desk.new_state(), self.expected(task)),
+                                 not task.changes)
+
+    def test_reference_calls_reach_the_expected_records(self):
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                state, well_formed = replay(task.solution)
+                self.assertTrue(all(well_formed))
+                self.assertTrue(desk.same_state(state, self.expected(task)))
+
+    def test_alternate_calls_reach_them_too(self):
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                self.assertNotEqual(task.alt_solution, task.solution)
+                state, well_formed = replay(task.alt_solution)
+                self.assertTrue(all(well_formed))
+                self.assertTrue(desk.same_state(state, self.expected(task)))
+
+    def test_shortcut_calls_are_well_formed_and_leave_the_wrong_records(self):
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                state, well_formed = replay(task.exploit)
+                self.assertTrue(all(well_formed), "a shortcut that errors proves nothing")
+                self.assertFalse(desk.same_state(state, self.expected(task)))
+
+    def test_request_gives_no_order_id_and_none_of_the_policy(self):
+        policy = [ln for ln in agent.DESK_PROMPT.splitlines() if ln[:1].isdigit()]
+        self.assertGreaterEqual(len(policy), 4)
+        for task in DESK_TASKS:
+            with self.subTest(task.key):
+                for order_id in desk.new_state()["orders"]:
+                    self.assertNotIn(order_id, task.instruction)
+                for rule in policy:
+                    self.assertNotIn(rule, task.instruction)
+                self.assertIn("@example.org", task.instruction)
+
+
+class DeskAttemptTests(unittest.TestCase):
+    """A whole desk attempt with a scripted model. No sandbox is involved."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.tmp = Path(td.name)
+        self.task = DESK_TASKS[0]
+
+    def turns(self, calls) -> list:
+        return [turn(desk_call(name, args)) for name, args in calls]
+
+    def attempt(self, script: list, max_steps: int = 15):
+        with mock.patch.object(agent, "chat", side_effect=script) as chat:
+            record = agent.run_attempt("lite", self.task, 1, 1, 300, "off", N_CTX, max_steps,
+                                       self.tmp)
+        return record, chat
+
+    def test_model_that_makes_the_right_calls_and_stops_passes(self):
+        r, chat = self.attempt(self.turns(self.task.solution) + [done("All sorted.")])
+        self.assertEqual((r["passed"], r["reason"], r["steps"]),
+                         (True, "pass", len(self.task.solution) + 1))
+        kwargs = chat.call_args.kwargs
+        self.assertEqual((kwargs["tools"], kwargs["system"]), (desk.TOOLS, agent.DESK_PROMPT))
+        saved = json.loads((self.tmp / f"{self.task.key}-attempt-1.json").read_text())
+        self.assertEqual(saved["reason"], "pass")
+        self.assertEqual(saved["messages"][0]["content"], self.task.instruction)
+
+    def test_model_that_replies_without_acting_fails(self):
+        r, _ = self.attempt([done("I have cancelled it for you.")])
+        self.assertEqual((r["passed"], r["reason"]), (False, "tests-failed"))
+
+    def test_model_that_takes_the_shortcut_fails(self):
+        r, _ = self.attempt(self.turns(self.task.exploit) + [done()])
+        self.assertEqual((r["passed"], r["reason"]), (False, "tests-failed"))
+
+    def test_right_records_without_ending_the_loop_is_not_a_pass(self):
+        script = self.turns(self.task.solution)
+        r, _ = self.attempt(script, max_steps=len(script))
+        self.assertEqual((r["passed"], r["reason"], r["tests_ok"]), (False, "step-cap", True))
+
+    def test_failed_model_call_is_recorded_and_not_scored(self):
+        err = urllib.error.URLError("connection refused")
+        r, _ = self.attempt([err])
+        self.assertEqual((r["passed"], r["reason"], r["tests_ok"]), (False, "gen-fail", False))
+        self.assertIs(r["exc"], err)
+
+    def test_each_attempt_starts_from_a_fresh_shop(self):
+        first, _ = self.attempt(self.turns(self.task.solution) + [done()])
+        again, _ = self.attempt(self.turns(self.task.solution) + [done()])
+        self.assertEqual((first["passed"], again["passed"]), (True, True))
+        self.assertEqual(desk.SHOP, desk.new_state())
+
+    def test_tool_results_reach_the_model(self):
+        r, _ = self.attempt(self.turns(self.task.solution[:1]) + [done()])
+        saved = json.loads((self.tmp / f"{self.task.key}-attempt-1.json").read_text())
+        tool = [m["content"] for m in saved["messages"] if m["role"] == "tool"]
+        self.assertEqual(len(tool), 1)
+        self.assertIn("C1", tool[0])
 
 
 class SummaryTests(unittest.TestCase):
