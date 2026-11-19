@@ -262,9 +262,9 @@ per model, and a close-result warning when the winner's margin is within the tie
 threshold (5 points for rates, 0.5/10 for judge scores). Learn/tutor summaries
 add a judge-reliability section (parse rate, inter-judge disagreement, and a
 warning when a response was scored by fewer than two judges). With the current
-three-model lineup, leave-one-out leaves two judges per response, so
-disagreement is a real number rather than the `n/a` a two-model lineup could
-only ever print. That is what `lite` was added for. Tutor ranking breaks
+four-model lineup, leave-one-out leaves three judges per response. `lite` was
+added as the third model so that disagreement is a real number rather than the
+`n/a` a two-model lineup could only ever print. Tutor ranking breaks
 teach-score ties on leak rate: the model that leaks less wins.
 
 **Measured noise floor for `run-persona.py` at 3 attempts: up to 3 of 21 on a
@@ -310,28 +310,29 @@ Confidence by signal:
 individual runners so routine testing doesn't drift across hand-typed flags.
 
 ```bash
-./eval/run-profile.py smoke --models gemma qwen lite      # after a model rebuild
-./eval/run-profile.py standard --models gemma qwen lite   # routine full comparison
-./eval/run-profile.py deep --models gemma qwen lite       # pre-decision confidence run
-./eval/run-profile.py standard --models gemma qwen lite --dry-run  # show commands
+./eval/run-profile.py smoke --models gemma qwen lite freedom      # after a model rebuild
+./eval/run-profile.py standard --models gemma qwen lite freedom   # routine full comparison
+./eval/run-profile.py deep --models gemma qwen lite freedom       # pre-decision confidence run
+./eval/run-profile.py standard --models gemma qwen lite freedom --dry-run  # show commands
 ./eval/run-profile.py smoke --models lite --out-root /tmp/check    # results outside eval/runs/
 ```
 
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
 | `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each |
-| `standard` | When picking models or after prompt-stack changes | ~1 hour | All eight suites; code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
+| `standard` | When picking models or after prompt-stack changes | ~2 hours with four models | All eight suites, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
 | `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
 54/46.7 tok/s running fully or mostly on GPU. Two things have since inflated it.
-Two of the three current models spill to CPU, and — the larger factor — the judged
+Three of the four current models spill to CPU, and, as the larger factor, the judged
 suites scale with the **square** of the model count: `run-learn.py` and
 `run-tutor.py` generate `models x tasks x attempts` responses and then grade each
 with `models-1` judges x `--judge-repeats` calls. Going 2 -> 3 models roughly
 triples the judging work. A 3-model `standard` took 97 minutes on 2026-09-15.
 On 2026-09-17 it took 63, because `load-mode = none` and `ubatch-size = 1024`
-roughly doubled prompt ingest on the two CPU-spilling models. Drop
+roughly doubled prompt ingest on the two CPU-spilling models. The four-model
+`standard` pass of 2026-11-09 took 111.1 minutes. Drop
 `--judge-repeats` to 1 to trade the median back for speed.
 
 The wrapper prints every `summary.md` it produced at the end. `--out-root` is
@@ -685,9 +686,10 @@ active parameters per token does.
 
 ### GPU faults (NVIDIA Xid 31)
 
-`llama-server` has crashed 22 times since 2026-07-28 with `CUDA error: an illegal
-memory access`, logged by the kernel as `NVRM: Xid 31` (a GPU MMU fault). Every
-fault the journal holds, attributed on 2026-09-23 from the log lines before it:
+`llama-server` has crashed 31 times since 2026-07-28 with `CUDA error: an illegal
+memory access`, logged by the kernel as `NVRM: Xid 31` (a GPU MMU fault). The
+table lists each one. Faults up to 2026-09-22 were attributed on 2026-09-23 from
+the log lines before them, and later ones carry a footnote:
 
 | When | Runtime | Model | GPU layers | MoE layers on CPU | Vision projector | Crash after load |
 |---|---|---|---|---|---|---|
@@ -776,8 +778,9 @@ What the table settles:
   that the fault follows the GPU reading expert weights from system RAM, is
   broken.
 - **No one model, runtime, or build.** Dense 9B, dense 12B, and two MoE models,
-  under Ollama's bundled llama.cpp and builds 10968, 11022 and 11188, across drivers
-  610.43, 610.57 and 615.71, kernels 7.1.5 to 7.2.6, and CUDA 13.3 and 13.4.
+  under Ollama's bundled llama.cpp and builds 11022, 11188, 12009 and 12155,
+  across drivers 610.43, 610.57, 615.71, 615.78.08 and 620.70.06, kernels 7.1.5
+  to 7.3.4, and CUDA 13.3 and 13.4.
 - **The vision projector is not required.** Every Ollama crash had one loaded
   and none of the router crashes did.
 - **Under Ollama, every crash came within 67 s of a model load**, mostly on the
@@ -787,9 +790,11 @@ What the table settles:
 - **Something other than llama.cpp hits the same fault.** A game (`Sand.exe`)
   logged Xid 31 on 2026-08-24, and games have logged Xid 32 (2026-08-10) and
   Xid 109 context-switch timeouts (four times on 2026-08-31).
-- **20 of the 21 fault addresses are in the host program-memory range**
-  (`0x7f..`), including crashes with the model fully on the GPU. The game's
-  fault and one router fault were at GPU-range addresses.
+- **As of 2026-09-23, 20 of the 21 fault addresses then recorded were in the
+  host program-memory range** (`0x7f..`), including crashes with the model fully
+  on the GPU. The game's fault and one router fault were at GPU-range addresses.
+  Every later fault with a recorded address is also host-range (footnotes 2 to
+  6).
 - **Not measured:** crash rate per model. The journal records crashes, not hours
   of use, so the table cannot say whether one model crashes more often per hour
   than another.
@@ -919,14 +924,14 @@ check is a full 100-pass soak with HMM off, plus any Xid 31 seen in normal use.
 
 | Model | Status | Notes |
 |---|---|---|
-| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU since the headroom fix the same day. |
-| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU since the headroom fix the same day. |
+| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU from the headroom fix the same day, 22 from 2026-09-16, and 24 since 2026-10-30. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU from the headroom fix the same day, 35 from 2026-09-16, and 37 since 2026-10-30. |
 | `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
 | `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
-| `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | current, added 2026-11-08, not yet benchmarked | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
+| `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | current, added 2026-11-08, benchmarked 2026-11-09 | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
 | `bigqwen` (`qwen3.8-27b-mtp-q4_K_M.gguf`) | added 2026-11-08, retired 2026-11-09 | Added with `./add-model` only to measure its speed. Dense 27B with MTP, 16.8 GB file. At 131072 context and the 2 GB margin only 12 of 66 layers fit on the GPU (6109 MiB used). On build 12155 the 2026-11-08 persona run gave 7 tok/s and 17.7 s per reply, 16/21 clean. MTP took it from the 4 tok/s of the 2026-10-09 load check to 7, which is still too slow for interactive use. |
 | `gemma4:31b-it-qat` | speed-only | Not in the lineup. Dense 31B, 18 GB, 3.1 tok/s under 72% CPU spill. Slowest base measured here; effectively unusable interactively. |
 | `gemma` (`gemma4:12b-it-q4_K_M`) | retired 2026-07-27 | Base no longer installed. Won/tied all six suites on 2026-06-14, but that run was sampler-confounded. |
@@ -985,14 +990,17 @@ entirely on the GPU with the 2 GB margin. The full sweep is in
 
 ### llama.cpp build history (moved from README on 2026-11-09)
 
-The installed build is 12155 (commit `e30ad80fd`), swapped in on 2026-11-05
-through `scripts/llama-update` after `scripts/verify-build` passed it: at every
+The installed build is 12439 (commit `8bfd64b5a`, version 1.0.0), swapped in on
+2026-11-16 after `scripts/verify-build` passed it (the *Hardware* table
+has the numbers). It has not been benchmarked yet. It was compiled against CUDA
+13.4, and the CUDA toolkit moved to 13.5.0 on 2026-11-17, which `verify-build`
+did not see. Build 12155 (commit `e30ad80fd`) ran from 2026-11-05 and is now the
+rollback target. `scripts/verify-build` passed it too: at every
 pinned split it needed exactly the same VRAM as 12009 (gemma 6066, lite 8038,
-qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. Build
-12009 (commit `e216f4ec8`) ran from 2026-10-30 and is now the rollback target.
-12155 has not been benchmarked yet. The
-current leaderboard was measured on build 12009 on 2026-10-31, repeating the
-2026-10-30 pass at the same config. The ones before it
+qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. The
+current leaderboard was measured on build 12155 on 2026-11-09. Build
+12009 (commit `e216f4ec8`) ran from 2026-10-30 and was benchmarked on
+2026-10-30 and 2026-10-31 at the same config. The ones before it
 came from build 11768 (2026-10-20) and build 11022 (commit `f172be756`,
 2026-09-17), and results from
 2026-09-14 to 2026-09-16 came from build 10968 (commit `41abbfd59`). llama.cpp is built from
@@ -1236,7 +1244,7 @@ Findings:
 - The service log at its default verbosity prints no cache lines, which is why
   the 2026-11-05 audit found none.
 
-Setting a `cache-ram` value in `server.ini` is Casey's decision.
+`cache-ram = 0` has been set in `server.ini` since 2026-11-11.
 
 ### Spike test of freedom (2026-11-09)
 
@@ -1279,9 +1287,10 @@ Per-token KLD stayed within about ±0.00006 (a 4-chunk `lite` capture), which is
 the rounding of the stored log-probabilities. Each run took about 3.2 minutes
 including the VRAM loads. So the floor is zero, and any non-zero mean KLD between
 two builds is a real numerical difference. Whether a given difference matters is
-not known yet: a gate needs a few real build-to-build readings first. The live
-12155 build has no `llama-perplexity`, so the first real reading comes at the
-update after 12174.
+not known yet: a gate needs a few real build-to-build readings first. Build
+12155 had no `llama-perplexity`, so the 12155 to 12439 update on 2026-11-16
+skipped KL. Build 12439 has it, so the first real reading comes at the next
+update.
 
 ### Strict-rubric learn run (2026-10-31)
 

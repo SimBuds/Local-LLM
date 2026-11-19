@@ -9,8 +9,9 @@
 # do not inherit the login shell's PATH.
 #
 # --cors-origins localhost: the default (*) let any web page read the router's
-# responses. Now only localhost and 127.0.0.1 origins get CORS headers. The apps
-# and the QEMU guest send no Origin, so they are unaffected (checked 2026-11-14).
+# responses. Since llama.cpp 1.0 (build 12439) only same-origin requests are
+# allowed, and any other Origin gets a 403. The apps and the QEMU guest send no
+# Origin, so they are unaffected (checked 2026-11-16).
 
 [Unit]
 Description=llama.cpp router server (http://localhost:8080)

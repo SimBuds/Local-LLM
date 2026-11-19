@@ -98,15 +98,16 @@ new builder was silently ignored until someone edited it.
 | `lite` | `qwen3.5-9b-mtp` | Dense 9B, the only one that fits entirely in 10 GB. Speed anchor and third judge. |
 | `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive` | The uncensored tune of `qwen`'s base, for Friends-Hermes. No MTP heads, so 34 MoE layers on CPU rather than 37. Held to `qwen`'s standards. |
 
-`gemma` and `qwen` are mixture-of-experts: few parameters are active per token,
-so spilling experts to system RAM stays usable even though neither fits fully in
-VRAM. `lite` is dense but small enough to avoid spillover, which is what makes it
-the baseline the other two are measured against.
+`gemma`, `qwen` and `freedom` are mixture-of-experts: few parameters are active
+per token, so spilling experts to system RAM stays usable even though none of
+them fits fully in VRAM. `lite` is dense but small enough to avoid spillover,
+which is what makes it the baseline the other three are measured against.
 
 `lite` also exists for a measurement reason. The learn and tutor suites grade
 with a leave-one-out judge panel. With two models that leaves exactly one judge
 per response and inter-judge disagreement can never be computed. Three models
-means two judges per response and a real disagreement number.
+means two judges per response and a real disagreement number. The current four
+models give three judges per response.
 
 `freedom` is an uncensored base in a lineup whose shared stack carries
 `prompts/safety.md`. The same tune was tried as `qwen` on 2026-07-27 and
@@ -204,6 +205,17 @@ model once with `--fit-target 2048` and reading llama.cpp's own fit line, and on
 2026-09-15 that reproduced `gemma`'s pinned 21 exactly, from
 `31 layers (21 overflowing), 6184 MiB used`.
 
+Two other `server.ini` settings are in effect but are not locked, so they have
+no row above:
+
+- `cache-ram = 0` (2026-11-11). The default prompt cache grew `qwen`'s host RAM
+  by about 627 MiB per long prompt, which projects to the 2026-11-04 OOM kill.
+- `reasoning-preserve = true` (2026-11-14). It pins the build 12155 default, so
+  a build that changes the default cannot change what `qwen` and `freedom` see
+  on a multi-turn request. The deployed preset does not carry the line yet.
+  Build 12439 reports the same default, so behaviour matches until it is
+  deployed.
+
 ---
 
 ## Hardware envelope
@@ -220,13 +232,15 @@ splits, and the leaderboard becomes a new baseline.
 
 ## Open questions
 
-Carried here so they are not rediscovered. The working list with full detail is
-in `IMPLEMENT.md`, which is untracked and does not survive a clone.
+Carried here so they are not rediscovered. `IMPLEMENT.md` holds only the work
+in flight and the deferred list. It is untracked and does not survive a clone,
+so the durable detail is in `TESTING.md`.
 
 - Seed reproducibility is unresolved, which is why prompt caching stays off for
   evaluation.
 - Two persona rules, `unverified` and `fields_echo`, are obeyed by `qwen` and by
   neither of the other two, stacked or not. They are candidates for a rewrite
   rather than a cut, because deleting them would cost `qwen` a rule it does obey.
-- The learn rubric is saturated, so the `qwen` and `gemma` ordering on that suite
-  should not be trusted until it is rerun with a stricter rubric.
+- The learn rubric is saturated. A stricter 0 to 4 rubric was run on 2026-11-14
+  and `qwen`, `gemma` and `freedom` still tied (`TESTING.md`, *Learn rubric at 0
+  to 4*), so the suite cannot order them.

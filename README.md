@@ -364,8 +364,9 @@ field. Day to day it runs as the `llama-server` user service over
 `~/.config/llama.cpp/models.ini` (see *Serving other apps*). `make serve` runs a
 router in the foreground over the repo's own `models/models.ini`.
 
-The installed build is 12155 (commit `e30ad80fd`, since 2026-11-05). The rollback
-target and the leaderboard's build is 12009 (`e216f4ec8`). llama.cpp is built
+The installed build is 12439 (commit `8bfd64b5a`, since 2026-11-16), and it has
+not been benchmarked yet. The rollback target and the leaderboard's build is
+12155 (`e30ad80fd`). llama.cpp is built
 from source because the AUR `llama.cpp-cuda` package was reported stale. Earlier
 builds and the 2026-09 compiler fixes are in [`TESTING.md`](TESTING.md),
 *llama.cpp build history*.
@@ -698,6 +699,7 @@ Single runners, for targeted sweeps:
 ./eval/run-tutor.py --models gemma qwen lite freedom
 ./eval/run-json.py --models gemma qwen lite freedom
 ./eval/run-tools.py --models gemma qwen lite freedom
+./eval/run-agent.py --models gemma qwen lite freedom   # multi-step tasks with a sandboxed shell
 ./eval/run-persona.py --models gemma qwen lite freedom
 ```
 
@@ -838,7 +840,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit fully on the GPU run fast. Dense spillover is usually too slow,
 and MoE spillover can stay usable. Desktop apps hold about 1 GB of the card at
 idle, so a model plus its KV cache has about 8.6 GB. Runtime: llama.cpp build
-12155 (`e30ad80fd`) with CUDA 13.4.
+12439 (`8bfd64b5a`), compiled against CUDA 13.4. The CUDA toolkit has been 13.5.0
+since 2026-11-17, and the build has not been rebuilt or benchmarked on it. The
+leaderboard above was measured on build 12155.
 
 ## Docs
 

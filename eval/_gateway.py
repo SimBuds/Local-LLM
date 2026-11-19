@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import resource
 import shutil
 import subprocess
 import sys
@@ -721,6 +722,57 @@ def run_program(source: str, exec_timeout: int) -> tuple[bool, str]:
     if "SyntaxError" in last:
         return False, "syntax"
     return False, last[:60]
+
+
+
+# --- sandboxed commands over a caller-owned workdir -----------------------------
+# run_program() above runs one finished program in a throwaway directory. An agent
+# loop needs the opposite: many model-written commands against one directory that
+# persists between them. The differences are deliberate. The host environment is
+# not passed through, because model-written shell could print it into a transcript.
+# Output goes to a size-limited file, because `yes` must not fill the runner's
+# memory. And there is no bare-subprocess fallback: model-written shell without a
+# sandbox is refused, not reported.
+
+SANDBOX_FILE_MAX = 16 * 1024 * 1024     # RLIMIT_FSIZE for the command and its captured output
+SANDBOX_ENV = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
+
+
+class SandboxUnavailable(RuntimeError):
+    """bwrap is missing or cannot start, so the command was not run."""
+
+
+def _limit_file_size() -> None:
+    resource.setrlimit(resource.RLIMIT_FSIZE, (SANDBOX_FILE_MAX, SANDBOX_FILE_MAX))
+
+
+def sandbox_exec(argv: list[str], workdir: str, timeout: int,
+                 stdin: str | None = None) -> tuple[int | None, str]:
+    """Run `argv` under bwrap with `workdir` as the only writable path.
+
+    Returns (returncode, stdout and stderr merged). returncode is None on a
+    timeout. Every process the command started is gone when this returns: the
+    sandbox has its own PID namespace, which ends with the call.
+    """
+    if not _sandbox_works():
+        raise SandboxUnavailable(sandbox_note())
+    code: int | None
+    with tempfile.TemporaryFile() as out:
+        try:
+            proc = subprocess.run(
+                _bwrap_argv(workdir) + argv, cwd=workdir,
+                env={**SANDBOX_ENV, "HOME": workdir},
+                input=stdin.encode("utf-8") if stdin is not None else None,
+                stdin=None if stdin is not None else subprocess.DEVNULL,
+                stdout=out, stderr=subprocess.STDOUT,
+                timeout=timeout, preexec_fn=_limit_file_size,
+            )
+            code = proc.returncode
+        except subprocess.TimeoutExpired:
+            code = None
+        out.seek(0)
+        text = out.read().decode("utf-8", errors="replace")
+    return code, text
 
 
 # --- uncertainty reporting ----------------------------------------------------

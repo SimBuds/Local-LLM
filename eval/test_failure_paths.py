@@ -33,9 +33,10 @@ sys.path.insert(0, str(EVAL))
 import _gateway as gw  # noqa: E402
 import _judge  # noqa: E402
 
-# Runners that call generate(); run-tools.py calls chat() and is covered below.
+# Runners that call generate(). The chat() runners are listed after them.
 GENERATE_RUNNERS = ["run-code.py", "run-content.py", "run-json.py", "run-learn.py",
                     "run-persona.py", "run-speed.py", "run-tutor.py"]
+CHAT_RUNNERS = ["run-tools.py", "run-agent.py"]
 
 CRASHED = {"value": "unloaded", "failed": True, "exit_code": 134}
 LOADED = {"value": "loaded"}
@@ -83,6 +84,8 @@ class FailurePathCase(unittest.TestCase):
         self._patch(gw, "_router_status", lambda _m: dict(status))
         if hasattr(runner, "require_ctx"):
             self._patch(runner, "require_ctx", lambda models, _n: {m: 65536 for m in models})
+        if hasattr(runner, "require_sandbox"):
+            self._patch(runner, "require_sandbox", lambda: None)
         if hasattr(runner, "load_model"):
             self._patch(runner, "load_model", lambda *_a, **_k: (1.0, []))
         # Two models: learn and tutor refuse a lineup with no second model to judge it.
@@ -106,11 +109,13 @@ class CrashedModelStopsTheRun(FailurePathCase):
                 self.assertIn("exit code 134", str(cm.exception))
                 self.assertEqual(self.summaries(), [], f"{filename} wrote a summary")
 
-    def test_run_tools_aborts_on_a_crashed_model(self):
-        runner = self.drive("run-tools.py", http_500(), CRASHED)
-        with self.assertRaises(gw.ModelCrashed):
-            runner.main()
-        self.assertEqual(self.summaries(), [])
+    def test_every_chat_runner_aborts_on_a_crashed_model(self):
+        for filename in CHAT_RUNNERS:
+            with self.subTest(runner=filename):
+                runner = self.drive(filename, http_500(), CRASHED)
+                with self.assertRaises(gw.ModelCrashed):
+                    runner.main()
+                self.assertEqual(self.summaries(), [], f"{filename} wrote a summary")
 
 
 class AbortedRunLeavesNoEmptyFolders(FailurePathCase):
@@ -128,7 +133,7 @@ class AbortedRunLeavesNoEmptyFolders(FailurePathCase):
             fn(*a)
 
     def test_crashed_run_leaves_nothing_under_out_root(self):
-        for filename in GENERATE_RUNNERS + ["run-tools.py"]:
+        for filename in GENERATE_RUNNERS + CHAT_RUNNERS:
             with self.subTest(runner=filename):
                 runner = self.drive(filename, http_500(), CRASHED)
                 with self.assertRaises(gw.ModelCrashed):
@@ -192,7 +197,7 @@ class CtrlCEndsQuietly(unittest.TestCase):
 
 class SingleFailureIsRecorded(FailurePathCase):
     def test_timeouts_are_counted_and_the_run_finishes(self):
-        for filename in GENERATE_RUNNERS + ["run-tools.py"]:
+        for filename in GENERATE_RUNNERS + CHAT_RUNNERS:
             with self.subTest(runner=filename):
                 runner = self.drive(filename, TimeoutError("timed out"), LOADED)
                 runner.main()

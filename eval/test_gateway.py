@@ -15,8 +15,12 @@ import argparse
 import http.client
 import io
 import json
+import os
+import socket
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -644,6 +648,96 @@ class AfterFailureTests(GatewayCase):
 
     def test_abort_types_are_system_exits_so_runners_do_not_count_them(self):
         self.assertTrue(issubclass(gw.ModelCrashed, SystemExit))
+
+
+class SandboxExecTests(unittest.TestCase):
+    """sandbox_exec against real bwrap. No model, no network."""
+
+    def setUp(self):
+        if not gw._sandbox_works():
+            self.skipTest("bwrap is not usable on this machine")
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.wd = td.name
+
+    def run_sh(self, script, timeout=20, stdin=None):
+        return gw.sandbox_exec(["sh", "-c", script], self.wd, timeout, stdin=stdin)
+
+    def host_has(self, marker):
+        """True while any host process carries `marker` on its command line."""
+        for _ in range(20):
+            proc = subprocess.run(["pgrep", "-f", marker], capture_output=True)
+            if proc.returncode == 1:
+                return False
+            time.sleep(0.1)
+        return True
+
+    def test_workdir_persists_between_calls(self):
+        self.assertEqual(self.run_sh("echo hi > note.txt"), (0, ""))
+        self.assertEqual(gw.sandbox_exec(["cat", "note.txt"], self.wd, 20), (0, "hi\n"))
+
+    def test_exit_code_and_merged_output(self):
+        code, out = self.run_sh("echo to-out; echo to-err >&2; exit 3")
+        self.assertEqual(code, 3)
+        self.assertIn("to-out", out)
+        self.assertIn("to-err", out)
+
+    def test_stdin_is_delivered(self):
+        code, out = gw.sandbox_exec([sys.executable, "-"], self.wd, 20, stdin="print(6 * 7)\n")
+        self.assertEqual((code, out), (0, "42\n"))
+
+    def test_timeout_returns_none_and_leaves_no_process(self):
+        marker = f"sbx-timeout-{os.getpid()}"
+        code, _ = gw.sandbox_exec(
+            [sys.executable, "-c", "import time; time.sleep(300)", marker], self.wd, 1)
+        self.assertIsNone(code)
+        self.assertFalse(self.host_has(marker))
+
+    def test_background_process_dies_with_the_call(self):
+        marker = f"sbx-bg-{os.getpid()}"
+        code, out = self.run_sh(
+            f"{sys.executable} -c 'import time; time.sleep(300)' {marker} & echo started")
+        self.assertEqual((code, out), (0, "started\n"))
+        self.assertFalse(self.host_has(marker))
+
+    def test_host_environment_is_not_passed_through(self):
+        with mock.patch.dict(os.environ, {"SBX_PLANTED_SECRET": "leak-me"}):
+            code, out = gw.sandbox_exec(["env"], self.wd, 20)
+        self.assertEqual(code, 0)
+        self.assertNotIn("leak-me", out)
+        self.assertIn(f"HOME={self.wd}", out)
+
+    def test_home_directory_is_absent(self):
+        code, _ = gw.sandbox_exec(["ls", "/home"], self.wd, 20)
+        self.assertNotEqual(code, 0)
+
+    def test_host_network_is_unreachable(self):
+        with socket.socket() as srv:
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(1)
+            port = srv.getsockname()[1]
+            probe = (f"import socket\ntry:\n    socket.create_connection(('127.0.0.1', {port}), 2)\n"
+                     "    print('connected')\nexcept OSError:\n    print('blocked')\n")
+            code, out = gw.sandbox_exec([sys.executable, "-"], self.wd, 20, stdin=probe)
+        self.assertEqual((code, out), (0, "blocked\n"))
+
+    def test_runaway_output_is_cut_off(self):
+        code, out = self.run_sh("yes")
+        self.assertNotEqual(code, 0)
+        self.assertLessEqual(len(out.encode()), gw.SANDBOX_FILE_MAX)
+
+    def test_oversized_file_write_is_cut_off(self):
+        code, _ = gw.sandbox_exec(
+            [sys.executable, "-c", "open('big', 'wb').write(b'x' * (64 << 20))"], self.wd, 20)
+        self.assertNotEqual(code, 0)
+        self.assertLessEqual((Path(self.wd) / "big").stat().st_size, gw.SANDBOX_FILE_MAX)
+
+    def test_unusable_sandbox_raises_and_runs_nothing(self):
+        with mock.patch.object(gw, "_sandbox_works", return_value=False), \
+                mock.patch.object(gw.subprocess, "run") as run:
+            with self.assertRaises(gw.SandboxUnavailable):
+                gw.sandbox_exec(["true"], self.wd, 5)
+        run.assert_not_called()
 
 
 class PositiveIntTests(unittest.TestCase):

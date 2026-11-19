@@ -24,7 +24,7 @@ sys.path.insert(0, str(EVAL))
 
 import _gateway as gw  # noqa: E402
 
-RUNNERS = ["run-code.py", "run-content.py", "run-json.py", "run-learn.py",
+RUNNERS = ["run-agent.py", "run-code.py", "run-content.py", "run-json.py", "run-learn.py",
            "run-persona.py", "run-speed.py", "run-tools.py", "run-tutor.py"]
 
 
@@ -75,6 +75,11 @@ class PreflightBeforeRunDirTests(unittest.TestCase):
 
     def test_run_speed(self):
         self.assert_preflights_first("run-speed.py")
+
+    def test_run_agent_preflights_before_sandbox_probe_and_served_context(self):
+        self.assert_preflights_first("run-agent.py",
+                                     require_sandbox="sandbox probed before preflight",
+                                     served_ctx="served_ctx called before preflight")
 
 
 class RunnersUseGatewayPreflightTests(unittest.TestCase):
