@@ -1115,6 +1115,23 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
+### JSON fact checks were never counted (2026-11-19)
+
+`run-json.py` counted every fact check as passed, whether it passed or not, so
+any schema-valid answer scored as fully correct. The line had been there since
+the runner's first commit on 2026-06-09. It showed up when `lite` printed `ok`
+for multi-hop answers that were plainly wrong.
+
+- Fixed the same day, and pinned by `RunAttemptTests` in `eval/test_json.py`.
+- No published number changes. All 915 answers saved under `eval/runs/`, across
+  18 JSON runs from 2026-06-10 to 2026-11-09, were rescored with the checks
+  applied, and none fails one.
+- A JSON result whose answers were not saved cannot be rescored. That covers the
+  2026-11-14 `max` fit check below, whose 7/7 for `lite` shows schema-valid
+  output and nothing more.
+- Until this date the suite could not have reported a wrong fact. Read every
+  earlier "100%" as confirmed by the rescore, not by the run that printed it.
+
 ### JSON max pressure (2026-11-14)
 
 `run-json.py --context-pressure high` reached only about 40% of the 131072

@@ -20,6 +20,7 @@ Add tasks here; run-json.py discovers everything in TASKS.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -421,6 +422,120 @@ NO_INFER = JsonTask(
                    and p["work_authorization"].strip() != ""),
     ],
 )
+
+
+# --- multi-hop tasks (generated, sized by argument) ---------------------------
+# The seven tasks above each need one planted passage, and every model scores
+# 100% on them. These two need several passages combined: a chain followed link
+# by link, or a set of records counted and summed. Their size is an argument
+# because the useful size is the one where models land between 0% and 100%,
+# which only a measurement can find. Documents are built from a seed fixed by
+# the arguments, so the same size is the same document on every run.
+
+_SITE_FIRST = ["North", "South", "East", "West", "Upper", "Lower", "Inner", "Outer"]
+_SITE_SECOND = ["Harbour", "Ridge", "Depot", "Mill", "Quarry", "Ferry", "Orchard",
+                "Foundry", "Granary", "Viaduct"]
+_SITES = [f"{a} {b}" for a in _SITE_FIRST for b in _SITE_SECOND]
+
+
+def chain_trace_task(hops: int, chains: int) -> JsonTask:
+    """`chains` chains of sites, each `hops` links long, statements shuffled.
+
+    The first site in a chain states its access code. Every later site says only
+    that it uses the same code as the site before it. The model is asked for the
+    code of the last site in each chain, so it must follow `hops` links, and the
+    other chains' codes are the wrong answers on offer.
+    """
+    if hops < 1 or chains < 1:
+        raise ValueError("chain_trace needs at least 1 hop and 1 chain")
+    if chains * (hops + 1) > len(_SITES):
+        raise ValueError(f"chain_trace has {len(_SITES)} site names, "
+                         f"{chains} chains of {hops} hops need {chains * (hops + 1)}")
+    rng = random.Random(f"chain_trace:{hops}:{chains}")
+    names = rng.sample(_SITES, chains * (hops + 1))
+    codes = rng.sample(range(10000, 100000), chains)
+    statements: list[str] = []
+    asked: list[tuple[str, int]] = []
+    for c, code in enumerate(codes):
+        sites = names[c * (hops + 1):(c + 1) * (hops + 1)]
+        statements.append(f"SITE REGISTER: The access code for the {sites[0]} site is {code}.")
+        statements += [f"SITE REGISTER: The {later} site uses the same access code as the "
+                       f"{earlier} site." for earlier, later in zip(sites, sites[1:])]
+        asked.append((sites[-1].lower().replace(" ", "_"), code))
+    rng.shuffle(statements)
+    return JsonTask(
+        key="chain_trace",
+        instruction=(
+            "The document below has site register entries scattered among other "
+            "text. Some sites state their own access code. Others say only that "
+            "they use the same code as another site, which may itself point to a "
+            "further site. Report the access code of each site named in the schema, "
+            "as an integer."
+        ),
+        needles=statements,
+        base_words=3000,
+        schema={"type": "object",
+                "properties": {key: {"type": "integer"} for key, _ in asked},
+                "required": [key for key, _ in asked]},
+        checks=[(f"{key}={code}",
+                 lambda p, key=key, code=code: isinstance(p, dict) and p.get(key) == code)
+                for key, code in asked],
+    )
+
+
+_OFFICES = ["Halifax", "Calgary", "Winnipeg", "Victoria", "Regina"]
+_EXPENSES = ["travel", "equipment", "training", "catering", "software"]
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December"]
+
+
+def ledger_sum_task(records: int, distractors: int) -> JsonTask:
+    """`records` expense records to count and total, among `distractors` others.
+
+    One office and one category are asked for. Distractors differ from them in
+    the category, the office, or both, in turn, so matching on one field alone
+    gives a wrong count and a wrong total.
+    """
+    if records < 1 or distractors < 0:
+        raise ValueError("ledger_sum needs at least 1 record and no fewer than 0 distractors")
+    rng = random.Random(f"ledger_sum:{records}:{distractors}")
+    office, category = rng.choice(_OFFICES), rng.choice(_EXPENSES)
+    other_offices = [o for o in _OFFICES if o != office]
+    other_categories = [c for c in _EXPENSES if c != category]
+    while True:
+        amounts = rng.sample(range(120, 4900), records + distractors)
+        total = sum(amounts[:records])
+        if total not in amounts[records:]:  # no single distractor reads as the total
+            break
+    rows = [(office, amount, category) for amount in amounts[:records]]
+    for i, amount in enumerate(amounts[records:]):
+        rows.append([(office, amount, rng.choice(other_categories)),
+                     (rng.choice(other_offices), amount, category),
+                     (rng.choice(other_offices), amount, rng.choice(other_categories))][i % 3])
+    rng.shuffle(rows)
+    ids = rng.sample(range(100, 1000), len(rows))
+    return JsonTask(
+        key="ledger_sum",
+        instruction=(
+            "The document below has expense records scattered among other text. "
+            f"Count the records where the {office} office spent money on {category}, "
+            "and add up their amounts in CAD. Ignore records for other offices and "
+            "records for other kinds of spending."
+        ),
+        needles=[f"EXPENSE RECORD {rid}: The {o} office spent {amount} CAD on {c} in "
+                 f"{rng.choice(_MONTHS)}." for rid, (o, amount, c) in zip(ids, rows)],
+        base_words=3000,
+        schema={"type": "object",
+                "properties": {"matching_records": {"type": "integer"},
+                               "total_cad": {"type": "integer"}},
+                "required": ["matching_records", "total_cad"]},
+        checks=[
+            (f"matching_records={records}",
+             lambda p: isinstance(p, dict) and p.get("matching_records") == records),
+            (f"total_cad={total}",
+             lambda p: isinstance(p, dict) and p.get("total_cad") == total),
+        ],
+    )
 
 
 TASKS: dict[str, JsonTask] = {

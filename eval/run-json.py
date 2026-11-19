@@ -233,7 +233,7 @@ def run_attempt(model: str, task: JsonTask, n: int, total: int, timeout: int,
                 check_results.append((label, bool(fn(parsed))))
             except Exception:
                 check_results.append((label, False))
-    n_pass = sum(1 for _, ok in check_results)
+    n_pass = sum(1 for _, ok in check_results if ok)
     n_checks = len(task.checks)
     facts_ok = schema_ok and n_pass == n_checks
 
