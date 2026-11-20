@@ -26,8 +26,14 @@ BASE_MODEL="NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf"
 # does not leave room for it on this model. At 52 the spike test passes 5 of 5
 # with about 2.3 GB free at peak, and generation measured 24 to 28 tok/s, no
 # slower than at 48 or 50. Details in TESTING.md, *nemotron added*.
+#
+# Moved from 52 to 50 on 2026-11-19 (Casey). RAM is the tight resource with this
+# model loaded, about 4 GB available at 52, and 50 puts about 1.1 GB more of it
+# on the card. 50 passed the spike test 5 of 5 with about 1.2 GB free at peak,
+# the same margin gemma and qwen run with. Speed did not differ between 50 and
+# 52. 48 is not an option: the MTP draft context cannot allocate there.
 LOAD=(
-  'n-cpu-moe = 52'
+  'n-cpu-moe = 50'
   'spec-type = draft-mtp'
 )
 

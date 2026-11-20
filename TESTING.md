@@ -1119,16 +1119,17 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
-### Five-model pass with nemotron, part way (2026-11-19)
+### Five-model pass with nemotron (2026-11-19)
 
 The first comparison of `nemotron` against the four current models, and the
 first pass of any model on build 12439 and on the tasks added this week (six
 fresh coding tasks, three multi-hop JSON tasks, the agent suite). All five
 models ran on the live router after `nemotron` was deployed, in the order
-`lite qwen freedom nemotron gemma`. No model crashed.
+`lite qwen freedom nemotron gemma`. One run was lost to a crash and repeated, as
+noted below.
 
-Four of six planned runs are done. The JSON high-pressure pass and the content
-suite have not run, and neither have learn, tutor, persona, or speed.
+All six planned runs are done. Learn, tutor, persona, and speed have not been
+run on this lineup.
 
 | Suite | Run | `qwen` | `gemma` | `freedom` | `nemotron` | `lite` |
 |---|---|---|---|---|---|---|
@@ -1136,6 +1137,8 @@ suite have not run, and neither have learn, tutor, persona, or speed.
 | Tool calling, of 39 | `20261119T232855Z` | 39 | 27 | 39 | 30 | 33 |
 | Agent, of 28 | `20261119T234500Z` | 25 | 17 | 23 | 26 | 24 |
 | JSON at normal pressure, of 30 | `20261120T005859Z` | 27 | 27 | 30 | 18 of 27 | 24 |
+| JSON at high pressure, of 10 | `20261120T042538Z` | 8 | 7 | 9 | 6 of 9 | 7 |
+| Content, of 9 | `20261120T041728Z` | 7 | 9 | 8 | 8 | 7 |
 
 Coding, split by task kind:
 
@@ -1186,11 +1189,32 @@ Findings:
 - The policy tasks split the models as in the first desk measurement. Only
   `qwen` refuses `desk_not_yours`, and `qwen` and `freedom` break the address
   rule in `desk_half_allowed`.
+- At high pressure, about 48,000 prompt tokens and one attempt per task, every
+  model is still perfect on the seven original JSON tasks and the three
+  multi-hop tasks take all the losses. `freedom` drops only `chain_trace_3x3`.
+  `qwen` also drops `ledger_match_12x24`. `lite`, `gemma`, and `nemotron` drop
+  all three. `gemma` passes `chain_trace_2x3` at normal length and fails it
+  here, as in the sizing sweep.
+- `nemotron` timed out on `jd_extract` at high pressure too, and in the run
+  that was lost. That is five timeouts in five tries across three runs, so it is
+  a repeatable fault of this model with that schema.
+- Content went to `gemma` at 9 of 9, as on 2026-11-09. `freedom` and `nemotron`
+  scored 8, and `qwen` and `lite` 7. Nine attempts per model cannot separate
+  second from fourth.
 - Between the first fresh-coding measurement and this pass `gemma` moved from 15
   to 12 of 18 and `qwen` from 13 to 14. Three attempts per task is a gate, and
   the two are tied.
 
 How the pass was run:
+
+- The first high-pressure JSON run was lost. `gemma` crashed on its sixth task
+  at 23:16:59 with Xid 31 (`CUDA error: an illegal memory access`, kernel
+  `MMU Fault`), the runner aborted with no summary, and the run was repeated in
+  full without a crash. The crash came after a reboot onto kernel 7.3.5 and
+  NVIDIA driver 620.73.04, so that update did not clear the fault.
+- The README leaderboard's JSON row is the high-pressure run, because
+  `promote.py` takes the newest run per suite and that run finished last. The
+  normal-pressure numbers are the 30-attempt row in the table above.
 
 - A scratch router on port 8081 was tried first and dropped. `lite` could not
   load there: with the desktop, browsers, and a model asleep on the live router,
