@@ -1102,7 +1102,7 @@ repos, and one ended in a colon with no template after it.)
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with `./add-model --refit NAME` (README,
   *Re-deriving a split*) after a model or hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: pinned splits keep a 2 GB fit margin (gemma 26, qwen 37, nemotron 50
+- **Locked: pinned splits keep a 2 GB fit margin (gemma 26, qwen 38, nemotron 50
   at 131072 context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
   coding runner scored that crash as a model failure. A new value is derived with
@@ -1154,6 +1154,13 @@ repos, and one ended in a colon with no template after it.)
   Q4_K_M file*. (2026-11-20)
   `freedom` left the lineup on 2026-11-20 by Casey's decision, so its 34 is a
   record only. (2026-11-20)
+  `qwen` moved to unsloth's `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` on 2026-11-20, and
+  every `qwen` value above is for the Ollama-era file it replaced. The fitter
+  still chose 37, which failed the spike test 2 of 5 with CUDA out of memory,
+  because the new file puts about 600 MiB more on the card at the same split.
+  Casey pinned 38, which passed 5 of 5 with about 1.1 GB free at peak. 37 is
+  ruled out for this file. Details in `TESTING.md`, *qwen moved to the unsloth
+  file*. (2026-11-20)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and

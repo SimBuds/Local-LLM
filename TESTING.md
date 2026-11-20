@@ -959,7 +959,8 @@ check is a full 100-pass soak with HMM off, plus any Xid 31 seen in normal use.
 |---|---|---|
 | `gemma` (`google_gemma-4-26B-A4B-it-Q4_K_M.gguf`) | current | Since 2026-11-20. 26B A4B MoE, standard weights at Q4_K_M, 17.0 GB file from `bartowski/google_gemma-4-26B-A4B-it-GGUF` (sha256 `a07f7222…`). 26 MoE layers on CPU. No suite has been run on it yet. |
 | `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | retired 2026-11-20 | Replaced after Xid 31 on about 1 load in 5. Every `gemma` score dated before 2026-11-20 is this file. Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU from the headroom fix the same day, 22 from 2026-09-16, and 24 since 2026-10-30. |
-| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU from the headroom fix the same day, 35 from 2026-09-16, and 37 since 2026-10-30. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`, unsloth) | current | Since 2026-11-20. 35B A3B MoE, official weights at Q4_K_M, 21.1 GiB file: `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` from `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` (sha256 `0b21525e…`), saved under the old filename. MTP on, 38 MoE layers on CPU. No suite has been run on it yet. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`, Ollama) | retired 2026-11-20 | Every `qwen` score dated before 2026-11-20 is this file. Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU from the headroom fix the same day, 35 from 2026-09-16, and 37 since 2026-10-30. |
 | `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
 | `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
@@ -994,7 +995,7 @@ held by other processes: all passed. The cost against the old values was about
 13% generation speed for `gemma` and 9% for `qwen` (details in
 [`TESTING.md`](TESTING.md) under *Offload headroom*). The values were then
 re-derived at the same 2 GB margin each time the context grew: gemma 22 and qwen
-35 at 65536 on 2026-09-16, and the current gemma 24 and qwen 37 at 131072 on
+35 at 65536 on 2026-09-16, and gemma 24 and qwen 37 at 131072 on
 2026-10-30 (build 12009). 22 and 35 were replaced before they had the 3.0 GB
 spike test. 24 and 37 passed it on 2026-10-31, 5 of 5 cycles each, with about
 1.1 GB (gemma) and 1.2 GB (qwen) still free at peak. At 131072, gemma generates
@@ -1004,6 +1005,12 @@ desktop holds 1.4 GB, so a desktop VRAM spike can crash it. It runs with up to
 about 1.7 GB of other GPU use, about 0.75 GB above the 0.94 GB the desktop held
 when that was measured (2026-10-31). At 1.8 GB it loaded and then crashed on its
 first request, which a client sees as an HTTP 500.
+
+Both files changed on 2026-11-20, and every value above is for the files they
+replaced. The current values are gemma 26, qwen 38 and nemotron 50. `qwen` and
+`nemotron` are pinned above the fitter's choice (37 and 48), because each failed
+the spike test there. The measurements are under *gemma moved to the Q4_K_M
+file*, *qwen moved to the unsloth file* and *nemotron added*.
 
 Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
 reproduced its pinned value exactly (`42 layers (35 overflowing), 6168 MiB used`). `gemma`'s fitter now picks 21, not 22 (`31 layers (21 overflowing), 6403 MiB used`, the same in two runs). The pin stays at 22, which keeps more
@@ -1235,6 +1242,87 @@ router no longer serves it and benchmark runs no longer include it. Every
 `freedom` row in this file stays as a record. Its last results are in the
 five-model pass below. `add-model` still refuses the name, so no other model can
 answer to it. Friends-Hermes called it and needs another model name.
+
+### qwen moved to the unsloth file (2026-11-20)
+
+`qwen`'s file was replaced after the files in `~/models/gguf` were lost on
+2026-11-20. Casey chose to download from Hugging Face, not from Ollama's
+registry. The filename and the router name are unchanged, so Jobhunt and SEO-LLM
+need no change. `gemma`, `lite` and `nemotron` came back with the checksums they
+had before.
+
+| | Old | New |
+|---|---|---|
+| Source | Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`, file `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` |
+| Size | 21,718,480,960 bytes | 22,663,387,424 bytes |
+| sha256 | `d372de8e…` | `0b21525e…` |
+| `n-cpu-moe` | 37 | 38 |
+
+Checks on the new file, build 12439, 131072 context:
+
+- Checksum matches HuggingFace. The GGUF header has MTP heads, so
+  `spec-type = draft-mtp` stays.
+- `./add-model --refit qwen` at `--fit-target 2048`, with 834 MiB held by the
+  desktop: 42 layers with 37 overflowing, 6,766 MiB used, 2,074 MiB free. The
+  fitter's value did not move, but the old file used 6,158 MiB at 37, so this
+  one puts about 600 MiB more on the card at the same split.
+
+Spike test at 37, the fitter's value, from `./eval/spike-test.py qwen`:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 2998 MiB | 9591 MiB | 649 MiB | 12.9 s | 56.4 tok/s |
+| 2 | 2998 MiB | 9590 MiB | 650 MiB | 13.5 s | 55.2 tok/s |
+| 3 | 2997 MiB | failed: HTTP Error 500 | | | |
+| 4 | 3326 MiB | failed: HTTP Error 500 | | | |
+| 5 | 3326 MiB | failed: HTTP Error 500 | | | |
+
+FAIL, 2 of 5, with `CUDA error: out of memory` in the router log.
+
+Spike test at 38:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3000 MiB | 9130 MiB | 1110 MiB | 13.6 s | 58.8 tok/s |
+| 2 | 3000 MiB | 9130 MiB | 1110 MiB | 13.2 s | 49.9 tok/s |
+| 3 | 3000 MiB | 9130 MiB | 1110 MiB | 12.5 s | 53.6 tok/s |
+| 4 | 3000 MiB | 9130 MiB | 1110 MiB | 12.6 s | 56.7 tok/s |
+| 5 | 3000 MiB | 9130 MiB | 1110 MiB | 13.1 s | 53.9 tok/s |
+
+PASS, 5 of 5 with no out-of-memory line.
+
+Spike test at 39:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3000 MiB | 8634 MiB | 1606 MiB | 14.1 s | 51.2 tok/s |
+| 2 | 3000 MiB | 8634 MiB | 1606 MiB | 13.1 s | 59.4 tok/s |
+| 3 | 3000 MiB | 8634 MiB | 1606 MiB | 13.8 s | 59.2 tok/s |
+| 4 | 3000 MiB | 8622 MiB | 1618 MiB | 13.6 s | 50.2 tok/s |
+| 5 | 2988 MiB | 8622 MiB | 1618 MiB | 13.8 s | 53.4 tok/s |
+
+PASS, 5 of 5 with no out-of-memory line.
+
+Casey pinned 38 on 2026-11-20. It leaves 1.1 GB free at peak, about what the old
+file had at 37 (1.2 GB) and `gemma` has at 26 (1.3 GB). 39 leaves 1.6 GB and
+moves about 0.5 GB more into RAM. Generation speed does not separate the two:
+the spread between cycles at one split is wider than any gap between them.
+`./add-model --refit qwen` reports 37 against the pinned 38, and that is
+expected.
+
+At 38 on a scratch router on port 8081:
+
+- 56.3 tok/s generation and 1,002 to 1,091 tok/s prompt ingest, model VRAM
+  6,108 MiB, about 9 GB of RAM available with it loaded. The old file ran at
+  about 48 to 56 tok/s.
+- One attempt of the JSON suite there, as a check that structured output works:
+  9 of 10, every reply valid against its schema, with `chain_trace_3x3` at 1 of 3
+  facts. This is not a score.
+- No Xid line in the kernel log during any of these runs.
+
+Every `qwen` score dated before 2026-11-20 is for the Ollama-era file, including
+the five-model pass above and `qwen`'s grading as a judge in the tutor and learn
+suites.
 
 ### gemma moved to the Q4_K_M file (2026-11-20)
 

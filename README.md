@@ -21,7 +21,7 @@ The lineup, on llama.cpp since 2026-09-14:
 | Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
 |---|---|--:|---|---|
 | `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | 128K | 26 MoE layers on CPU | 26B A4B MoE, Q4_K_M since 2026-11-20. |
-| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 37 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 38 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 128K | all GPU, MTP | Dense 9B. The only one that fits in 10 GB, so it is the speed anchor. |
 | `nemotron` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` | 128K | 50 MoE layers on CPU, MTP | 30B A3B MoE from NVIDIA. A candidate under test since 2026-11-19, with no role yet. |
 
@@ -31,10 +31,11 @@ The lineup, on llama.cpp since 2026-09-14:
   against.
 - **MTP** (multi-token prediction) is speculative decoding built into the Qwen
   GGUFs.
-- **Weights history.** `gemma` and `qwen` are the files the Ollama-era benchmarks
-  used, copied byte for byte. Ollama's `qwen3.5:9b` does not load in llama.cpp,
-  so `lite` is unsloth's MTP build at the same Q4_K_M quant, and its scores start
-  a new history.
+- **Weights history.** Until 2026-11-20 `gemma` and `qwen` were the files the
+  Ollama-era benchmarks used, copied byte for byte. Both are Hugging Face files
+  now, so their scores start a new history on that date. Ollama's `qwen3.5:9b`
+  does not load in llama.cpp, so `lite` is unsloth's MTP build at the same Q4_K_M
+  quant, with its own history from 2026-09-14.
 - **`freedom` was removed on 2026-11-20.** It was the uncensored tune that
   Friends-Hermes called. Its results stay in [`TESTING.md`](TESTING.md), and
   `add-model` still refuses the name so no other model can answer to it.
@@ -94,7 +95,7 @@ and names the path if its file is missing.
 | Model | File | Source |
 |---|---|---|
 | `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | `bartowski/google_gemma-4-26B-A4B-it-GGUF`, staged 2026-11-20. |
-| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF`, file `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`, staged 2026-11-20. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
 
 Check the files against the checksums the benchmarks used. Each line must print
@@ -104,7 +105,7 @@ Check the files against the checksums the benchmarks used. Each line must print
 # Runs in: local terminal. Read-only, safe to repeat.
 cd ~/models/gguf && sha256sum -c <<'EOF'
 a07f72221e8e3f77455ab0d7f7652d01a9f63c262b954aa6932a53275a0e895a  google_gemma-4-26B-A4B-it-Q4_K_M.gguf
-d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
+0b21525e972670ed59e1812e170b27c26355381f0656ecc4e25617ece7dac58b  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
 EOF
 ```
@@ -113,11 +114,13 @@ EOF
   (see *Adding A Model*).
 - `lite` downloads again with
   `curl -L --fail -C - -o ~/models/gguf/qwen3.5-9b-mtp-q4_K_M.gguf https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf`.
-- `gemma` and `qwen` have no public byte-identical source, because Ollama and its
-  store were removed on 2026-09-15. The closest downloads are
-  `google/gemma-4-26B-A4B-it-qat-q4_0-gguf` (`gemma-4-26B_q4_0-it.gguf`) and
-  `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` (`Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`). Both are
-  different, untested files, and switching starts a new baseline for that model.
+- `qwen` downloads again with
+  `curl -L --fail -C - -o ~/models/gguf/qwen3.6-35b-a3b-mtp-q4_K_M.gguf https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`.
+- `gemma` downloads again with
+  `curl -L --fail -C - -o ~/models/gguf/google_gemma-4-26B-A4B-it-Q4_K_M.gguf https://huggingface.co/bartowski/google_gemma-4-26B-A4B-it-GGUF/resolve/main/google_gemma-4-26B-A4B-it-Q4_K_M.gguf`.
+- The Ollama-era `gemma` and `qwen` files are gone, and every score dated before
+  2026-11-20 is theirs. The files above are different weights files, so each
+  starts a new baseline for its model.
 - `~/models/gguf` holds only the lineup. Four other GGUFs copied from Ollama were
   deleted on 2026-11-09. Their 2026-10-09 load checks are in
   [`TESTING.md`](TESTING.md), *Other GGUFs on disk*.
@@ -223,7 +226,7 @@ A builder's only model-specific part is its config block:
 MODEL_NAME="qwen"
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"   # filename under $GGUF_DIR
 LOAD=(
-  'n-cpu-moe = 37'           # expert layers kept in system RAM, pinned (see below)
+  'n-cpu-moe = 38'           # expert layers kept in system RAM, pinned (see below)
   'spec-type = draft-mtp'    # MTP speculative decoding, only for GGUFs that carry MTP heads
 )
 ```
@@ -267,7 +270,7 @@ between runs.
 
 **The splits leave about 2 GB of VRAM free.** Splits fitted at the default 1 GB
 margin crashed with CUDA out of memory under normal desktop use. At 131072
-context the values are gemma 26, qwen 37 and nemotron 50, each spike-tested with
+context the values are gemma 26, qwen 38 and nemotron 50, each spike-tested with
 about 3.0 GB of the card held by other processes. `lite` stays all-GPU by Casey's
 choice, so a desktop VRAM spike can crash it. The measurements are in
 [`TESTING.md`](TESTING.md), *Pinned split history*.

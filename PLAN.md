@@ -94,7 +94,7 @@ new builder was silently ignored until someone edited it.
 | Model | Base | Why it is here |
 |---|---|---|
 | `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M` | 26B A4B MoE at Q4_K_M since 2026-11-20. It replaced the QAT Q4_0 file from the Ollama era, which crashed with Xid 31 far more often than the Q4_K_M models. |
-| `qwen` | `qwen3.6-35b-a3b-mtp` | 35B A3B MoE, the largest model that stays usable on this card. |
+| `qwen` | `qwen3.6-35b-a3b-mtp` | 35B A3B MoE, the largest model that stays usable on this card. Since 2026-11-20 the file is unsloth's `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`, which replaced the Ollama-era blob. |
 | `lite` | `qwen3.5-9b-mtp` | Dense 9B, the only one that fits entirely in 10 GB. Speed anchor and third judge. |
 
 `gemma`, `qwen` and `nemotron` are mixture-of-experts: few parameters are active
@@ -224,7 +224,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 26, `qwen` 37, `nemotron` 50 at 131072 context) | 2026-09-14, values updated 2026-09-16 and 2026-10-30, `freedom` added 2026-11-09 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. |
+| 2 GB fit margin (`gemma` 26, `qwen` 38, `nemotron` 50 at 131072 context) | 2026-09-14, values updated 2026-09-16, 2026-10-30 and 2026-11-20, `freedom` added 2026-11-09 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. `qwen` and `nemotron` sit above the fitter's value (37 and 48), because each failed the spike test there. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |

@@ -7,8 +7,11 @@ MODEL_NAME="qwen"
 # prompts/safety.md by construction — the stack spends tokens every turn fighting
 # the model's own tuning. An uncensored base needs its own tag and its own prompt
 # stack, not a swap under the shared one.
-# Reused from Ollama's qwen3.6:35b-a3b-mtp-q4_K_M blob — same weights as the
-# Ollama-era benchmarks. It carries llama.cpp-compatible MTP (nextn) tensors.
+# Since 2026-11-20 this is unsloth's Qwen3.6-35B-A3B-UD-Q4_K_M.gguf from
+# unsloth/Qwen3.6-35B-A3B-MTP-GGUF, saved under the old filename. Until then it
+# was Ollama's qwen3.6:35b-a3b-mtp-q4_K_M blob, the weights every earlier qwen
+# score used. The new file is 0.95 GB larger. It carries llama.cpp-compatible
+# MTP (nextn) tensors.
 BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"
 
 # Per-model load params. Expert split pinned for the reason given in build-gemma;
@@ -25,8 +28,15 @@ BASE_MODEL="qwen3.6-35b-a3b-mtp-q4_K_M.gguf"
 # 131072 with MTP on, build 12009: 42 layers (37 overflowing), 6158 MiB used,
 # 2120 MiB free. No measurable speed cost against 35 (48.6 to 56.4 tok/s across
 # 3 requests, against 48.7 to 51.1).
+#
+# 38 since 2026-11-20, for the unsloth file. Every value above is for the Ollama
+# blob. --fit still chose 37 on build 12439 (42 layers, 37 overflowing, 6766 MiB
+# used, 2074 MiB free), about 600 MiB more on the card than the old file at the
+# same split. 37 then failed the spike test 2 of 5 with CUDA out of memory, so
+# Casey pinned 38: 5 of 5 with 1110 MiB free at peak, 49.9 to 58.8 tok/s.
+# ./add-model --refit qwen reports 37 against this 38, and that is expected.
 LOAD=(
-  'n-cpu-moe = 37'
+  'n-cpu-moe = 38'
   'spec-type = draft-mtp'
 )
 
