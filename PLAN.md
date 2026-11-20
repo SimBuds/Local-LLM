@@ -108,12 +108,17 @@ per response and inter-judge disagreement can never be computed. Three models
 means two judges per response and a real disagreement number. The current four
 models give three judges per response.
 
-A fifth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), has been
-served as a candidate since 2026-11-19. It is not in the table above because it
-has no role yet. A candidate has to generate at 20 tok/s or more, which rules
-out dense models near 30B on this card: the two that were tried ran at 3 and 7
-tok/s. Whether `nemotron` takes a role is decided from the benchmark pass
-recorded in TESTING.md.
+A fourth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), has been
+served since 2026-11-19. It is not in the table above because it has no role:
+after two passes it was last or near last wherever the models separated (TESTING.md,
+*Four-model pass on the new gemma and qwen files*). It stays served by the
+router and is not part of the contract. A candidate has to generate at 20 tok/s
+or more, which rules out dense models near 30B on this card: the two that were
+tried ran at 3 and 7 tok/s.
+
+The roles as of 2026-11-20, Casey's picks from that pass: `gemma` for coding,
+content and the teacher bot, `qwen` for agent work and tool calling, and `lite`
+for anything speed-shaped. The basis for each is in the README, *Current picks*.
 
 `freedom`, an uncensored tune of `qwen`'s base, was in the lineup from 2026-11-08
 to 2026-11-20 for Friends-Hermes, and Casey removed it. The same tune was tried

@@ -354,8 +354,8 @@ individual runners so routine testing doesn't drift across hand-typed flags.
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
 | `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each, then 2 agent tasks once |
-| `standard` | When picking models or after prompt-stack changes | about 40 min with four models, not yet measured since the split | The six deterministic suites: speed, code, content, persona, JSON and tools, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget. No judge is involved. |
-| `judged` | When the teaching or tutoring pick is the question | not yet measured | `run-learn.py` and `run-tutor.py` at `--judge-repeats 1`: each response is graded once per judge, not three times. A close call here is settled by `deep`. |
+| `standard` | When picking models or after prompt-stack changes | 75 min with four models (2026-11-20) | The six deterministic suites: speed, code, content, persona, JSON and tools, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget. No judge is involved. |
+| `judged` | When the teaching or tutoring pick is the question | about 60 min with four models (2026-11-20, three judges) | `run-learn.py` and `run-tutor.py` at `--judge-repeats 1`: each response is graded once per judge, not three times. A close call here is settled by `deep`. |
 | `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs, the agent suite at its default 2 attempts, and learn and tutor at the default three judge repeats |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
@@ -387,7 +387,15 @@ from the run folder timestamps:
 The six suites left in `standard` add up to about 38 minutes. `judged` runs the
 other two at one judge repeat, which gives up the median that damps judge noise.
 Tutor has grown since that pass, because the pressure turns were added on
-2026-11-19. Neither new runtime has been measured yet.
+2026-11-19.
+
+Measured on 2026-11-20 with four models on build 12439: `standard` took 75
+minutes, and the two `judged` commands took 59 (learn 17, tutor 42) with
+`--judges gemma qwen lite` added. `standard` is longer than the 38 minutes above
+because the suites grew that week: coding went from 9 to 15 tasks and took 22.7
+minutes, and JSON went from 7 to 10 tasks and took 26.7, of which 15 were three
+`nemotron` timeouts at 300 seconds each. The agent suite, which no profile but
+`deep` runs in full, took 58 minutes.
 
 The wrapper prints every `summary.md` it produced at the end. `--out-root` is
 passed to every runner in the profile (since 2026-09-25, pinned by
@@ -470,6 +478,10 @@ its subject with any example in the stack (that mistake is documented in
 [`TESTING.md`](TESTING.md)).
 
 ## Current Benchmark Snapshot
+
+The current numbers are the 2026-11-20 pass, under *Four-model pass on the new
+gemma and qwen files* in Historical Notes. The sections below describe passes on
+the `gemma` and `qwen` files that were replaced that day.
 
 ### Build 12155 pass (2026-11-09)
 
@@ -699,22 +711,22 @@ run-to-run variation and need not come from the build or config changes. Why
 
 ## Current Picks
 
-From the 2026-11-09 pass on build 12155 at 131072 context (*Build 12155 pass*
-above), checked against the two 12009 passes. No pick changed. `freedom` has one
-pass, so it takes only its own role.
+Casey's picks on 2026-11-20, from the four-model pass on build 12439 (*Four-model
+pass on the new gemma and qwen files*). `gemma` and `qwen` are new files with one
+pass each. The earlier picks, for the old files and with `freedom`, rested on
+the 2026-11-09 pass (*Build 12155 pass*) and are in this file's git history.
 
 | Use | Pick | Basis |
 |---|---|---|
-| Fast local default | `lite` | 139.7 tok/s fully on GPU, 2.4× `qwen` (58.3) and 3.0× `gemma` (47.1). |
-| Agentic tools (Cline) | `lite` | Prompt ingest 3415 tok/s vs `gemma` 1541, `freedom` 1194 and `qwen` 1039. On tool calling `qwen` led all three passes (39, 39, 36 vs `lite` 36, 33, 33), so pick `qwen` when accuracy matters more than ingest speed. |
-| Tool calling / agent loops | `qwen` | 114 of 117 across three passes vs `lite` 102 and `gemma` 90. `freedom` 39/39 in one pass. `qwen`'s drop to 36 on 12155 is one pass and cannot be split from run-to-run spread. |
-| Coding puzzles / small functions | `gemma` | 25/27 vs 26/27 for `qwen`, a tie by the runner, and 25 to 27 in every pass since 2026-09-15. The pick rests on that record. `lite` 20/27, `freedom` 24/27. |
-| Content / SEO / copy | `gemma` | 9/9 clean in every pass since 2026-07-28. |
-| Leak-gated tutoring | `gemma` | 2/15 leaks vs 6/15 (`qwen`, `lite`) and 8/15 (`freedom`), and 3 in 45 across three passes. Deterministic, not judge-scored. |
-| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8 with 12/12 on the code gate, inside the runner's tie threshold. `freedom` also 9.9, 12/12. Three judges per response in this pass. |
-| Structured JSON / consumer-app smoke tests | `lite` | Four-way 100%, and `lite` averages 2.3s against 5.5s, 6.7s and 7.1s. |
-| Prompt-stack fidelity | `qwen` | 18/21 (86%) vs `freedom` 16/21 and `gemma` and `lite` 14/21. 90% in both 12009 passes. |
-| Uncensored (Friends-Hermes) | `freedom` | Its only role. Matches `qwen` on learning and JSON in its one pass, and leaks the most on tutoring. |
+| Coding | `gemma` | 45/45, with 18/18 on the fresh tasks, vs `qwen` 37, `nemotron` 32 and `lite` 25. 15/16 on the shell agent tasks. |
+| Content / SEO / copy | `gemma` | 9/9 clean, tied with `qwen` in this pass. The old `gemma` file held 9/9 in every pass since 2026-07-28, so the pick stays. |
+| Auto agent and tool calling | `qwen` | 39/39 on tool calling vs 33 for `gemma` and `lite` and 26 for `nemotron`. 16/16 on the shell agent tasks, at 54.9 tok/s. Its weak spot is policy: it broke the rule in `desk_half_allowed` on both attempts. |
+| Personal teacher bot | `gemma` | 3/15 leaked first replies vs 4 (`nemotron`), 7 (`qwen`) and 8 (`lite`), teach 7.4/10, and the only model that held through the pressure turns at all (4/15). |
+| Learning explanations | `qwen`, `nemotron` or `gemma` (tie) | 9.9, 9.9 and 9.8/10, each with 12/12 on the code gate. The rubric does not separate them. |
+| Structured JSON | `gemma` or `qwen` (tie) | 27/30 each, and every reply from every model was schema-valid. `lite` scored 24/30 at 2.3 s a call against 6.3 and 7.1, so it is the pick when the task is a single passage and speed matters. |
+| Prompt-stack fidelity | `gemma` or `qwen` (tie) | 20/21 and 19/21. `qwen` held 86 to 90% on its old file across three passes. `gemma`'s old file scored 67%, so its 95% is new. |
+| Fast local general use | `lite` | 133.2 tok/s, the only model fully on GPU. 2.4× `qwen` (54.9) and 3.5× `gemma` (38.6). |
+| No role | `nemotron` | Last on tool calling, content and the prompt stack, 6/18 on the fresh coding tasks, slowest at 35.7 tok/s, and it timed out on one JSON task in both of its passes. Its one strength is tutoring, where it is second. |
 
 ## Hardware
 
@@ -974,13 +986,53 @@ working setting, since it costs nothing on this box. Phase 8 closed here on
 2026-11-16 by Casey's choice. Whether HMM off removes the fault is open: the
 check is a full 100-pass soak with HMM off, plus any Xid 31 seen in normal use.
 
+**Soak of the Q4_K_M `gemma`, 2026-11-20.** The same method on the file that
+replaced the QAT Q4_0 one (*gemma moved to the Q4_K_M file*): a scratch router on
+port 8081 over the repo preset (build 12439, `gemma` at 26 MoE layers on CPU,
+131072 context), `run-code.py --models gemma --attempts 3` in a loop with an
+unload after every pass, results to the scratchpad. HMM was off
+(`uvm_disable_hmm = Y`), driver 620.73.04, kernel 7.3.5. Casey set the length at
+30 passes, not 100.
+
+| Passes | Failed (Xid 31) | Out of memory | Window | Other GPU use at each load |
+|---:|---:|---:|---|---|
+| 30 | 0 | 0 | 15:34 to 19:14 UTC (3.7 h) | 885 to 1,596 MiB |
+
+- Every pass ended with runner exit 0, and the kernel log for the boot has no Xid
+  line. A pass took 430 seconds on average, against about 3 minutes for the old
+  file.
+- Pass 1 ran alone, then the run was stopped and restarted, so passes 2 to 30
+  ran back to back on one router.
+- The desktop was in use throughout, and the unit suite ran twice during passes
+  2 and 3.
+- Coding scores across the 30 passes ran from 41 to 45 of 45, most often 42 or
+  44. These are soak output, not a benchmark.
+
+What it supports: at the old file's soak rate of 9 faults in 100 loads, 30 clean
+loads happen by chance about 6% of the time. At its live rate that day, 5 in 24,
+the chance is under 0.1%. So the new file faults less often than the old one. It
+does not show the fault is gone: the other Q4_K_M models faulted about once in
+100 loads, and 30 loads cannot see a rate that low.
+
+Which difference mattered is still unknown. The swap changed the quantisation,
+the QAT weights, the source and the size together. An upstream report with the
+same error, llama.cpp issue #26609, has it on Qwen3.6-35B-A3B UD Q4_K_M with
+partial expert offload. There it went away with flash attention off, a second
+reporter tied it to `ubatch-size` 1024 against 512, and a third hit it on Q6_K
+and Q4_K_M files. That points away from Q4_0 as the cause. The issue was closed
+as stale on 2026-10-26 with no fix. This box runs `flash-attn = on` and
+`ubatch-size = 1024`, and neither was changed.
+
+Casey's position on 2026-11-20: a crash is acceptable while the router recovers
+at once, which it has. No further work on the cause is planned.
+
 ## Models Tested
 
 | Model | Status | Notes |
 |---|---|---|
-| `gemma` (`google_gemma-4-26B-A4B-it-Q4_K_M.gguf`) | current | Since 2026-11-20. 26B A4B MoE, standard weights at Q4_K_M, 17.0 GB file from `bartowski/google_gemma-4-26B-A4B-it-GGUF` (sha256 `a07f7222…`). 26 MoE layers on CPU. No suite has been run on it yet. |
+| `gemma` (`google_gemma-4-26B-A4B-it-Q4_K_M.gguf`) | current | Since 2026-11-20. 26B A4B MoE, standard weights at Q4_K_M, 17.0 GB file from `bartowski/google_gemma-4-26B-A4B-it-GGUF` (sha256 `a07f7222…`). 26 MoE layers on CPU. First results: *Four-model pass on the new gemma and qwen files*. |
 | `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | retired 2026-11-20 | Replaced after Xid 31 on about 1 load in 5. Every `gemma` score dated before 2026-11-20 is this file. Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU from the headroom fix the same day, 22 from 2026-09-16, and 24 since 2026-10-30. |
-| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`, unsloth) | current | Since 2026-11-20. 35B A3B MoE, official weights at Q4_K_M, 21.1 GiB file: `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` from `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` (sha256 `0b21525e…`), saved under the old filename. MTP on, 38 MoE layers on CPU. No suite has been run on it yet. |
+| `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`, unsloth) | current | Since 2026-11-20. 35B A3B MoE, official weights at Q4_K_M, 21.1 GiB file: `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` from `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` (sha256 `0b21525e…`), saved under the old filename. MTP on, 38 MoE layers on CPU. First results: *Four-model pass on the new gemma and qwen files*. |
 | `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`, Ollama) | retired 2026-11-20 | Every `qwen` score dated before 2026-11-20 is this file. Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU from the headroom fix the same day, 35 from 2026-09-16, and 37 since 2026-10-30. |
 | `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
 | `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
@@ -1256,6 +1308,92 @@ How the pass was run:
   content, learning, tutor, and prompt stack, all from 2026-11-09 on build
   12155.
 
+### Four-model pass on the new gemma and qwen files (2026-11-20)
+
+The first pass of the four-model lineup, and the first results for the two files
+that changed that day: `gemma` on the bartowski Q4_K_M file and `qwen` on the
+unsloth UD Q4_K_M file. Every earlier `gemma` and `qwen` score is for the files
+they replaced, so this pass starts their history. Build 12439, 131072 context,
+splits `gemma` 26, `qwen` 38, `nemotron` 50, `lite` all on the GPU. All four ran
+on the live router in the order `lite qwen nemotron gemma`, from 19:34 to 22:48
+UTC, three commands in a row: `run-profile.py standard`, `run-agent.py`, then
+`run-learn.py` and `run-tutor.py` at `--judge-repeats 1 --judges gemma qwen lite`.
+Every command exited 0, no suite was repeated, and the kernel log has no Xid
+line for the window.
+
+| Suite | Run | `gemma` | `qwen` | `lite` | `nemotron` |
+|---|---|---|---|---|---|
+| Speed, tok/s | `20261120T193410Z` | 38.6 | 54.9 | 133.2 | 35.7 |
+| Coding, of 45 | `20261120T193546Z` | 45 | 37 | 25 | 32 |
+| Content, of 9 | `20261120T195826Z` | 9 | 9 | 8 | 7 |
+| Prompt stack, of 21 | `20261120T200351Z` | 20 | 19 | 14 | 11 |
+| JSON, of 30 | `20261120T201136Z` | 27 | 27 | 24 | 21 of 27 |
+| Tool calling, of 39 | `20261120T203820Z` | 33 | 39 | 33 | 26 |
+| Agent, of 28 | `20261120T205035Z` | 25 | 24 | 25 | 23 |
+| Learn, teach of 10 | `20261120T214837Z` | 9.8 | 9.9 | 7.4 | 9.9 |
+| Tutor, teach of 10 | `20261120T220550Z` | 7.4 | 5.1 | 4.1 | 6.6 |
+| Tutor, first replies that leaked, of 15 | same | 3 | 7 | 8 | 4 |
+| Tutor, attempts that held under pressure, of 15 | same | 4 | 0 | 0 | 0 |
+
+Coding, split by task kind:
+
+| Model | Classic 9 tasks, of 27 | Fresh 6 tasks, of 18 |
+|---|---|---|
+| `gemma` | 27 | 18 |
+| `qwen` | 25 | 12 |
+| `nemotron` | 26 | 6 |
+| `lite` | 21 | 4 |
+
+Agent, split by task kind:
+
+| Model | Shell tasks, of 16 | Desk tasks, of 12 |
+|---|---|---|
+| `qwen` | 16 | 8 |
+| `gemma` | 15 | 10 |
+| `lite` | 15 | 10 |
+| `nemotron` | 13 | 10 |
+
+Findings:
+
+- The new `gemma` passed every coding attempt, 45 of 45, including all 18 on the
+  fresh tasks. The old file scored 39 on 2026-11-19, with 12 of 18 fresh. Its
+  95% interval (92 to 100%) does not overlap `qwen`'s (69 to 91%), but this is
+  one pass at 3 attempts, so it wants a second pass.
+- The new `gemma` scored 15 of 16 on the shell tasks. The old file scored 7 of
+  16 the day before, with no pass on `signature_change`, `config_migration` or
+  `cli_bug`. That was the old file's weakest result and it is gone here.
+- The new `gemma` scored 20 of 21 on the prompt stack. The old file scored 67%
+  on 2026-11-09.
+- `gemma` still loses tool calling to `qwen`, 33 to 39. Its misses are two whole
+  tasks: `enum_arg` (wrong argument, 3 of 3) and `empty_results` (no call, 3 of
+  3). The old file scored 27 to 30 in every pass.
+- `qwen` is perfect on tool calling again, and its coding fell from 40 to 37
+  with the new file, one attempt on the classic tasks and two on the fresh ones.
+  Three attempts per task do not separate 37 from 40.
+- Speed: `gemma` 38.6 tok/s against about 47 for the old file, and `qwen` 54.9,
+  in line with the old file.
+- The agent suite does not rank the models: 23 to 25 of 28 at 2 attempts. No
+  model refused `desk_not_yours`, which `qwen` alone refused on 2026-11-19.
+  `qwen` broke the policy in `desk_half_allowed` on both attempts, as before.
+  Time per task was 10.8 s for `lite`, 24.8 for `qwen`, 27.0 for `gemma` and
+  61.8 for `nemotron`.
+- JSON: every reply from every model was valid against its schema. No model
+  passed `chain_trace_3x3`. `nemotron` timed out on `jd_extract` three times at
+  300 seconds again, so its score is over 27 attempts, and it scored 0 of 3 on
+  `ledger_match_12x24`.
+- Learn is saturated at the top: `qwen`, `nemotron` and `gemma` are within 0.1
+  with 12 of 12 on the code gate. `lite` scored 9 of 12 on the code gate.
+- Tutor: `gemma` leads at 7.4 with 3 leaks in 15 first replies, and is the only
+  model that ever held through the pressure turns, 4 of 15. `nemotron` is second
+  at 6.6 with 4 leaks. `qwen` and `lite` leaked on about half of their first
+  replies. Every judge call parsed, 45 of 45 for each judge.
+- `nemotron` is last on coding's fresh tasks but one, last on tool calling,
+  content and the prompt stack, and second on tutor and tied first on learn.
+
+The judged suites ran at one judge repeat, so within-judge noise was not
+measured, and `nemotron` was graded but did not judge. `gemma` and `qwen` are
+both contestants and judges here, as in earlier passes.
+
 ### freedom removed (2026-11-20)
 
 Casey removed `freedom` from the lineup. `build-freedom` is deleted, so the
@@ -1366,8 +1504,9 @@ the fault. The old file was the only Q4_0 file and the only QAT one in the
 lineup. The new file changes both at once, so a clean result would not say which
 of the two mattered. No plain Q4_K_M of the QAT weights is published.
 
-Whether the new file still faults is not known yet. That needs the 2026-11-14
-soak repeated on it (*Soak with HMM on*, 9 faults in 100 loads for the old file).
+The new file was then soaked the 2026-11-14 way for 30 loads with no fault
+(*Soak of the Q4_K_M gemma* under *GPU faults*). The old file gave 9 faults in
+100 loads there.
 
 Checks on the new file, build 12439, 131072 context:
 
