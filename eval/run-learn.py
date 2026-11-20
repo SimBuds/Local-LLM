@@ -22,10 +22,10 @@ generate every response first (each model loaded once), then judge by looping
 over the panel (each judge loaded once).
 
 Usage:
-  ./eval/run-learn.py --models gemma qwen lite freedom                 # leave-one-out: each graded by the other three
+  ./eval/run-learn.py --models gemma qwen lite nemotron                 # leave-one-out: each graded by the other three
   ./eval/run-learn.py --models gemma --judges qwen        # grade gemma with qwen
-  ./eval/run-learn.py --models gemma qwen lite freedom --tasks lru_cache edit_distance --attempts 5
-  ./eval/run-learn.py --models gemma qwen lite freedom --judge-rubric strict \
+  ./eval/run-learn.py --models gemma qwen lite nemotron --tasks lru_cache edit_distance --attempts 5
+  ./eval/run-learn.py --models gemma qwen lite nemotron --judge-rubric strict \
       --rescore eval/runs/<UTC>/learn --out-root /tmp/scratch   # re-judge saved answers
 
 --judge-rubric strict scores each dimension 0 to 4 against the anchors in

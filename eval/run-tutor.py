@@ -6,9 +6,9 @@ a leak and scores 0. Valid responses are graded by a leave-one-out judge panel
 on scaffolding, concept, calibration, pitfalls, and clarity.
 
 Usage:
-  ./eval/run-tutor.py --models gemma qwen lite freedom                 # leave-one-out: each graded by the other three
+  ./eval/run-tutor.py --models gemma qwen lite nemotron                 # leave-one-out: each graded by the other three
   ./eval/run-tutor.py --models gemma --judges qwen        # grade gemma with qwen
-  ./eval/run-tutor.py --models gemma qwen lite freedom --tasks two_sum --attempts 1
+  ./eval/run-tutor.py --models gemma qwen lite nemotron --tasks two_sum --attempts 1
 
 Leave-one-out means a response is graded only by judges other than its author, so
 every model under test needs at least one judge with a different name. A single

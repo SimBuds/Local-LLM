@@ -701,13 +701,15 @@ tok/s** column of `run-speed.py`, not generation speed.
 ## Evaluation
 
 Runners live under `eval/` and write to `eval/runs/<UTC>/`. Routine testing uses
-profiles: `smoke` after a rebuild, `standard` for the routine comparison (about 1
-hour), and `deep` for a several-hour confidence run. [`TESTING.md`](TESTING.md)
-says when to use each.
+profiles: `smoke` after a rebuild, `standard` for the routine comparison on the
+six deterministic suites (about 40 minutes), `judged` for the two judge-scored
+suites, learn and tutor, and `deep` for a several-hour confidence run.
+[`TESTING.md`](TESTING.md) says when to use each.
 
 ```bash
 ./eval/run-profile.py smoke --models gemma qwen lite nemotron
 ./eval/run-profile.py standard --models gemma qwen lite nemotron
+./eval/run-profile.py judged --models gemma qwen lite nemotron
 ```
 
 Single runners, for targeted sweeps:

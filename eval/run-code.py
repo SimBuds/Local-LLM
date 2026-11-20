@@ -9,8 +9,8 @@ This is a real pass@1 measurement, not a regex proxy. The summary ranks models
 by overall pass rate (tie-break: speed) and declares a winner.
 
 Usage:
-  ./eval/run-code.py --models gemma qwen lite freedom      # all tasks, 5 attempts/task
-  ./eval/run-code.py --models gemma qwen lite freedom --attempts 3
+  ./eval/run-code.py --models gemma qwen lite nemotron      # all tasks, 5 attempts/task
+  ./eval/run-code.py --models gemma qwen lite nemotron --attempts 3
   ./eval/run-code.py --models gemma
   ./eval/run-code.py --tasks two_sum lru_cache
   ./eval/run-code.py --exec-timeout 10       # per-program wall clock

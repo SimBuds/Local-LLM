@@ -8,7 +8,7 @@ checks. The summary ranks models by overall clean rate (tie-break: speed),
 reports a per-task matrix, and declares a winner.
 
 Usage:
-  ./eval/run-content.py --models gemma qwen lite freedom          # all content tasks
+  ./eval/run-content.py --models gemma qwen lite nemotron          # all content tasks
   ./eval/run-content.py --models gemma --tasks seo_product
   ./eval/run-content.py --models gemma --attempts 3
   ./eval/run-content.py --models gemma --prompt-file eval/prompts/x.md  # ad-hoc SEO prompt

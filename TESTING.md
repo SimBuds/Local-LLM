@@ -343,18 +343,20 @@ Confidence by signal:
 individual runners so routine testing doesn't drift across hand-typed flags.
 
 ```bash
-./eval/run-profile.py smoke --models gemma qwen lite freedom      # after a model rebuild
-./eval/run-profile.py standard --models gemma qwen lite freedom   # routine full comparison
-./eval/run-profile.py deep --models gemma qwen lite freedom       # pre-decision confidence run
-./eval/run-profile.py standard --models gemma qwen lite freedom --dry-run  # show commands
+./eval/run-profile.py smoke --models gemma qwen lite nemotron      # after a model rebuild
+./eval/run-profile.py standard --models gemma qwen lite nemotron   # routine comparison, deterministic suites
+./eval/run-profile.py judged --models gemma qwen lite nemotron    # learn and tutor, one judge repeat
+./eval/run-profile.py deep --models gemma qwen lite nemotron       # pre-decision confidence run
+./eval/run-profile.py standard --models gemma qwen lite nemotron --dry-run  # show commands
 ./eval/run-profile.py smoke --models lite --out-root /tmp/check    # results outside eval/runs/
 ```
 
 | Profile | When to run | Runtime | What it does |
 |---|---|---|---|
 | `smoke` | After every `build-*` rebuild or runner change | ~5-10 min | Speed (capped output) + 2 coding tasks + SEO content + 2 persona tasks + 1 JSON task, 2 attempts each, then 2 agent tasks once |
-| `standard` | When picking models or after prompt-stack changes | ~2 hours with four models | Every suite except `run-agent.py`, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget |
-| `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs, and the agent suite at its default 2 attempts |
+| `standard` | When picking models or after prompt-stack changes | about 40 min with four models, not yet measured since the split | The six deterministic suites: speed, code, content, persona, JSON and tools, with code/content/persona trimmed to 3 attempts so the expanded task set stays in budget. No judge is involved. |
+| `judged` | When the teaching or tutoring pick is the question | not yet measured | `run-learn.py` and `run-tutor.py` at `--judge-repeats 1`: each response is graded once per judge, not three times. A close call here is settled by `deep`. |
+| `deep` | Before trusting a close call or promoting a new model | several hours | Full 5-attempt sweeps, both persona system modes, plus medium and high context-pressure JSON runs, the agent suite at its default 2 attempts, and learn and tutor at the default three judge repeats |
 
 Runtime note: the original "under 1 hour" `standard` budget assumed two models at
 54/46.7 tok/s running fully or mostly on GPU. Two things have since inflated it.
@@ -365,8 +367,27 @@ with `models-1` judges x `--judge-repeats` calls. Going 2 -> 3 models roughly
 triples the judging work. A 3-model `standard` took 97 minutes on 2026-09-15.
 On 2026-09-17 it took 63, because `load-mode = none` and `ubatch-size = 1024`
 roughly doubled prompt ingest on the two CPU-spilling models. The four-model
-`standard` pass of 2026-11-09 took 111.1 minutes. Drop
-`--judge-repeats` to 1 to trade the median back for speed.
+`standard` pass of 2026-11-09 took 111.1 minutes.
+
+Learn and tutor left `standard` on 2026-11-20, so every `standard` time above
+includes them. In that 2026-11-09 pass they were about 70% of the runtime, read
+from the run folder timestamps:
+
+| Suite | Minutes |
+|---|---:|
+| tutor | 45.7 |
+| learn | 32.7 |
+| tools | 10.2 |
+| code | 9.2, from a rerun later that day |
+| json | 7.6 |
+| persona | 5.3 |
+| content | 4.7 |
+| speed | 1.3 |
+
+The six suites left in `standard` add up to about 38 minutes. `judged` runs the
+other two at one judge repeat, which gives up the median that damps judge noise.
+Tutor has grown since that pass, because the pressure turns were added on
+2026-11-19. Neither new runtime has been measured yet.
 
 The wrapper prints every `summary.md` it produced at the end. `--out-root` is
 passed to every runner in the profile (since 2026-09-25, pinned by

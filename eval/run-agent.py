@@ -13,7 +13,7 @@ A pass needs both: the hidden tests pass, and the model ended the loop itself.
 A model that fixes the bug but never stops is reported as `step-cap`.
 
 Usage:
-  ./eval/run-agent.py --models gemma qwen lite freedom
+  ./eval/run-agent.py --models gemma qwen lite nemotron
   ./eval/run-agent.py --models lite --tasks fix_failing_test --attempts 1
   ./eval/run-agent.py --models lite --out-root /tmp/check    # results outside eval/runs/
 

@@ -97,6 +97,91 @@ class AgentSuiteTests(unittest.TestCase):
             self.assertIn(key, TASKS)
 
 
+class JudgedSuiteTests(unittest.TestCase):
+    """Learn and tutor left `standard` on 2026-11-20: they were about 70% of its
+    runtime. `judged` runs them at one judge repeat, and `deep` keeps three."""
+
+    JUDGED = ("run-learn.py", "run-tutor.py")
+
+    def lines(self, name: str, *extra: str) -> list[str]:
+        _, text = run_main([name, "--models", "lite", "qwen", *extra, "--dry-run"])
+        return text.splitlines()
+
+    def scripts(self, name: str) -> list[str]:
+        return [Path(ln.split()[0]).name for ln in self.lines(name)]
+
+    def test_standard_runs_the_six_deterministic_suites_and_no_judged_one(self):
+        self.assertEqual(self.scripts("standard"),
+                         ["run-speed.py", "run-code.py", "run-content.py",
+                          "run-persona.py", "run-json.py", "run-tools.py"])
+
+    def test_judged_runs_learn_and_tutor_at_one_judge_repeat(self):
+        self.assertEqual(self.lines("judged"),
+                         [f"{EVAL / script} --models lite qwen --judge-repeats 1"
+                          for script in self.JUDGED])
+
+    def test_judged_passes_out_root_to_both_steps(self):
+        with tempfile.TemporaryDirectory() as d:
+            lines = self.lines("judged", "--out-root", d)
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertTrue(line.endswith(f"--out-root {d}"), line)
+
+    def test_deep_keeps_both_judged_suites_at_the_default_repeats(self):
+        judged = [ln for ln in self.lines("deep") if Path(ln.split()[0]).name in self.JUDGED]
+        self.assertEqual(judged, [f"{EVAL / script} --models lite qwen --attempts 5"
+                                  for script in self.JUDGED])
+
+    def test_smoke_runs_no_judged_suite(self):
+        self.assertFalse(set(self.scripts("smoke")) & set(self.JUDGED))
+
+    def test_an_unknown_profile_is_refused(self):
+        with self.assertRaises(SystemExit) as cm:
+            run_main(["routine", "--models", "lite", "--dry-run"])
+        self.assertEqual(cm.exception.code, 2)
+
+
+class LeaderboardRefreshAdviceTests(unittest.TestCase):
+    """promote.py tells the reader how to refresh rows. Since learn and tutor left
+    `standard`, a `standard` pass alone no longer refreshes every row."""
+
+    BOTH = "`./eval/run-profile.py standard` and `judged`"
+
+    def setUp(self):
+        sys.path.insert(0, str(EVAL))
+        import promote
+        self.promote = promote
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.runs = Path(self._tmp.name)
+        patch = mock.patch.object(promote, "RUNS", self.runs)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def write(self, stamp: str, suite: str, column: str) -> None:
+        d = self.runs / stamp / suite
+        d.mkdir(parents=True)
+        (d / "summary.md").write_text(
+            f"| Rank | Model | {column} |\n|---|---|---|\n| 1 | `lite` | 9 |\n",
+            encoding="utf-8")
+
+    def test_with_no_runs_the_block_names_both_profiles(self):
+        block, warnings = self.promote.build_block(None)
+        self.assertEqual(warnings, ["no runs found"])
+        self.assertIn("run-profile.py standard --models", block)
+        self.assertIn("`judged`", block)
+
+    def test_a_stale_judged_row_is_told_to_rerun_both_profiles(self):
+        self.write("20261119T000000Z", "learn", "Teach /10")
+        self.write("20261120T000000Z", "speed", "Gen tok/s")
+        block, warnings = self.promote.build_block(None)
+        stale = [w for w in warnings if w.startswith("stale suites")]
+        self.assertEqual(len(stale), 1, warnings)
+        self.assertIn("learn", stale[0])
+        self.assertIn("run-profile.py standard and judged", stale[0])
+        self.assertIn(self.BOTH, block)
+
+
 class RealRunTests(unittest.TestCase):
     def test_summaries_are_listed_from_the_out_root_and_eval_runs_is_untouched(self):
         with tempfile.TemporaryDirectory() as d:

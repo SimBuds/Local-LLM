@@ -6,23 +6,25 @@ the underlying runners stay independently usable for targeted sweeps.
 
 Profiles:
   smoke     fast sanity check after a model rebuild or runner change (~5-10 min)
-  standard  the routine full comparison; trims code/content to 3 attempts to keep
-            the expanded task set tractable
-  deep      several-hour confidence run: full attempts everywhere plus medium
-            and high context-pressure sweeps
+  standard  the routine comparison on the six deterministic suites; trims
+            code/content/persona to 3 attempts to keep the task set tractable
+  judged    the two judge-scored suites, learn and tutor, at one judge repeat
+  deep      several-hour confidence run: full attempts everywhere, the judged
+            suites at three repeats, plus medium and high context-pressure sweeps
 
-Runtime scales with the MODEL COUNT SQUARED on the judged suites, not linearly:
-run-learn/run-tutor generate N models × tasks × attempts responses, and each is
-then graded by N-1 judges × --judge-repeats calls. A 3-model `standard` pass
-took 97 minutes on this box before the 2026-09-17 prompt-ingest tuning and 63
-after it. Drop
-`--judge-repeats` to 1 to trade the median back for speed.
+Learn and tutor were part of `standard` until 2026-11-20, when they were about
+70% of its runtime (78 of 111 minutes with four models). Their runtime scales
+with the MODEL COUNT SQUARED, not linearly: run-learn/run-tutor generate
+N models × tasks × attempts responses, and each is then graded by N-1 judges ×
+--judge-repeats calls. `judged` grades each response once per judge, which gives
+up the median that damps judge noise, so settle a close call with `deep`.
 
 Usage:
-  ./eval/run-profile.py smoke --models gemma qwen lite freedom
-  ./eval/run-profile.py standard --models gemma qwen lite freedom
-  ./eval/run-profile.py deep --models gemma qwen lite freedom
-  ./eval/run-profile.py standard --models gemma qwen lite freedom --dry-run  # show commands
+  ./eval/run-profile.py smoke --models gemma qwen lite nemotron
+  ./eval/run-profile.py standard --models gemma qwen lite nemotron
+  ./eval/run-profile.py judged --models gemma qwen lite nemotron
+  ./eval/run-profile.py deep --models gemma qwen lite nemotron
+  ./eval/run-profile.py standard --models gemma qwen lite nemotron --dry-run  # show commands
 
 Each underlying runner still writes its own eval/runs/<UTC>/<suite>/ directory;
 the wrapper lists every summary.md the profile produced at the end. A failed
@@ -58,8 +60,10 @@ PROFILES: dict[str, list[list[str]]] = {
         ["run-persona.py", "--attempts", "3"],
         ["run-json.py"],
         ["run-tools.py", "--attempts", "3"],
-        ["run-learn.py"],
-        ["run-tutor.py"],
+    ],
+    "judged": [
+        ["run-learn.py", "--judge-repeats", "1"],
+        ["run-tutor.py", "--judge-repeats", "1"],
     ],
     "deep": [
         ["run-speed.py"],
