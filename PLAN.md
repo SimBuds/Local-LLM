@@ -109,6 +109,13 @@ per response and inter-judge disagreement can never be computed. Three models
 means two judges per response and a real disagreement number. The current four
 models give three judges per response.
 
+A fifth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), has been
+served as a candidate since 2026-11-19. It is not in the table above because it
+has no role yet. A candidate has to generate at 20 tok/s or more, which rules
+out dense models near 30B on this card: the two that were tried ran at 3 and 7
+tok/s. Whether `nemotron` takes a role is decided from the benchmark pass
+recorded in TESTING.md.
+
 `freedom` is an uncensored base in a lineup whose shared stack carries
 `prompts/safety.md`. The same tune was tried as `qwen` on 2026-07-27 and
 reverted the next day, because under the shared stack the stack spends tokens

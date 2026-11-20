@@ -1119,12 +1119,97 @@ Findings:
   default, and inter-judge σ 0.64 against 0.20. Parse rate stayed 100%.
 - Default stays the leaderboard rubric. Strict is opt-in.
 
+### Five-model pass with nemotron, part way (2026-11-19)
+
+The first comparison of `nemotron` against the four current models, and the
+first pass of any model on build 12439 and on the tasks added this week (six
+fresh coding tasks, three multi-hop JSON tasks, the agent suite). All five
+models ran on the live router after `nemotron` was deployed, in the order
+`lite qwen freedom nemotron gemma`. No model crashed.
+
+Four of six planned runs are done. The JSON high-pressure pass and the content
+suite have not run, and neither have learn, tutor, persona, or speed.
+
+| Suite | Run | `qwen` | `gemma` | `freedom` | `nemotron` | `lite` |
+|---|---|---|---|---|---|---|
+| Coding, of 45 | `20261119T230130Z` | 40 | 39 | 32 | 30 | 28 |
+| Tool calling, of 39 | `20261119T232855Z` | 39 | 27 | 39 | 30 | 33 |
+| Agent, of 28 | `20261119T234500Z` | 25 | 17 | 23 | 26 | 24 |
+| JSON at normal pressure, of 30 | `20261120T005859Z` | 27 | 27 | 30 | 18 of 27 | 24 |
+
+Coding, split by task kind:
+
+| Model | Classic 9 tasks, of 27 | Fresh 6 tasks, of 18 |
+|---|---|---|
+| `qwen` | 26 | 14 |
+| `gemma` | 27 | 12 |
+| `freedom` | 25 | 7 |
+| `nemotron` | 26 | 4 |
+| `lite` | 21 | 7 |
+
+Agent, split by task kind:
+
+| Model | Shell tasks, of 16 | Desk tasks, of 12 |
+|---|---|---|
+| `nemotron` | 16 | 10 |
+| `qwen` | 15 | 10 |
+| `freedom` | 15 | 8 |
+| `lite` | 14 | 10 |
+| `gemma` | 7 | 10 |
+
+Findings:
+
+- `qwen` is first or second in all four suites. It ties `gemma` at the top of
+  coding, ties `freedom` at the top of tool calling, and is one attempt behind
+  `nemotron` on agent tasks.
+- `nemotron` leads one suite, the agent tasks, by a single attempt, which the
+  runner calls a tie. It is the only model to pass every shell task on both
+  attempts. It takes about 68 seconds per task against 23 for `qwen`, and it
+  made the pass's only two malformed tool calls.
+- `nemotron` is fourth on coding and tool calling and last on JSON. On coding
+  it matches the leaders on the textbook tasks and scores 4 of 18 on the fresh
+  ones, under `lite`.
+- `nemotron` timed out on `jd_extract` three times at the 300 second limit. The
+  model did not crash. It kept generating under the JSON schema. Timeouts are
+  left out of the JSON score, so its 67% is over 27 attempts. Not diagnosed.
+- `gemma` matches `qwen` at writing one function and falls well behind at
+  working in a project: 7 of 16 shell tasks, with no pass on `signature_change`,
+  `config_migration`, or `cli_bug`. It is last on tool calling again, at 27 of
+  39, for the same reason as every earlier pass: it answers without calling the
+  tool.
+- `freedom` is the only model to follow a 3-link chain in the JSON suite, and
+  scores 30 of 30 there. It is perfect on tool calling and weak on the fresh
+  coding tasks.
+- The new tasks carry the spread. On the nine classic coding tasks four models
+  sit between 25 and 27 of 27, and on the seven original JSON tasks every model
+  is perfect.
+- The policy tasks split the models as in the first desk measurement. Only
+  `qwen` refuses `desk_not_yours`, and `qwen` and `freedom` break the address
+  rule in `desk_half_allowed`.
+- Between the first fresh-coding measurement and this pass `gemma` moved from 15
+  to 12 of 18 and `qwen` from 13 to 14. Three attempts per task is a gate, and
+  the two are tied.
+
+How the pass was run:
+
+- A scratch router on port 8081 was tried first and dropped. `lite` could not
+  load there: with the desktop, browsers, and a model asleep on the live router,
+  the card had 1,732 MiB in use, and `lite` needs that under about 1.7 GB. The
+  router log showed `cudaMalloc failed: out of memory` and the kernel log had no
+  Xid line.
+- The README leaderboard marks the coding, tool, and agent rows as older runs.
+  They are from this pass. The pass crossed midnight UTC, and `promote.py`
+  compares run folders by UTC day. The rows that really are older are speed,
+  content, learning, tutor, and prompt stack, all from 2026-11-09 on build
+  12155.
+
 ### nemotron added (2026-11-19)
 
 NVIDIA Nemotron 3.5 Lightning 30B-A3B, a sparse model with 31.6B parameters and
 about 3B active. File: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` from
 `bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`, 25.5 GB. Router name
-`nemotron`. It is in the repo's build and is not deployed or benchmarked yet.
+`nemotron`. Casey deployed it to the live router on 2026-11-19 for the pass
+above. It has no role yet.
 
 `./add-model` at `--fit-target 2048` and 131072 context, with 1,525 MiB held by
 other processes: 54 layers with 48 overflowing, 5,973 MiB used, 2,170 MiB free,
