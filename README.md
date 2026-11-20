@@ -20,13 +20,12 @@ The lineup, on llama.cpp since 2026-09-14:
 
 | Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
 |---|---|--:|---|---|
-| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | 128K | 24 MoE layers on CPU | 26B A4B MoE, QAT Q4_0. |
+| `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | 128K | 26 MoE layers on CPU | 26B A4B MoE, Q4_K_M since 2026-11-20. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 37 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 128K | all GPU, MTP | Dense 9B. The only one that fits in 10 GB, so it is the speed anchor. |
-| `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf` | 128K | 34 MoE layers on CPU | Uncensored tune of `qwen`'s base, for Friends-Hermes. No MTP heads. |
-| `nemotron` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` | 128K | 52 MoE layers on CPU, MTP | 30B A3B MoE from NVIDIA. A candidate under test since 2026-11-19, with no role yet. |
+| `nemotron` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` | 128K | 50 MoE layers on CPU, MTP | 30B A3B MoE from NVIDIA. A candidate under test since 2026-11-19, with no role yet. |
 
-- **MoE spillover stays usable.** `gemma`, `qwen` and `freedom` activate few
+- **MoE spillover stays usable.** `gemma`, `qwen` and `nemotron` activate few
   parameters per token, so the expert layers kept in system RAM cost little.
   `lite` needs no spillover, which makes it the baseline the others are measured
   against.
@@ -36,9 +35,9 @@ The lineup, on llama.cpp since 2026-09-14:
   used, copied byte for byte. Ollama's `qwen3.5:9b` does not load in llama.cpp,
   so `lite` is unsloth's MTP build at the same Q4_K_M quant, and its scores start
   a new history.
-- **`freedom`** is held to `qwen`'s standards (spike-tested split, benchmark
-  suites, `make check`) and is the model Friends-Hermes calls. Why an uncensored
-  base sits beside a shared `safety.md` is in PLAN.md, *The lineup*.
+- **`freedom` was removed on 2026-11-20.** It was the uncensored tune that
+  Friends-Hermes called. Its results stay in [`TESTING.md`](TESTING.md), and
+  `add-model` still refuses the name so no other model can answer to it.
 - **`nemotron`** is served by the router but is not part of the contract other
   repos depend on. Its first results are in [`TESTING.md`](TESTING.md),
   *Five-model pass with nemotron*.
@@ -94,10 +93,9 @@ and names the path if its file is missing.
 
 | Model | File | Source |
 |---|---|---|
-| `gemma` | `gemma4-26b-a4b-it-qat.gguf` | Ollama's `gemma4:26b-a4b-it-qat` blob. |
+| `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | `bartowski/google_gemma-4-26B-A4B-it-GGUF`, staged 2026-11-20. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | Ollama's `qwen3.6:35b-a3b-mtp-q4_K_M` blob. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | `unsloth/Qwen3.5-9B-MTP-GGUF`, file `Qwen3.5-9B-Q4_K_M.gguf`. |
-| `freedom` | `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf` | Staged 2026-11-08. Matches HuggingFace `HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive`. |
 
 Check the files against the checksums the benchmarks used. Each line must print
 `OK`:
@@ -105,10 +103,9 @@ Check the files against the checksums the benchmarks used. Each line must print
 ```bash
 # Runs in: local terminal. Read-only, safe to repeat.
 cd ~/models/gguf && sha256sum -c <<'EOF'
-4c856523d61d77922dbc0b26753a6bf6208e5d69d80db0c04dcd776832d054c5  gemma4-26b-a4b-it-qat.gguf
+a07f72221e8e3f77455ab0d7f7652d01a9f63c262b954aa6932a53275a0e895a  google_gemma-4-26B-A4B-it-Q4_K_M.gguf
 d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc  qwen3.6-35b-a3b-mtp-q4_K_M.gguf
 e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe  qwen3.5-9b-mtp-q4_K_M.gguf
-bbef58c37ce88820be9d98b6437f1cf4bac890c947bd55fc7b68e22098574231  Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
 EOF
 ```
 
@@ -138,7 +135,7 @@ EOF
 ├── models/models.ini     # generated router preset: server.ini + every preset.ini
 ├── server.ini            # llama-server settings shared by every model
 ├── build-common.sh       # shared assembly of the prompt stack and presets
-├── build-*               # one per model (gemma, qwen, lite, freedom), discovered by make
+├── build-*               # one per model (gemma, qwen, lite, nemotron), discovered by make
 ├── add-model             # scaffolds a new build-* from a staged or remote GGUF
 ├── apply-universal.py    # ports the portable half of AGENTS.md between repos
 ├── check-agents.py       # read-only size and repeated-rule report for AGENTS.md
@@ -181,7 +178,7 @@ GGUF stops with the reason.
 - It refuses a GGUF that a builder already names in `BASE_MODEL`, and names that
   builder.
 - It asks for the router name and refuses one that is malformed, taken, or part
-  of the `gemma` / `qwen` / `lite` / `freedom` contract.
+  of the `gemma` / `qwen` / `lite` contract, or the retired name `freedom`.
 - It reads the GGUF header for MTP heads and emits `spec-type = draft-mtp` only
   when they exist.
 - It writes no `PARAMS`, because the sampler baseline lives in `server.ini` (see
@@ -270,7 +267,7 @@ between runs.
 
 **The splits leave about 2 GB of VRAM free.** Splits fitted at the default 1 GB
 margin crashed with CUDA out of memory under normal desktop use. At 131072
-context the values are gemma 24, qwen 37 and freedom 34, each spike-tested with
+context the values are gemma 26, qwen 37 and nemotron 50, each spike-tested with
 about 3.0 GB of the card held by other processes. `lite` stays all-GPU by Casey's
 choice, so a desktop VRAM spike can crash it. The measurements are in
 [`TESTING.md`](TESTING.md), *Pinned split history*.
@@ -290,7 +287,7 @@ would pin now:
 ```bash
 # Runs in: local terminal, repo root, after make build. Loads each model once on a
 # spare port. Writes nothing. Needs the router to hold no model in VRAM.
-./add-model --refit gemma qwen freedom
+./add-model --refit gemma qwen nemotron
 ```
 
 - Each model is probed as the router serves it: its section of the built
@@ -344,7 +341,7 @@ in rather than read from the preset.
 Keep prompt text terse, because every prompt token is spent every turn. Prefer
 removing bad rules or tuning `PARAMS` over adding instructions. To find which
 rules earn their place, run
-`./eval/run-persona.py --models gemma qwen lite freedom --system-mode baseline`
+`./eval/run-persona.py --models gemma qwen lite nemotron --system-mode baseline`
 and compare it with a stacked run. A rule the base model obeys unprompted costs
 tokens for nothing. *Prompt Stack Value* below has the current answer.
 
@@ -494,7 +491,7 @@ override:
 | `OLLAMA_KEEP_ALIVE=10m` | `sleep-idle-seconds = 600`: an idle model sleeps and frees its VRAM, and the next request wakes it | `server.ini` |
 | automatic GPU/CPU split | `fit = off` plus each builder's `LOAD` | `server.ini`, `build-*` |
 | (no equivalent) | `cache-ram = 0`: the server's host-RAM prompt cache is off, because its 8192 MiB default grew `qwen` toward the 2026-11-04 out-of-memory kill ([`TESTING.md`](TESTING.md), *Host RAM held by the prompt cache*) | `server.ini` |
-| (no equivalent) | `reasoning-preserve = true`: the build default, pinned so a build update cannot change how `qwen` and `freedom` see earlier turns' reasoning | `server.ini` |
+| (no equivalent) | `reasoning-preserve = true`: the build default, pinned so a build update cannot change how `qwen` sees earlier turns' reasoning | `server.ini` |
 
 - **`--models-max 1` keeps benchmarks clean.** Two resident models would share
   the 10 GB, so throughput would depend on which other model was loaded. With
@@ -530,8 +527,9 @@ The router is a machine-level service. Jobhunt, SEO-LLM, Friends-Hermes, this
 repo's evals and editors are all clients of `http://localhost:8080`:
 
 - Jobhunt and SEO-LLM use `gemma`, `qwen` and `lite`.
-- Friends-Hermes uses `freedom` from a QEMU guest, which reaches the host's
-  localhost at `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`.
+- Friends-Hermes runs in a QEMU guest, which reaches the host's localhost at
+  `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`. It called
+  `freedom`, removed on 2026-11-20, and needs another model name.
 - The unit passes `--cors-origins localhost`. Since llama.cpp 1.0 (build
   12439) that allows only same-origin requests, such as the built-in web UI.
   Any request carrying another `Origin`, including a page on a different
@@ -621,7 +619,7 @@ repos:
 
 - Endpoint `POST http://localhost:8080/v1/chat/completions` (OpenAI format). Any
   non-empty API key is accepted.
-- `model` is one of `gemma`, `qwen`, `lite`, `freedom`.
+- `model` is one of `gemma`, `qwen`, `lite`.
 - The app sends its own system message. A request without one gets the bare base
   model.
 - Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30), with
@@ -645,7 +643,7 @@ repos:
 
 Both extensions use the router's OpenAI-compatible API at
 `http://localhost:8080/v1` with the `llama-server` service running. The model
-names are `gemma`, `qwen`, `lite` and `freedom`, and any non-empty key is
+names are `gemma`, `qwen`, `lite` and `nemotron`, and any non-empty key is
 accepted.
 
 A client that does not send `models/<name>/prompt.txt` as its system message
@@ -662,7 +660,7 @@ ready to paste under `models:`:
 # Runs in: repo root, after make build. Prints YAML only, writes nothing.
 python3 - <<'EOF'
 import json
-for name, label in [("qwen", "stack fidelity"), ("gemma", "coding/content/tutor"), ("lite", "fast"), ("freedom", "uncensored")]:
+for name, label in [("qwen", "stack fidelity"), ("gemma", "coding/content/tutor"), ("lite", "fast")]:
     prompt = open(f"models/{name}/prompt.txt", encoding="utf-8").read()
     print(f"  - name: {name} ({label})\n"
           f"    provider: openai\n"
@@ -683,7 +681,7 @@ default from the leaderboard, not from load size.
 
 Set **API Provider** to `OpenAI Compatible`, **Base URL** to
 `http://localhost:8080/v1`, **API Key** to any value, **Model ID** to `qwen`,
-`gemma`, `lite` or `freedom`, and the context window to `131072`. Cline sends its
+`gemma`, `lite` or `nemotron`, and the context window to `131072`. Cline sends its
 own system prompt and its docs offer no way to replace it, so it runs without
 this repo's stack. Cline ingests large prompts, so choose by the **Prompt
 tok/s** column of `run-speed.py`, not generation speed.
@@ -692,7 +690,7 @@ tok/s** column of `run-speed.py`, not generation speed.
 
 - Switching models costs a reload (about 2 to 7 seconds), because the router
   keeps one loaded.
-- `gemma`, `qwen` and `freedom` keep some expert layers in system RAM, and MoE
+- `gemma`, `qwen` and `nemotron` keep some expert layers in system RAM, and MoE
   keeps that usable. `lite` fits, and shows what the split costs.
 - The eval runners turn thinking off per request. Requests without the flag get
   the chat template's default, and `gemma` was seen thinking by default.
@@ -705,22 +703,22 @@ hour), and `deep` for a several-hour confidence run. [`TESTING.md`](TESTING.md)
 says when to use each.
 
 ```bash
-./eval/run-profile.py smoke --models gemma qwen lite freedom
-./eval/run-profile.py standard --models gemma qwen lite freedom
+./eval/run-profile.py smoke --models gemma qwen lite nemotron
+./eval/run-profile.py standard --models gemma qwen lite nemotron
 ```
 
 Single runners, for targeted sweeps:
 
 ```bash
-./eval/run-speed.py --models gemma qwen lite freedom
-./eval/run-code.py --models gemma qwen lite freedom
-./eval/run-content.py --models gemma qwen lite freedom
-./eval/run-learn.py --models gemma qwen lite freedom
-./eval/run-tutor.py --models gemma qwen lite freedom
-./eval/run-json.py --models gemma qwen lite freedom
-./eval/run-tools.py --models gemma qwen lite freedom
-./eval/run-agent.py --models gemma qwen lite freedom   # multi-step tasks with a sandboxed shell
-./eval/run-persona.py --models gemma qwen lite freedom
+./eval/run-speed.py --models gemma qwen lite nemotron
+./eval/run-code.py --models gemma qwen lite nemotron
+./eval/run-content.py --models gemma qwen lite nemotron
+./eval/run-learn.py --models gemma qwen lite nemotron
+./eval/run-tutor.py --models gemma qwen lite nemotron
+./eval/run-json.py --models gemma qwen lite nemotron
+./eval/run-tools.py --models gemma qwen lite nemotron
+./eval/run-agent.py --models gemma qwen lite nemotron   # multi-step tasks with a sandboxed shell
+./eval/run-persona.py --models gemma qwen lite nemotron
 ```
 
 - **`run-persona.py`** is the prompt-stack regression suite. It checks that the
@@ -858,13 +856,12 @@ against the two 12009 passes (2026-10-30 and 2026-10-31). No pick changed.
 | Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8/10 with 12/12 on the code gate, inside the tie threshold. `freedom` also scored 9.9 and 12/12. |
 | Structured JSON / app smoke tests | `lite` | All four scored 100%. `lite` averages 2.3s against `gemma` 5.5s, `freedom` 6.7s and `qwen` 7.1s. |
 | Prompt-stack fidelity | `qwen` | 86% clean vs 76% for `freedom` and 67% for `gemma` and `lite`. 90% in both 12009 passes. |
-| Uncensored (Friends-Hermes) | `freedom` | Its only role. In its one pass it matched `qwen` on learning and JSON and came close on coding, and it leaked the most on tutoring. |
 
 No single model wins. `lite` takes everything speed-shaped, `gemma` takes
 content, tutoring and coding, and `qwen` takes tool calling and the prompt stack
 and ties `gemma` on learning. Tool calling is where `gemma` is clearly weakest.
-`freedom` is picked only for its uncensored role. One pass cannot move a pick
-held over several.
+`freedom` was removed from the lineup on 2026-11-20, so its figures above are a
+record only. One pass cannot move a pick held over several.
 
 Learn and tutor scores in this pass come from three judges per response, not
 two, so compare them only within the pass.

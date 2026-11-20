@@ -1102,7 +1102,7 @@ repos, and one ended in a colon with no template after it.)
   benchmark's offload between runs, the same class of confound as the 2026-07-28
   co-residency problem. Re-derive a value with `./add-model --refit NAME` (README,
   *Re-deriving a split*) after a model or hardware change. Never turn fitting back on for benchmark runs. (2026-09-14)
-- **Locked: pinned splits keep a 2 GB fit margin (gemma 24, qwen 37, freedom 34
+- **Locked: pinned splits keep a 2 GB fit margin (gemma 26, qwen 37, nemotron 50
   at 131072 context).** Values fit at llama.cpp's default 1 GB margin (gemma 18, qwen 32)
   crashed with CUDA out of memory under normal desktop use plus a spike, and the
   coding runner scored that crash as a model failure. A new value is derived with
@@ -1144,6 +1144,16 @@ repos, and one ended in a colon with no template after it.)
   on 2026-11-19. At 48 it failed the spike test 0 of 5, because the fitter left
   no room for the MTP draft context. At 52 it passed 5 of 5 with about 2.3 GB
   free at peak. Details in `TESTING.md`, *nemotron added*. (2026-11-19)
+  Casey moved it to 50 on 2026-11-20 to give RAM back, about 1 GB. 50 passed the
+  same spike test 5 of 5 with about 1.2 GB free at peak, and coding and agent
+  scores did not change. 48 stays ruled out. (2026-11-20)
+  `gemma` moved to a Q4_K_M file on 2026-11-20 by Casey's decision, and the
+  fitter chose 26 for it. Every `gemma` value above is for the QAT Q4_0 file it
+  replaced. 26 passed the spike test 5 of 5 at about 3.0 GB of other GPU use,
+  with about 1.3 GB free at peak. Details in `TESTING.md`, *gemma moved to the
+  Q4_K_M file*. (2026-11-20)
+  `freedom` left the lineup on 2026-11-20 by Casey's decision, so its 34 is a
+  record only. (2026-11-20)
 - **Locked: `load-mode = none` and `ubatch-size = 1024` in `server.ini`, with
   `lite` held at `ubatch-size = 512` in `build-lite`.** Measured on build 11022:
   prompt ingest 2.4× and 2.7× for gemma and qwen, with generation unchanged and
@@ -1195,8 +1205,9 @@ repos, and one ended in a colon with no template after it.)
   numbers. Only real comparison passes write to `eval/runs/`. (2026-09-14)
 - **Locked: the router is a contract for other repos.** Jobhunt and SEO-LLM call
   `http://localhost:8080/v1/chat/completions` with model `gemma`, `qwen`, or `lite`
-  (README, "Serving other apps"). Friends-Hermes calls `freedom` from a QEMU guest
-  at `10.0.2.2:8080`, QEMU's address for the host's localhost (2026-11-09).
+  (README, "Serving other apps"). Friends-Hermes called `freedom` from a QEMU guest
+  at `10.0.2.2:8080`, QEMU's address for the host's localhost, until Casey removed
+  `freedom` from the lineup on 2026-11-20. The name stays reserved.
   Changing the port, a model name, the context size, or the structured-output
   shape breaks those apps, so it needs Casey's approval and a matching change
   planned in each app's repo. `add-model` refuses all four names. (2026-09-15)

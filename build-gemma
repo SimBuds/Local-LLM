@@ -2,9 +2,12 @@
 set -euo pipefail
 
 MODEL_NAME="gemma"
-# Reused from Ollama's gemma4:26b-a4b-it-qat blob (Q4_0 QAT) — same weights as the
-# Ollama-era benchmarks, so post-switch deltas measure the runtime, not the model.
-BASE_MODEL="gemma4-26b-a4b-it-qat.gguf"
+# Q4_K_M of the standard weights, from bartowski/google_gemma-4-26B-A4B-it-GGUF,
+# since 2026-11-20 (Casey). It replaced the Q4_0 QAT file reused from Ollama
+# (gemma4-26b-a4b-it-qat.gguf), which hit Xid 31 on about 1 load in 5 while the
+# four Q4_K_M models hit it on 1 in 100. Scores from before that date are for the
+# old file.
+BASE_MODEL="google_gemma-4-26B-A4B-it-Q4_K_M.gguf"
 
 # Per-model load params. The expert split is pinned rather than left to --fit,
 # which sizes it from whatever VRAM is free at load time — so an open browser
@@ -24,8 +27,13 @@ BASE_MODEL="gemma4-26b-a4b-it-qat.gguf"
 # 131072 with --fit-target 2048 on build 12009 at ~1.4 GB desktop VRAM:
 # 31 layers (24 overflowing), 6098 MiB used, 2160 MiB free. Generation was
 # about 5-8% slower than 22 at 65536 (48.7 to ~45 tok/s, 3 requests each).
+#
+# 26 since 2026-11-20, with the Q4_K_M file, which is 2.6 GB larger than the QAT
+# one. --fit chose 26 at 131072 with --fit-target 2048 on build 12439 at about
+# 1.2 GB desktop VRAM: 31 layers (26 overflowing), 6181 MiB used, 2310 MiB free.
+# The history above is for the QAT file. No MTP head in this GGUF either.
 LOAD=(
-  'n-cpu-moe = 24'
+  'n-cpu-moe = 26'
 )
 
 # Shared assembly — see build-common.sh.

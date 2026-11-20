@@ -957,14 +957,15 @@ check is a full 100-pass soak with HMM off, plus any Xid 31 seen in normal use.
 
 | Model | Status | Notes |
 |---|---|---|
-| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | current | Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU from the headroom fix the same day, 22 from 2026-09-16, and 24 since 2026-10-30. |
+| `gemma` (`google_gemma-4-26B-A4B-it-Q4_K_M.gguf`) | current | Since 2026-11-20. 26B A4B MoE, standard weights at Q4_K_M, 17.0 GB file from `bartowski/google_gemma-4-26B-A4B-it-GGUF` (sha256 `a07f7222…`). 26 MoE layers on CPU. No suite has been run on it yet. |
+| `gemma` (`gemma4-26b-a4b-it-qat.gguf`) | retired 2026-11-20 | Replaced after Xid 31 on about 1 load in 5. Every `gemma` score dated before 2026-11-20 is this file. Rebuilt 2026-07-28. 26B A4B MoE, QAT Q4_0, 13.4 GiB file. Byte-identical to the Ollama `gemma4:26b-a4b-it-qat` blob (sha256 `4c856523…`). On llama.cpp since 2026-09-14, with 21 MoE layers on CPU from the headroom fix the same day, 22 from 2026-09-16, and 24 since 2026-10-30. |
 | `qwen` (`qwen3.6-35b-a3b-mtp-q4_K_M.gguf`) | current | Rebuilt 2026-07-28. 35B A3B MoE, 20.2 GiB file. Official release, and `build-qwen` was reverted to it from the uncensored tune below. Byte-identical to the Ollama blob (sha256 `d372de8e…`). On llama.cpp since 2026-09-14 with MTP on, and 34 MoE layers on CPU from the headroom fix the same day, 35 from 2026-09-16, and 37 since 2026-10-30. |
 | `lite` (`qwen3.5-9b-mtp-q4_K_M.gguf`) | current | Added 2026-07-28. Dense 9B, 5.5 GiB file, the only model that fits entirely in 10 GB. Exists as a no-spillover speed control and as the third judge, which is what makes inter-judge disagreement computable at all. Base replaced 2026-09-14 with unsloth `Qwen3.5-9B-MTP-GGUF` Q4_K_M (sha256 `e8dd9481…`) because the Ollama file does not load in llama.cpp. |
 | `lite` (`qwen3.5:9b`, Ollama) | replaced 2026-09-14 | Source of every `lite` score before the switch. Fails to load in llama.cpp: `key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3`. |
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
-| `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | current, added 2026-11-08, benchmarked 2026-11-09 | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
+| `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | retired 2026-11-20, added 2026-11-08, benchmarked 2026-11-09 | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
 | `bigqwen` (`qwen3.8-27b-mtp-q4_K_M.gguf`) | added 2026-11-08, retired 2026-11-09 | Added with `./add-model` only to measure its speed. Dense 27B with MTP, 16.8 GB file. At 131072 context and the 2 GB margin only 12 of 66 layers fit on the GPU (6109 MiB used). On build 12155 the 2026-11-08 persona run gave 7 tok/s and 17.7 s per reply, 16/21 clean. MTP took it from the 4 tok/s of the 2026-10-09 load check to 7, which is still too slow for interactive use. |
 | `gemma4:31b-it-qat` | speed-only | Not in the lineup. Dense 31B, 18 GB, 3.1 tok/s under 72% CPU spill. Slowest base measured here; effectively unusable interactively. |
 | `gemma` (`gemma4:12b-it-q4_K_M`) | retired 2026-07-27 | Base no longer installed. Won/tied all six suites on 2026-06-14, but that run was sampler-confounded. |
@@ -1227,6 +1228,66 @@ How the pass was run:
   content, learning, tutor, and prompt stack, all from 2026-11-09 on build
   12155.
 
+### freedom removed (2026-11-20)
+
+Casey removed `freedom` from the lineup. `build-freedom` is deleted, so the
+router no longer serves it and benchmark runs no longer include it. Every
+`freedom` row in this file stays as a record. Its last results are in the
+five-model pass below. `add-model` still refuses the name, so no other model can
+answer to it. Friends-Hermes called it and needs another model name.
+
+### gemma moved to the Q4_K_M file (2026-11-20)
+
+Casey replaced `gemma`'s file. The router name stays `gemma`, so Jobhunt and
+SEO-LLM need no change.
+
+| | Old | New |
+|---|---|---|
+| File | `gemma4-26b-a4b-it-qat.gguf` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` |
+| Weights and quantisation | QAT, Q4_0 | standard, Q4_K_M |
+| Size | 14.44 GB | 17.04 GB |
+| Source | Ollama's blob | `bartowski/google_gemma-4-26B-A4B-it-GGUF` |
+| `n-cpu-moe` | 24 | 26 |
+
+Why: on the live service from 2026-11-19 to the morning of 2026-11-20, the old
+file crashed with Xid 31 on 5 of 24 loads. The four Q4_K_M models crashed on 1
+of 100 (`lite`, once). The faults came with `uvm_disable_hmm = Y`, three of them
+on driver 620.73.04 and kernel 7.3.5, so neither HMM off nor that update removes
+the fault. The old file was the only Q4_0 file and the only QAT one in the
+lineup. The new file changes both at once, so a clean result would not say which
+of the two mattered. No plain Q4_K_M of the QAT weights is published.
+
+Whether the new file still faults is not known yet. That needs the 2026-11-14
+soak repeated on it (*Soak with HMM on*, 9 faults in 100 loads for the old file).
+
+Checks on the new file, build 12439, 131072 context:
+
+- Checksum matches HuggingFace. The GGUF header has no MTP heads.
+- `./add-model --refit gemma` at `--fit-target 2048`, with about 1.2 GB held by
+  the desktop: 31 layers with 26 overflowing, 6,181 MiB used, 2,310 MiB free.
+- On a scratch router on port 8081: 37.5 tok/s generation and 1,249 to 1,353
+  tok/s prompt ingest, model VRAM 6,192 MiB, about 14 GB of RAM available with it
+  loaded. The old file ran at about 45 tok/s, so this one is about 17% slower.
+- One attempt of the JSON suite there, as a check that structured output works:
+  9 of 10, every reply valid against its schema, with `chain_trace_3x3` at 2 of 3
+  facts. This is not a score.
+
+Spike test at 26, from `./eval/spike-test.py gemma`:
+
+| Cycle | Other GPU use | Peak | Min free | Load | Generation |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3001 MiB | 8947 MiB | 1293 MiB | 12.1 s | 35.8 tok/s |
+| 2 | 2998 MiB | 8947 MiB | 1293 MiB | 9.9 s | 37.6 tok/s |
+| 3 | 2998 MiB | 8949 MiB | 1291 MiB | 9.1 s | 36.0 tok/s |
+| 4 | 2999 MiB | 8947 MiB | 1293 MiB | 9.1 s | 36.1 tok/s |
+| 5 | 2998 MiB | 8947 MiB | 1293 MiB | 8.9 s | 35.6 tok/s |
+
+PASS, 5 of 5 with no out-of-memory line.
+
+Every `gemma` score dated before 2026-11-20 is for the old file, including the
+five-model pass above and `gemma`'s grading as a judge in the tutor and learn
+suites.
+
 ### nemotron added (2026-11-19)
 
 NVIDIA Nemotron 3.5 Lightning 30B-A3B, a sparse model with 31.6B parameters and
@@ -1266,6 +1327,32 @@ the built preset at 52:
 | 5 | 2980 MiB | 7887 MiB | 2353 MiB | 16.0 s | 28.5 tok/s |
 
 PASS, 5 of 5 with no out-of-memory line.
+
+#### Moved to 50 (2026-11-20)
+
+Casey moved the pin from 52 to 50 after the five-model pass. With `nemotron`
+loaded at 52, RAM was the tight resource (about 4 GB available) while the card
+had over 2 GB spare. 50 passed the spike test in the table above, 5 of 5 with
+1,200 to 1,236 MiB free at peak, close to the margin `gemma` and `qwen` run
+with. That spike test was not repeated on the built preset, which runs the same
+flags.
+
+A `nemotron`-only check on the live router at 50, written to a scratch folder,
+against the same suites at 52 from the pass above:
+
+| | At 52 | At 50 |
+|---|---|---|
+| Coding, of 45 | 30 | 32 |
+| Agent, of 28 | 26 | 25 |
+| Generation in the coding run | 45 tok/s | 47 tok/s |
+| Generation in the agent run | 44 tok/s | 46 tok/s |
+| Model VRAM | about 4.9 GB (spike peak less held) | 5,934 to 5,944 MiB |
+| RAM available with the model loaded | about 4 GB | 4.8 to 6.0 GB |
+
+Scores and speed did not change: two attempts either way is inside the run to
+run spread, and `desk_not_yours` failed 0 of 2 at both splits. The move buys
+about 1 GB of RAM and costs about 1 GB of VRAM headroom. No Xid line appeared
+during the check.
 
 ### Speed floor and the two dense candidates (2026-11-19)
 
