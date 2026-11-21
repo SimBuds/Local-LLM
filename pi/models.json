@@ -1,0 +1,18 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "local-llm": {
+      "name": "Local-LLM router",
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "models": [
+        {
+          "id": "qwen",
+          "name": "qwen (Qwen3.6 35B A3B, local)",
+          "contextWindow": 131072
+        }
+      ]
+    }
+  }
+}

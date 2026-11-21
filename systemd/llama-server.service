@@ -10,8 +10,10 @@
 #
 # --cors-origins localhost: the default (*) let any web page read the router's
 # responses. Since llama.cpp 1.0 (build 12439) only same-origin requests are
-# allowed, and any other Origin gets a 403. The apps and the QEMU guest send no
-# Origin, so they are unaffected (checked 2026-11-16).
+# allowed, and any other Origin gets a 403. The host apps send no Origin, so
+# they are unaffected (checked 2026-11-16). A Host header that is not localhost
+# also gets the 403, so a QEMU guest calling 10.0.2.2:8080 is refused and uses
+# an SSH reverse tunnel instead (found 2026-11-21, README, Use With Pi).
 
 [Unit]
 Description=llama.cpp router server (http://localhost:8080)

@@ -144,7 +144,16 @@ repos, not a local edit.
 - `model` is one of `gemma`, `qwen`, `lite`, which Jobhunt and SEO-LLM use.
   Friends-Hermes runs in a QEMU guest that reaches the host's `127.0.0.1:8080`
   at `10.0.2.2:8080`, so the router stays bound to localhost. It called
-  `freedom`, removed on 2026-11-20, and needs another model name.
+  `freedom`, removed on 2026-11-20, and needs another model name. Since build
+  12439 that address gets a 403, because `--cors-origins localhost` rejects any
+  `Host` header that is not localhost (found 2026-11-21).
+- A coding agent that runs shell commands without a sandbox is a client from a
+  VM guest, never from the host. The Pi config in `pi/` (2026-11-21) is written
+  for a guest that reaches the router on its own `localhost:8080` through an SSH
+  reverse tunnel (Casey's choice on 2026-11-21 over changing the service
+  flag), and it turns off Pi's
+  built-in llama.cpp extension, because that extension loads, unloads and
+  downloads models on a router, and this one is a pinned service.
 - The caller sends its own system message.
 - Context is fixed at 131072 tokens by the preset (65536 until 2026-10-30). There is no per-request
   context size, and an oversized prompt returns HTTP 400 rather than being
@@ -201,6 +210,14 @@ still compare, and the pressure result is reported beside it.
 
 Speed is tracked separately, because a better model that is too slow is not a
 usable local default.
+
+The suites run through three profiles, split by cost (2026-11-20). `standard` is
+the six deterministic suites, 75 minutes with four models. `judged` is learn and
+tutor at one judge repeat, about an hour. They were part of `standard` until
+they reached about 70% of its runtime, and their cost grows with the square of
+the model count. `deep` keeps three judge repeats, whose median damps judge
+noise, and adds the agent suite. A close call on a judged suite is settled by
+`deep`, not by `judged`.
 
 Two design consequences worth stating plainly:
 

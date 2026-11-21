@@ -20,8 +20,8 @@ The lineup, on llama.cpp since 2026-09-14:
 
 | Model | GGUF (`~/models/gguf/`) | ctx | Offload | Role |
 |---|---|--:|---|---|
-| `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | 128K | 26 MoE layers on CPU | 26B A4B MoE, Q4_K_M since 2026-11-20. |
-| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 38 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. |
+| `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | 128K | 26 MoE layers on CPU | 26B A4B MoE, Q4_K_M since 2026-11-20. The pick for coding, content and teaching. |
+| `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 38 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. The pick for agent work and tool calling. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 128K | all GPU, MTP | Dense 9B. The only one that fits in 10 GB, so it is the speed anchor. |
 
 - **MoE spillover stays usable.** `gemma` and `qwen` activate few
@@ -132,7 +132,9 @@ EOF
 ├── prompts/              # behavior controls, run every turn
 ├── memory/user.md        # durable user profile (gitignored, see *.example.md)
 ├── eval/                 # benchmark runners, tasks, and offline unit tests
-├── scripts/llm           # terminal client for the router, installed to ~/.local/bin
+├── scripts/              # llm (terminal client, installed to ~/.local/bin), llama-update, verify-build
+├── .claude/skills/verify # how an AI agent verifies a change here without touching the live service
+├── pi/                   # Pi coding-agent config for a VM guest (see *Use With Pi*)
 ├── systemd/              # the llama-server user service unit
 ├── models/<name>/        # generated system.txt, prompt.txt, preset.ini (gitignored)
 ├── models/models.ini     # generated router preset: server.ini + every preset.ini
@@ -532,13 +534,21 @@ repo's evals and editors are all clients of `http://localhost:8080`:
 - Jobhunt and SEO-LLM use `gemma`, `qwen` and `lite`.
 - Friends-Hermes runs in a QEMU guest, which reaches the host's localhost at
   `10.0.2.2:8080`, so the router stays bound to `127.0.0.1`. It called
-  `freedom`, removed on 2026-11-20, and needs another model name.
+  `freedom`, removed on 2026-11-20, and needs another model name. It is also
+  blocked by the `Host` check in the next point.
 - The unit passes `--cors-origins localhost`. Since llama.cpp 1.0 (build
   12439) that allows only same-origin requests, such as the built-in web UI.
   Any request carrying another `Origin`, including a page on a different
   localhost port and a plain-text POST from another site, gets a 403 before any
-  generation runs (checked 2026-11-16). The apps above send no `Origin` header,
+  generation runs (checked 2026-11-16). The host apps send no `Origin` header,
   so they are unaffected.
+- The same flag rejects any request whose `Host` header is not localhost. A
+  QEMU guest calling `10.0.2.2:8080` sends `Host: 10.0.2.2:8080` and gets that
+  403, on build 12439 and on 12605 (measured 2026-11-21 on a spare port). The
+  2026-11-16 check covered `Origin` only and missed this. A guest reaches the
+  router through an SSH reverse tunnel instead (*Use With Pi*). Adding
+  `http://10.0.2.2:8080` to `--cors-origins` also lets the guest in and keeps
+  every other block, but Casey chose the tunnel on 2026-11-21.
 
 | Piece | Location |
 |---|---|
@@ -663,7 +673,7 @@ ready to paste under `models:`:
 # Runs in: repo root, after make build. Prints YAML only, writes nothing.
 python3 - <<'EOF'
 import json
-for name, label in [("qwen", "stack fidelity"), ("gemma", "coding/content/tutor"), ("lite", "fast")]:
+for name, label in [("qwen", "agent/tools"), ("gemma", "coding/content/tutor"), ("lite", "fast")]:
     prompt = open(f"models/{name}/prompt.txt", encoding="utf-8").read()
     print(f"  - name: {name} ({label})\n"
           f"    provider: openai\n"
@@ -691,12 +701,66 @@ tok/s** column of `run-speed.py`, not generation speed.
 
 ### Notes for both
 
-- Switching models costs a reload (about 2 to 7 seconds), because the router
-  keeps one loaded.
+- Switching models costs a reload, because the router keeps one loaded: about
+  2 seconds for `lite`, 12 for `gemma` and 14 for `qwen` (2026-11-20).
 - `gemma` and `qwen` keep some expert layers in system RAM, and MoE
   keeps that usable. `lite` fits, and shows what the split costs.
 - The eval runners turn thinking off per request. Requests without the flag get
   the chat template's default, and `gemma` was seen thinking by default.
+
+## Use With Pi (in a VM)
+
+[Pi](https://docs.pi.dev/) is a terminal coding agent. `pi/` holds a config that
+points it at this router. It is written for Pi running inside a QEMU guest,
+because Pi's own docs say it does not sandbox tool calls or ask before running a
+shell command, and recommend a container or VM.
+
+| File | Goes to, in the guest | What it sets |
+|---|---|---|
+| `pi/models.json` | `~/.pi/agent/models.json` | One provider, `local-llm`, at `http://localhost:8080/v1` (the guest end of an SSH reverse tunnel to the host's router), with `qwen` at the served context of 131072. The key is a placeholder: the router accepts any. |
+| `pi/settings.json` | `~/.pi/agent/settings.json` | `qwen` as the default model, install telemetry off, and Pi's built-in llama.cpp extension off. |
+
+- **The built-in llama.cpp extension stays off.** Its `/llama` command loads,
+  unloads and downloads models on a router. This router is a pinned service that
+  other apps depend on, so Pi connects as a plain client.
+- **The guest needs a tunnel open while Pi runs.** The guest's direct route to
+  the host, `10.0.2.2:8080`, gets a 403 from the router (*Serving other apps*).
+  Log in with `ssh -p 22222 -R 8080:localhost:8080` and the guest's own
+  `localhost:8080` is the host's router, with a `Host` header it accepts.
+- **Only `qwen` is listed,** the pick for agent work and tool calling. `gemma`
+  and `lite` wait until `qwen` has passed a smoke test under Pi.
+- **`eval/test_pi_config.py` keeps the copy honest.** It fails if a model name
+  has no `build-*` file, or if the context size differs from `server.ini`.
+- **Smoke tested on 2026-11-21** with Pi 1.6.0 and `qwen` on build 12605: Pi
+  listed the model, answered a prompt, and wrote and read back a file through
+  its tools. Its only network connection was the router. Details in
+  `TESTING.md`, *Pi smoke test with qwen*.
+
+The VM is `~/VMs/pi` (quickemu, Debian 13.7.0 netinst, 4 GB, 2 cores, 20 GB,
+`ssh_port` 22222, user `pi`), with snapshots `clean` and `pi-configured`. The
+second one has Pi and this config installed. To use it:
+
+```bash
+# Host, first terminal: boot the VM.
+cd ~/VMs/pi && quickemu --vm debian-13.7.0-netinst.conf --public-dir none
+
+# Host, second terminal: log in with the tunnel to the router.
+ssh -p 22222 -R 8080:localhost:8080 pi@localhost
+
+# Guest, in that session.
+pi --list-models
+pi -p "Reply with the single word: ready"
+```
+
+After a change to `pi/`, copy it in again from the repo on the host:
+
+```bash
+scp -P 22222 pi/models.json pi/settings.json pi@localhost:.pi/agent/
+```
+
+A fresh guest needs `curl` (`su - -c 'apt-get install -y curl'`, the netinst
+image has no `sudo`) and then Pi's installer, `curl -fsSL
+https://pi.dev/install.sh | sh`, which brings its own Node.
 
 ## Evaluation
 

@@ -1,0 +1,6 @@
+{
+  "defaultProvider": "local-llm",
+  "defaultModel": "qwen",
+  "enableInstallTelemetry": false,
+  "extensions": ["-builtin:llama.cpp"]
+}

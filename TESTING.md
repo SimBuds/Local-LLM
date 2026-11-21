@@ -258,7 +258,10 @@ change is compared on identical answers (*Learn rubric at 0 to 4*).
 
 The live suites above need the router and real models. The plumbing they depend
 on has stdlib `unittest` tests that need neither, with responses captured from
-the router on 2026-09-14 and `urlopen`, the clock, and `nvidia-smi` patched:
+the router on 2026-09-14 and `urlopen`, the clock, and `nvidia-smi` patched. The
+tests that run model-written or task code use the real bwrap sandbox and skip,
+visibly, where it cannot start. The suite had 633 tests on 2026-11-21 and takes
+about 4 minutes:
 
 ```bash
 python3 -m unittest discover -s eval -p 'test_*.py'
@@ -272,6 +275,21 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 | `eval/test_preflight.py` | every runner preflights before creating a run dir (and `run-json.py` before reading served context), and imports the gateway's `preflight` |
 | `eval/test_llm.py` | `scripts/llm` `status`, `load`, `unload`, `chat`, and `logs`, against router shapes captured 2026-09-15, with `urlopen`, the clock, `nvidia-smi`, stdin, and `execvp` patched |
 | `eval/test_add_model.py` | `./add-model` run as a subprocess against synthetic GGUF headers and a fake `llama-server`: the menu, name validation, MTP detection from the header, the generated builder, the fit probe, dense and MoE offload pinning, fit-line provenance, HuggingFace lookup, and the checksum handoff |
+| `eval/test_failure_paths.py` | every runner stops when the model it is calling crashes, records a single failed call and keeps going, leaves no empty run folder after an abort, and ends quietly on Ctrl-C |
+| `eval/test_code.py` | `coding_tasks.py`: each fresh task's hidden asserts pass its two reference solutions and fail its plausible wrong shortcut. Programs really run, under bwrap |
+| `eval/test_tools.py` | the `run-tools.py` scorer: expected calls, argument normalization, the no-call tasks, answer checks, tool-error wording and the second round |
+| `eval/test_agent.py` | `run-agent.py` and `agent_tasks.py`: the tool loop with a scripted model, real sandboxed commands and hidden tests, the desk tools and tasks, the summary, and its promotion to the leaderboard |
+| `eval/test_learn.py` | the learn judge's strict 0 to 4 rubric and `run-learn.py --rescore`, with the judge call patched |
+| `eval/test_tutor.py` | `run-tutor.py`: the leak check over every code block (it really runs code), the scripted pressure turns, and the summary's `Held` column |
+| `eval/test_profile.py` | `run-profile.py`: `--out-root` reaches every step, which suites each profile runs (`standard` has no judged suite, `judged` runs learn and tutor at one repeat), and the refresh advice `promote.py` prints |
+| `eval/test_promote.py` | `promote.py`: which run feeds each leaderboard row (a pressure-run JSON summary never does) and the 12-hour window that marks a row as an older run |
+| `eval/test_spike_test.py` | the pure parts of `eval/spike-test.py`: reading `nvidia-smi`, sizing the hold, finding out-of-memory lines, and the PASS or FAIL verdict |
+| `eval/test_verify_build.py` | the pure parts of `scripts/verify-build`: the pinned-split load command, per-process VRAM, the footprint comparison, refusing while the service holds a model, and the KL report |
+| `eval/test_llama_update.py` | `scripts/llama-update` against a scratch upstream repo with stub `cmake` and `systemctl`: status, build beside the live build, swap and rollback |
+| `eval/test_makefile.py` | `make build` in a scratch tree with stub builders: a `models/<name>/` folder is pruned when its `build-<name>` is gone |
+| `eval/test_pi_config.py` | the tracked Pi config in `pi/`: its model names have `build-*` files, its context size matches `server.ini`, and Pi's router manager is off |
+| `eval/test_apply_universal.py` | `apply-universal.py` in temporary repos: it replaces only the universal half of an `AGENTS.md` and finds the files it should |
+| `eval/test_check_agents.py` | `check-agents.py`: the size report, the rule list, the word budget, and that no mode changes the file |
 
 Every test was seen failing before its change landed. Where a test could only
 fail at first because its function did not exist yet, or because it guards
@@ -936,6 +954,45 @@ at once, which it has. No further work on the cause is planned.
 
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
+
+### Pi smoke test with qwen (2026-11-21)
+
+A smoke test, not a scored comparison. Pi 1.6.0 ran in a new QEMU guest
+(`~/VMs/pi`, Debian 13.7.0) against the live router on build 12605, with the
+tracked config in `pi/`. Casey ran the guest commands and the journal lines were
+read on the host.
+
+| Check | Result |
+|---|---|
+| Guest reaches the router at `10.0.2.2:8080` | Fail: 403 |
+| Guest reaches the router through `ssh -R 8080:localhost:8080` | Pass: 200 and the model list |
+| `pi --list-models` | Pass: one row, `local-llm qwen`, context 131.1K, max output 16.4K |
+| `pi -p "Reply with the single word: ready"` | Pass: `ready` |
+| Tool loop: create `hello.txt`, read it back | Pass: the file is on disk, 10 bytes, `hi from pi` |
+| Connections, normal and with `PI_OFFLINE=1` | Pass: only port 8080 on `::1` in both |
+
+- **The 403 is the router's `Host` check.** `--cors-origins localhost` rejects
+  a request whose `Host` header is not localhost, and a guest calling
+  `10.0.2.2:8080` sends `Host: 10.0.2.2:8080`. Build 12439 does the same on a
+  spare port, so the update did not cause it, and Friends-Hermes is blocked the
+  same way. `--cors-origins "localhost,http://10.0.2.2:8080"` returned 200 for
+  the guest on a spare port and still gave 403 to a foreign `Origin`, a foreign
+  `Host`, and a page on another localhost port. Casey chose the tunnel and left
+  the service flag alone.
+- **The tool loop was three requests** in the router's journal, at 57 to 62
+  tok/s with MTP draft acceptance of 69 to 85%. Pi's own prompt is about 1,500
+  tokens. `qwen` loaded on the first request and no Xid was logged.
+- **The connect trace** (`strace -f -e trace=connect`) showed three network
+  calls per run: the router, and two calls to port 0 on `::1` and `127.0.0.1`,
+  which is the resolver ordering addresses and sends nothing. The normal run and
+  the offline run were identical, so with install telemetry off in
+  `pi/settings.json`, `pi -p` contacted nothing else. Interactive startup was
+  not traced. On first start it downloaded `fd` and `ripgrep` into
+  `~/.pi/agent/bin`.
+- **Learned about the config:** the placeholder key was accepted, and Pi's
+  installer supplied Node on a guest that had none.
+- **Not determined:** whether `qwen` thinks under Pi. The `ready` reply was 18
+  generated tokens, and the request body was not captured.
 
 ### Pinned split history (moved from README on 2026-11-09)
 
