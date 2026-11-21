@@ -343,11 +343,11 @@ Confidence by signal:
 individual runners so routine testing doesn't drift across hand-typed flags.
 
 ```bash
-./eval/run-profile.py smoke --models gemma qwen lite nemotron      # after a model rebuild
-./eval/run-profile.py standard --models gemma qwen lite nemotron   # routine comparison, deterministic suites
-./eval/run-profile.py judged --models gemma qwen lite nemotron    # learn and tutor, one judge repeat
-./eval/run-profile.py deep --models gemma qwen lite nemotron       # pre-decision confidence run
-./eval/run-profile.py standard --models gemma qwen lite nemotron --dry-run  # show commands
+./eval/run-profile.py smoke --models gemma qwen lite      # after a model rebuild
+./eval/run-profile.py standard --models gemma qwen lite   # routine comparison, deterministic suites
+./eval/run-profile.py judged --models gemma qwen lite    # learn and tutor, one judge repeat
+./eval/run-profile.py deep --models gemma qwen lite       # pre-decision confidence run
+./eval/run-profile.py standard --models gemma qwen lite --dry-run  # show commands
 ./eval/run-profile.py smoke --models lite --out-root /tmp/check    # results outside eval/runs/
 ```
 
@@ -722,11 +722,11 @@ the 2026-11-09 pass (*Build 12155 pass*) and are in this file's git history.
 | Content / SEO / copy | `gemma` | 9/9 clean, tied with `qwen` in this pass. The old `gemma` file held 9/9 in every pass since 2026-07-28, so the pick stays. |
 | Auto agent and tool calling | `qwen` | 39/39 on tool calling vs 33 for `gemma` and `lite` and 26 for `nemotron`. 16/16 on the shell agent tasks, at 54.9 tok/s. Its weak spot is policy: it broke the rule in `desk_half_allowed` on both attempts. |
 | Personal teacher bot | `gemma` | 3/15 leaked first replies vs 4 (`nemotron`), 7 (`qwen`) and 8 (`lite`), teach 7.4/10, and the only model that held through the pressure turns at all (4/15). |
-| Learning explanations | `qwen`, `nemotron` or `gemma` (tie) | 9.9, 9.9 and 9.8/10, each with 12/12 on the code gate. The rubric does not separate them. |
+| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8/10, each with 12/12 on the code gate. `nemotron` also scored 9.9 before it was removed. The rubric does not separate them. |
 | Structured JSON | `gemma` or `qwen` (tie) | 27/30 each, and every reply from every model was schema-valid. `lite` scored 24/30 at 2.3 s a call against 6.3 and 7.1, so it is the pick when the task is a single passage and speed matters. |
 | Prompt-stack fidelity | `gemma` or `qwen` (tie) | 20/21 and 19/21. `qwen` held 86 to 90% on its old file across three passes. `gemma`'s old file scored 67%, so its 95% is new. |
 | Fast local general use | `lite` | 133.2 tok/s, the only model fully on GPU. 2.4× `qwen` (54.9) and 3.5× `gemma` (38.6). |
-| No role | `nemotron` | Last on tool calling, content and the prompt stack, 6/18 on the fresh coding tasks, slowest at 35.7 tok/s, and it timed out on one JSON task in both of its passes. Its one strength is tutoring, where it is second. |
+| Removed 2026-11-20 | `nemotron` | No role earned. Last on tool calling, content and the prompt stack, 6/18 on the fresh coding tasks, slowest at 35.7 tok/s, and it timed out on one JSON task in both of its passes. Its one strength is tutoring, where it is second. |
 
 ## Hardware
 
@@ -1039,6 +1039,7 @@ at once, which it has. No further work on the cause is planned.
 | `qwen` (`hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M`) | reverted 2026-07-28, never benchmarked | Targeted by `build-qwen` on 2026-07-27; the base was never pulled, so the builder's preflight failed and no run ever used it. Reverted rather than pulled: an uncensored tune works against `prompts/safety.md` by construction, so the shared stack would spend tokens every turn fighting the base's own tuning, and the persona suite would be measuring that fight instead of the stack. If it is ever wanted, it belongs on its own tag with its own stack, not swapped under the shared one. |
 | `gemma4:12b-it-qat` | installed 2026-08-11, speed-only | Not in the lineup and not built into a tag. 7.3 GB, 98% on GPU, 59.7 tok/s — fastest base after `lite`. Quality untested. Distinct from the retired `gemma4:12b-it-q4_K_M` below: different quant (QAT). |
 | `qwen3.6:27b-mtp-q4_K_M` | installed 2026-08-11, speed-only | Not in the lineup. Dense 27B, 18 GB, 8.6 tok/s under spillover — 4.6× slower than the larger 35B A3B MoE. Batch-only on this box. |
+| `nemotron` (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf`) | retired 2026-11-20, added 2026-11-19 | 30B A3B MoE from NVIDIA, Q4_K_M from bartowski (sha256 `b520a899…`), MTP on. Pinned at 52 MoE layers on CPU, then 50, above the fitter's 48, which failed the spike test (*nemotron added*). Benchmarked in *Five-model pass with nemotron* and *Four-model pass on the new gemma and qwen files*. No role earned (*nemotron removed*). |
 | `freedom` (`Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf`) | retired 2026-11-20, added 2026-11-08, benchmarked 2026-11-09 | Uncensored tune of `qwen`'s base, the same tune as the reverted uncensored `qwen` row below, under its own name. For Friends-Hermes, a router contract name since 2026-11-09. No MTP heads, 34 MoE layers on CPU, spike-tested 2026-11-09 (*Spike test of freedom*). sha256 `bbef58c3…`. |
 | `bigqwen` (`qwen3.8-27b-mtp-q4_K_M.gguf`) | added 2026-11-08, retired 2026-11-09 | Added with `./add-model` only to measure its speed. Dense 27B with MTP, 16.8 GB file. At 131072 context and the 2 GB margin only 12 of 66 layers fit on the GPU (6109 MiB used). On build 12155 the 2026-11-08 persona run gave 7 tok/s and 17.7 s per reply, 16/21 clean. MTP took it from the 4 tok/s of the 2026-10-09 load check to 7, which is still too slow for interactive use. |
 | `gemma4:31b-it-qat` | speed-only | Not in the lineup. Dense 31B, 18 GB, 3.1 tok/s under 72% CPU spill. Slowest base measured here; effectively unusable interactively. |
@@ -1080,9 +1081,9 @@ when that was measured (2026-10-31). At 1.8 GB it loaded and then crashed on its
 first request, which a client sees as an HTTP 500.
 
 Both files changed on 2026-11-20, and every value above is for the files they
-replaced. The current values are gemma 26, qwen 38 and nemotron 50. `qwen` and
-`nemotron` are pinned above the fitter's choice (37 and 48), because each failed
-the spike test there. The measurements are under *gemma moved to the Q4_K_M
+replaced. The current values are gemma 26 and qwen 38. `qwen` is pinned above
+the fitter's choice of 37, because it failed the spike test there, as `nemotron`
+did at 48 before it left the lineup on 2026-11-20. The measurements are under *gemma moved to the Q4_K_M
 file*, *qwen moved to the unsloth file* and *nemotron added*.
 
 Re-probed on build 11022 on 2026-09-17 at about 1.1 GB of desktop use. `qwen`
@@ -1393,6 +1394,24 @@ Findings:
 The judged suites ran at one judge repeat, so within-judge noise was not
 measured, and `nemotron` was graded but did not judge. `gemma` and `qwen` are
 both contestants and judges here, as in earlier passes.
+
+### nemotron removed (2026-11-20)
+
+Casey removed `nemotron` from the lineup after the four-model pass above.
+`build-nemotron` is deleted, so the router no longer serves it and benchmark runs
+no longer include it. Every `nemotron` row in this file stays as a record, and
+the README leaderboard keeps its column until the next pass replaces those runs.
+
+Why: in two passes it led nothing that separated the models. On 2026-11-20 it
+was last on tool calling (26 of 39), content and the prompt stack (11 of 21),
+scored 6 of 18 on the fresh coding tasks, and was the slowest model at 35.7
+tok/s. It timed out on the JSON task `jd_extract` three times at 300 seconds in
+both passes, which was never diagnosed. Its strengths were tutoring, where it
+was second with 4 leaks in 15, and the shell agent tasks on 2026-11-19, 16 of
+16.
+
+The lineup is `gemma`, `qwen` and `lite`. The name was never part of the router
+contract, so `add-model` does not reserve it.
 
 ### freedom removed (2026-11-20)
 

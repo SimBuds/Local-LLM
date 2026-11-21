@@ -23,9 +23,8 @@ The lineup, on llama.cpp since 2026-09-14:
 | `gemma` | `google_gemma-4-26B-A4B-it-Q4_K_M.gguf` | 128K | 26 MoE layers on CPU | 26B A4B MoE, Q4_K_M since 2026-11-20. |
 | `qwen` | `qwen3.6-35b-a3b-mtp-q4_K_M.gguf` | 128K | 38 MoE layers on CPU, MTP | 35B A3B MoE. The largest model that stays usable here. |
 | `lite` | `qwen3.5-9b-mtp-q4_K_M.gguf` | 128K | all GPU, MTP | Dense 9B. The only one that fits in 10 GB, so it is the speed anchor. |
-| `nemotron` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf` | 128K | 50 MoE layers on CPU, MTP | 30B A3B MoE from NVIDIA. Tested since 2026-11-19, with no role after two passes. |
 
-- **MoE spillover stays usable.** `gemma`, `qwen` and `nemotron` activate few
+- **MoE spillover stays usable.** `gemma` and `qwen` activate few
   parameters per token, so the expert layers kept in system RAM cost little.
   `lite` needs no spillover, which makes it the baseline the others are measured
   against.
@@ -39,9 +38,9 @@ The lineup, on llama.cpp since 2026-09-14:
 - **`freedom` was removed on 2026-11-20.** It was the uncensored tune that
   Friends-Hermes called. Its results stay in [`TESTING.md`](TESTING.md), and
   `add-model` still refuses the name so no other model can answer to it.
-- **`nemotron`** is served by the router but is not part of the contract other
-  repos depend on. After two passes it has no role (*Current picks* below). Its
-  results are in [`TESTING.md`](TESTING.md), *Five-model pass with nemotron* and
+- **`nemotron` was removed on 2026-11-20.** NVIDIA's Nemotron 3.5 Lightning
+  30B-A3B was served from 2026-11-19 and earned no role in two passes. Its
+  results stay in [`TESTING.md`](TESTING.md), *Five-model pass with nemotron* and
   *Four-model pass on the new gemma and qwen files*.
 - **`lite` is also a judge.** The learn and tutor suites grade with a
   leave-one-out judge panel. With two models each response had one judge and no
@@ -139,7 +138,7 @@ EOF
 ├── models/models.ini     # generated router preset: server.ini + every preset.ini
 ├── server.ini            # llama-server settings shared by every model
 ├── build-common.sh       # shared assembly of the prompt stack and presets
-├── build-*               # one per model (gemma, qwen, lite, nemotron), discovered by make
+├── build-*               # one per model (gemma, qwen, lite), discovered by make
 ├── add-model             # scaffolds a new build-* from a staged or remote GGUF
 ├── apply-universal.py    # ports the portable half of AGENTS.md between repos
 ├── check-agents.py       # read-only size and repeated-rule report for AGENTS.md
@@ -271,7 +270,7 @@ between runs.
 
 **The splits leave about 2 GB of VRAM free.** Splits fitted at the default 1 GB
 margin crashed with CUDA out of memory under normal desktop use. At 131072
-context the values are gemma 26, qwen 38 and nemotron 50, each spike-tested with
+context the values are gemma 26 and qwen 38, each spike-tested with
 about 3.0 GB of the card held by other processes. `lite` stays all-GPU by Casey's
 choice, so a desktop VRAM spike can crash it. The measurements are in
 [`TESTING.md`](TESTING.md), *Pinned split history*.
@@ -291,7 +290,7 @@ would pin now:
 ```bash
 # Runs in: local terminal, repo root, after make build. Loads each model once on a
 # spare port. Writes nothing. Needs the router to hold no model in VRAM.
-./add-model --refit gemma qwen nemotron
+./add-model --refit gemma qwen
 ```
 
 - Each model is probed as the router serves it: its section of the built
@@ -345,7 +344,7 @@ in rather than read from the preset.
 Keep prompt text terse, because every prompt token is spent every turn. Prefer
 removing bad rules or tuning `PARAMS` over adding instructions. To find which
 rules earn their place, run
-`./eval/run-persona.py --models gemma qwen lite nemotron --system-mode baseline`
+`./eval/run-persona.py --models gemma qwen lite --system-mode baseline`
 and compare it with a stacked run. A rule the base model obeys unprompted costs
 tokens for nothing. *Prompt Stack Value* below has the current answer.
 
@@ -647,7 +646,7 @@ repos:
 
 Both extensions use the router's OpenAI-compatible API at
 `http://localhost:8080/v1` with the `llama-server` service running. The model
-names are `gemma`, `qwen`, `lite` and `nemotron`, and any non-empty key is
+names are `gemma`, `qwen` and `lite`, and any non-empty key is
 accepted.
 
 A client that does not send `models/<name>/prompt.txt` as its system message
@@ -685,7 +684,7 @@ default from the leaderboard, not from load size.
 
 Set **API Provider** to `OpenAI Compatible`, **Base URL** to
 `http://localhost:8080/v1`, **API Key** to any value, **Model ID** to `qwen`,
-`gemma`, `lite` or `nemotron`, and the context window to `131072`. Cline sends its
+`gemma` or `lite`, and the context window to `131072`. Cline sends its
 own system prompt and its docs offer no way to replace it, so it runs without
 this repo's stack. Cline ingests large prompts, so choose by the **Prompt
 tok/s** column of `run-speed.py`, not generation speed.
@@ -694,7 +693,7 @@ tok/s** column of `run-speed.py`, not generation speed.
 
 - Switching models costs a reload (about 2 to 7 seconds), because the router
   keeps one loaded.
-- `gemma`, `qwen` and `nemotron` keep some expert layers in system RAM, and MoE
+- `gemma` and `qwen` keep some expert layers in system RAM, and MoE
   keeps that usable. `lite` fits, and shows what the split costs.
 - The eval runners turn thinking off per request. Requests without the flag get
   the chat template's default, and `gemma` was seen thinking by default.
@@ -708,23 +707,23 @@ suites, learn and tutor, and `deep` for a several-hour confidence run.
 [`TESTING.md`](TESTING.md) says when to use each.
 
 ```bash
-./eval/run-profile.py smoke --models gemma qwen lite nemotron
-./eval/run-profile.py standard --models gemma qwen lite nemotron
-./eval/run-profile.py judged --models gemma qwen lite nemotron
+./eval/run-profile.py smoke --models gemma qwen lite
+./eval/run-profile.py standard --models gemma qwen lite
+./eval/run-profile.py judged --models gemma qwen lite
 ```
 
 Single runners, for targeted sweeps:
 
 ```bash
-./eval/run-speed.py --models gemma qwen lite nemotron
-./eval/run-code.py --models gemma qwen lite nemotron
-./eval/run-content.py --models gemma qwen lite nemotron
-./eval/run-learn.py --models gemma qwen lite nemotron
-./eval/run-tutor.py --models gemma qwen lite nemotron
-./eval/run-json.py --models gemma qwen lite nemotron
-./eval/run-tools.py --models gemma qwen lite nemotron
-./eval/run-agent.py --models gemma qwen lite nemotron   # multi-step tasks with a sandboxed shell
-./eval/run-persona.py --models gemma qwen lite nemotron
+./eval/run-speed.py --models gemma qwen lite
+./eval/run-code.py --models gemma qwen lite
+./eval/run-content.py --models gemma qwen lite
+./eval/run-learn.py --models gemma qwen lite
+./eval/run-tutor.py --models gemma qwen lite
+./eval/run-json.py --models gemma qwen lite
+./eval/run-tools.py --models gemma qwen lite
+./eval/run-agent.py --models gemma qwen lite   # multi-step tasks with a sandboxed shell
+./eval/run-persona.py --models gemma qwen lite
 ```
 
 - **`run-persona.py`** is the prompt-stack regression suite. It checks that the
@@ -858,15 +857,15 @@ earlier record backs these picks except where the basis says so.
 | Content / SEO / copy | `gemma` | 9/9 clean, tied with `qwen` in this pass. The old `gemma` file held 9/9 in every pass since 2026-07-28, so the pick stays. |
 | Auto agent and tool calling | `qwen` | 39/39 on tool calling vs 33 for `gemma` and `lite` and 26 for `nemotron`. 16/16 on the shell agent tasks, at 54.9 tok/s. Its weak spot is policy: it broke the rule in `desk_half_allowed` on both attempts. |
 | Personal teacher bot | `gemma` | 3/15 leaked first replies vs 4 (`nemotron`), 7 (`qwen`) and 8 (`lite`), teach 7.4/10, and the only model that held through the pressure turns at all (4/15). |
-| Learning explanations | `qwen`, `nemotron` or `gemma` (tie) | 9.9, 9.9 and 9.8/10, each with 12/12 on the code gate. The rubric does not separate them. |
+| Learning explanations | `qwen` or `gemma` (tie) | 9.9 and 9.8/10, each with 12/12 on the code gate. `nemotron` also scored 9.9 before it was removed. The rubric does not separate them. |
 | Structured JSON | `gemma` or `qwen` (tie) | 27/30 each, and every reply from every model was schema-valid. `lite` scored 24/30 at 2.3 s a call against 6.3 and 7.1, so it is the pick when the task is a single passage and speed matters. |
 | Prompt-stack fidelity | `gemma` or `qwen` (tie) | 20/21 and 19/21. `qwen` held 86 to 90% on its old file across three passes. `gemma`'s old file scored 67%, so its 95% is new. |
 | Fast local general use | `lite` | 133.2 tok/s, the only model fully on GPU. 2.4× `qwen` (54.9) and 3.5× `gemma` (38.6). |
-| No role | `nemotron` | Last on tool calling, content and the prompt stack, 6/18 on the fresh coding tasks, slowest at 35.7 tok/s, and it timed out on one JSON task in both of its passes. Its one strength is tutoring, where it is second. |
+| Removed 2026-11-20 | `nemotron` | No role earned. Last on tool calling, content and the prompt stack, 6/18 on the fresh coding tasks, slowest at 35.7 tok/s, and it timed out on one JSON task in both of its passes. Its one strength is tutoring, where it is second. |
 
 `gemma` takes coding, content and teaching. `qwen` takes agent work and tool
-calling. `lite` takes everything speed-shaped. `nemotron` stays served by the
-router and has no role. Tool calling is still where `gemma` is weakest: it lost
+calling. `lite` takes everything speed-shaped. `nemotron` was removed from the
+lineup the same day, so its figures above are a record only. Tool calling is still where `gemma` is weakest: it lost
 two whole tasks there.
 
 Learn and tutor ran at one judge repeat with `gemma`, `qwen` and `lite` as

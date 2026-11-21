@@ -120,7 +120,7 @@ def build_block(pin: str | None) -> tuple[str, list[str]]:
     if not runs:
         where = f"run {pin}" if pin else str(RUNS)
         return (f"{START}\n\n_No benchmark results found in {where}. "
-                f"Run `./eval/run-profile.py standard --models gemma qwen lite nemotron` "
+                f"Run `./eval/run-profile.py standard --models gemma qwen lite` "
                 f"and the same with `judged`, "
                 f"then `./eval/promote.py`._\n\n{END}"), ["no runs found"]
 

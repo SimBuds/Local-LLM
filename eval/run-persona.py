@@ -16,7 +16,7 @@ is "clean" iff every rule its task checks holds. The summary groups failures by
 the stack rule they implicate, so a red row points at the file to fix.
 
 Usage:
-  ./eval/run-persona.py --models gemma qwen lite nemotron
+  ./eval/run-persona.py --models gemma qwen lite
   ./eval/run-persona.py --models gemma --tasks identity familiar_skill
   ./eval/run-persona.py --models gemma --attempts 5
 

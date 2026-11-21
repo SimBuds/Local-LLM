@@ -23,7 +23,7 @@
 # maintained list and a new builder was silently ignored until someone edited it.
 # build-common.sh is shared assembly, not a builder, so it is filtered out.
 # The order here is the section order in models.ini. wildcard sorts, so it is
-# gemma lite nemotron qwen, whatever order the builders were added in. llama-server
+# gemma lite qwen, whatever order the builders were added in. llama-server
 # sorts /models itself and does not depend on file order.
 MODELS  := $(filter-out common.sh,$(patsubst build-%,%,$(wildcard build-*)))
 STACK   := $(shell find prompts memory -type f -name '*.md' 2>/dev/null | sort)

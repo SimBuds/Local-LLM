@@ -3,7 +3,7 @@
 Speed benchmark: measure raw token throughput per model — NOT correctness.
 
 Purpose: quantify the speed tradeoff of the models whose experts spill to the
-CPU (gemma, qwen and nemotron on the 10 GB card) against `lite`, which runs
+CPU (gemma and qwen on the 10 GB card) against `lite`, which runs
 entirely on the GPU and anchors the speed column.
 
 Allows testing throughput with thinking ON or OFF to evaluate its impact on 
@@ -16,7 +16,7 @@ slowdown multiple vs the fastest model.
 
 Usage:
   ./eval/run-speed.py                                  # default models + prompts
-  ./eval/run-speed.py --models gemma qwen lite nemotron
+  ./eval/run-speed.py --models gemma qwen lite
   ./eval/run-speed.py --thinking on                    # force enable thinking
   ./eval/run-speed.py --num-predict 128 --attempts 1   # even faster
   ./eval/run-speed.py --timeout 900                    # for very slow spillover

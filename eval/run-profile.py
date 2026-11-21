@@ -20,11 +20,11 @@ N models × tasks × attempts responses, and each is then graded by N-1 judges �
 up the median that damps judge noise, so settle a close call with `deep`.
 
 Usage:
-  ./eval/run-profile.py smoke --models gemma qwen lite nemotron
-  ./eval/run-profile.py standard --models gemma qwen lite nemotron
-  ./eval/run-profile.py judged --models gemma qwen lite nemotron
-  ./eval/run-profile.py deep --models gemma qwen lite nemotron
-  ./eval/run-profile.py standard --models gemma qwen lite nemotron --dry-run  # show commands
+  ./eval/run-profile.py smoke --models gemma qwen lite
+  ./eval/run-profile.py standard --models gemma qwen lite
+  ./eval/run-profile.py judged --models gemma qwen lite
+  ./eval/run-profile.py deep --models gemma qwen lite
+  ./eval/run-profile.py standard --models gemma qwen lite --dry-run  # show commands
 
 Each underlying runner still writes its own eval/runs/<UTC>/<suite>/ directory;
 the wrapper lists every summary.md the profile produced at the end. A failed

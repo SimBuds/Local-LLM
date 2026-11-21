@@ -97,9 +97,9 @@ new builder was silently ignored until someone edited it.
 | `qwen` | `qwen3.6-35b-a3b-mtp` | 35B A3B MoE, the largest model that stays usable on this card. Since 2026-11-20 the file is unsloth's `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`, which replaced the Ollama-era blob. |
 | `lite` | `qwen3.5-9b-mtp` | Dense 9B, the only one that fits entirely in 10 GB. Speed anchor and third judge. |
 
-`gemma`, `qwen` and `nemotron` are mixture-of-experts: few parameters are active
-per token, so spilling experts to system RAM stays usable even though none of
-them fits fully in VRAM. `lite` is dense but small enough to avoid spillover,
+`gemma` and `qwen` are mixture-of-experts: few parameters are active
+per token, so spilling experts to system RAM stays usable even though neither
+fits fully in VRAM. `lite` is dense but small enough to avoid spillover,
 which is what makes it the baseline the other three are measured against.
 
 `lite` also exists for a measurement reason. The learn and tutor suites grade
@@ -108,11 +108,10 @@ per response and inter-judge disagreement can never be computed. Three models
 means two judges per response and a real disagreement number. The current four
 models give three judges per response.
 
-A fourth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), has been
-served since 2026-11-19. It is not in the table above because it has no role:
-after two passes it was last or near last wherever the models separated (TESTING.md,
-*Four-model pass on the new gemma and qwen files*). It stays served by the
-router and is not part of the contract. A candidate has to generate at 20 tok/s
+A fourth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), was served
+from 2026-11-19 and removed on 2026-11-20. After two passes it was last or near
+last wherever the models separated (TESTING.md, *Four-model pass on the new
+gemma and qwen files*), so it earned no role. A candidate has to generate at 20 tok/s
 or more, which rules out dense models near 30B on this card: the two that were
 tried ran at 3 and 7 tok/s.
 
@@ -229,7 +228,7 @@ Each of these is recorded in the `## Project-specific rules` section of
 | Decision | Date | Why |
 |---|---|---|
 | `fit = off`, splits pinned per model | 2026-09-14 | Automatic fitting sizes the GPU/CPU split from VRAM free at load time, so a desktop app would change a benchmark's offload between runs. |
-| 2 GB fit margin (`gemma` 26, `qwen` 38, `nemotron` 50 at 131072 context) | 2026-09-14, values updated 2026-09-16, 2026-10-30 and 2026-11-20, `freedom` added 2026-11-09 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. `qwen` and `nemotron` sit above the fitter's value (37 and 48), because each failed the spike test there. |
+| 2 GB fit margin (`gemma` 26, `qwen` 38 at 131072 context) | 2026-09-14, values updated 2026-09-16, 2026-10-30 and 2026-11-20, `freedom` added 2026-11-09 | The earlier values fit at llama.cpp's default 1 GB margin crashed with CUDA out of memory under normal desktop use plus a spike. Costs about 13% and 9% generation speed respectively, which Casey accepted. The 2026-09-14 values were 21 and 34 at 32768 context. `lite` is the accepted exception (2026-10-09, extended 2026-10-30): all-GPU, kept for speed, with about 1.7 GB spare at 65536 and only about 0.4 GB at 131072. `qwen` sits above the fitter's value of 37, because it failed the spike test there. `nemotron` was pinned at 50 until it left the lineup on 2026-11-20. |
 | `CACHE_PROMPT = False` | 2026-09-14 | Cached prompt prefixes make logits not bit-identical, and seed reproducibility is already unresolved. |
 | JSON schema sent as `response_format.json_schema.schema` | 2026-09-14 | The top-level `schema` shape shown in the llama-server README was accepted and silently ignored on build 10968, returning `{}`. |
 | `PARAMS` identical across builders | 2026-06-14 | The tables that mistake invalidated. |
