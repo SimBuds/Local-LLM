@@ -70,6 +70,11 @@ class ModelsJsonTests(unittest.TestCase):
         for m in self.models:
             self.assertIn(m["id"], lineup(), f"{m['id']!r} has no build-* file")
 
+    def test_the_listed_models_are_exactly_the_lineup(self):
+        # Since 2026-11-21 Pi offers every router model, so a model added with
+        # ./add-model shows up here as a failure until it is listed too.
+        self.assertEqual({m["id"] for m in self.models}, lineup())
+
     def test_no_model_is_listed_twice(self):
         ids = [m["id"] for m in self.models]
         self.assertEqual(len(ids), len(set(ids)))
@@ -90,6 +95,9 @@ class SettingsJsonTests(unittest.TestCase):
 
     def test_the_default_model_is_one_the_provider_lists(self):
         self.assertIn(self.settings["defaultModel"], self.ids)
+
+    def test_the_default_model_is_qwen_the_agent_pick(self):
+        self.assertEqual(self.settings["defaultModel"], "qwen")
 
     def test_pis_router_manager_is_turned_off(self):
         # Pi's built-in llama.cpp extension loads, unloads and downloads models

@@ -1193,6 +1193,13 @@ repos, and one ended in a colon with no template after it.)
 - **Every router call from the eval code goes through `eval/_gateway.py`**,
   including model load, unload, and `/props` reads. Runners never open their own
   connection to the router. (2026-09-14)
+- **Recorded exception: under `eval/run-pi.py` the model calls are Pi's.** The
+  runner measures the Pi coding agent as a harness, so Pi in its VM guest makes
+  the chat requests, through an SSH reverse tunnel, with its own prompt and
+  tools. It sends no sampler, so the `server.ini` baseline still applies
+  (recorded 2026-11-21). Everything the runner itself does (preflight, the
+  context check, the sandbox for the hidden tests) goes through the gateway.
+  Its results stay off the leaderboard. (2026-11-21)
 - **Recorded exception: `scripts/llm` talks to the router directly.** It is
   installed into `~/.local/bin` and must work without this repo, per the
   2026-09-15 decision that nothing using the server depends on the repo at

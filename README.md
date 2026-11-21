@@ -717,7 +717,7 @@ shell command, and recommend a container or VM.
 
 | File | Goes to, in the guest | What it sets |
 |---|---|---|
-| `pi/models.json` | `~/.pi/agent/models.json` | One provider, `local-llm`, at `http://localhost:8080/v1` (the guest end of an SSH reverse tunnel to the host's router), with `qwen` at the served context of 131072. The key is a placeholder: the router accepts any. |
+| `pi/models.json` | `~/.pi/agent/models.json` | One provider, `local-llm`, at `http://localhost:8080/v1` (the guest end of an SSH reverse tunnel to the host's router), with `gemma`, `qwen` and `lite` at the served context of 131072. The key is a placeholder: the router accepts any. |
 | `pi/settings.json` | `~/.pi/agent/settings.json` | `qwen` as the default model, install telemetry off, and Pi's built-in llama.cpp extension off. |
 
 - **The built-in llama.cpp extension stays off.** Its `/llama` command loads,
@@ -727,18 +727,37 @@ shell command, and recommend a container or VM.
   the host, `10.0.2.2:8080`, gets a 403 from the router (*Serving other apps*).
   Log in with `ssh -p 22222 -R 8080:localhost:8080` and the guest's own
   `localhost:8080` is the host's router, with a `Host` header it accepts.
-- **Only `qwen` is listed,** the pick for agent work and tool calling. `gemma`
-  and `lite` wait until `qwen` has passed a smoke test under Pi.
-- **`eval/test_pi_config.py` keeps the copy honest.** It fails if a model name
-  has no `build-*` file, or if the context size differs from `server.ini`.
+- **All three models are listed, and `qwen` is the default,** as the pick for
+  agent work and tool calling. Choose another with `--model local-llm/gemma` or
+  `--model local-llm/lite`. Each passed the same tool-loop smoke test on
+  2026-11-21.
+- **`eval/test_pi_config.py` keeps the copy honest.** It fails if the listed
+  models are not exactly the `build-*` lineup, or if the context size differs
+  from `server.ini`.
 - **Smoke tested on 2026-11-21** with Pi 1.6.0 and `qwen` on build 12605: Pi
   listed the model, answered a prompt, and wrote and read back a file through
   its tools. Its only network connection was the router. Details in
   `TESTING.md`, *Pi smoke test with qwen*.
+- **Scored on 2026-11-21** with `./eval/run-pi.py`: on the 8 shell agent tasks
+  Pi passed 16 of 16 with `qwen` and 15 of 16 with `gemma` and with `lite`, the
+  same counts as the repo's own agent loop. Details in `TESTING.md`, *Pi on the
+  shell agent tasks*.
+- **Pi sends no sampler and no thinking flag.** The `server.ini` samplers
+  apply, and `qwen` thinks before each reply. Pi also leaves prompt caching at
+  the server default, which is on, unlike the eval runners.
 
 The VM is `~/VMs/pi` (quickemu, Debian 13.7.0 netinst, 4 GB, 2 cores, 20 GB,
 `ssh_port` 22222, user `pi`), with snapshots `clean` and `pi-configured`. The
-second one has Pi and this config installed. To use it:
+second one has Pi and this config installed.
+
+The conf also holds `network="restrict"`, set after `pi-configured` was taken.
+The guest can then reach nothing on its own, not the internet and not the host,
+and the SSH tunnel below is its only way out (checked 2026-11-21). To update Pi
+or install a package, take that line out for one boot and put it back after.
+`eval/run-pi.py` logs in with the key `~/.ssh/pi_vm_ed25519`, which has no
+passphrase and opens only this guest.
+
+To use the VM:
 
 ```bash
 # Host, first terminal: boot the VM.
@@ -750,7 +769,11 @@ ssh -p 22222 -R 8080:localhost:8080 pi@localhost
 # Guest, in that session.
 pi --list-models
 pi -p "Reply with the single word: ready"
+PI_OFFLINE=1 pi          # the interactive UI
 ```
+
+Start the interactive UI with `PI_OFFLINE=1`. Without it Pi contacts pi.dev on
+start (traced 2026-11-21). With it, the only connection is the router.
 
 After a change to `pi/`, copy it in again from the repo on the host:
 
@@ -787,6 +810,7 @@ Single runners, for targeted sweeps:
 ./eval/run-json.py --models gemma qwen lite
 ./eval/run-tools.py --models gemma qwen lite
 ./eval/run-agent.py --models gemma qwen lite   # multi-step tasks with a sandboxed shell
+./eval/run-pi.py --models gemma qwen lite      # the same shell tasks, worked by Pi in its VM
 ./eval/run-persona.py --models gemma qwen lite
 ```
 

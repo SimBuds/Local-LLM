@@ -106,6 +106,7 @@ All runners write to `eval/runs/<UTC>/`.
 | `run-json.py` | Schema-constrained JSON + long-context fact recall, on 7 single-passage tasks and 3 multi-hop tasks | no | 3 per task | Medium for structured-output reliability at the tested context sizes |
 | `run-tools.py` | Tool calling: right tool, right arguments, no call when none fits, and what the model does with the result it gets back | no | 3 per task |
 | `run-agent.py` | Multi-step tasks: 8 with a real shell scored by hidden tests, and 6 on a simulated order desk scored by its final records. The model must end the loop itself | yes, shell commands | 2 per task | Medium for the fourteen task shapes. Each task's hidden tests are checked against two correct solutions and one cheat. Two attempts per task is a gate, not a measurement |
+| `run-pi.py` | The same 8 shell tasks, worked by the Pi coding agent in its VM guest and scored by the same hidden tests. Pi must end the run itself. Not on the leaderboard | yes, in the guest only | 2 per task | A harness check, not a model ranking: Pi brings its own prompt and four tools, leaves thinking at the template default, and has prompt caching on |
 | `run-persona.py` | Prompt-stack compliance: identity, skill-bucket honesty, `Unverified:`, output shape | no | 5 per task | Medium-high for the rule shapes encoded; regex scorers miss novel phrasings |
 
 Common flags:
@@ -227,6 +228,7 @@ Runner-specific flags:
 | `run-persona.py` | `--tasks ...`, `--system-mode stacked|baseline`, `--thinking auto|on|off` (defaults off) |
 | `run-tools.py` | `--tasks ...`, `--thinking auto|on|off` (defaults off) |
 | `run-agent.py` | `--tasks ...`, `--max-steps N` (model calls per attempt, default 30), `--wall-clock SECONDS` (per attempt, default 600, for every model in the run), `--thinking auto|on|off` (defaults off) |
+| `run-pi.py` | `--tasks ...` (shell tasks only), `--wall-clock SECONDS` (per attempt, default 600), `--guest`, `--ssh-port`, `--ssh-key` (the Pi VM, defaults `pi@localhost`, 22222, `~/.ssh/pi_vm_ed25519`). No `--thinking` and no `--seed`: Pi sends neither |
 
 Thinking mode can be forced with `--thinking on`, disabled with `--thinking off`,
 or selected per model by appending `:think` to the model spec. Do not use
@@ -260,7 +262,7 @@ The live suites above need the router and real models. The plumbing they depend
 on has stdlib `unittest` tests that need neither, with responses captured from
 the router on 2026-09-14 and `urlopen`, the clock, and `nvidia-smi` patched. The
 tests that run model-written or task code use the real bwrap sandbox and skip,
-visibly, where it cannot start. The suite had 633 tests on 2026-11-21 and takes
+visibly, where it cannot start. The suite had 656 tests on 2026-11-21 and takes
 about 4 minutes:
 
 ```bash
@@ -279,6 +281,7 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 | `eval/test_code.py` | `coding_tasks.py`: each fresh task's hidden asserts pass its two reference solutions and fail its plausible wrong shortcut. Programs really run, under bwrap |
 | `eval/test_tools.py` | the `run-tools.py` scorer: expected calls, argument normalization, the no-call tasks, answer checks, tool-error wording and the second round |
 | `eval/test_agent.py` | `run-agent.py` and `agent_tasks.py`: the tool loop with a scripted model, real sandboxed commands and hidden tests, the desk tools and tasks, the summary, and its promotion to the leaderboard |
+| `eval/test_pi_runner.py` | `run-pi.py`, with a fake guest and a fake Pi (announced in the file): the tar round trip, the wall clock, an aborted or crashed run, a link planted in the project, the event counts and the summary. The sandbox and the hidden tests are real |
 | `eval/test_learn.py` | the learn judge's strict 0 to 4 rubric and `run-learn.py --rescore`, with the judge call patched |
 | `eval/test_tutor.py` | `run-tutor.py`: the leak check over every code block (it really runs code), the scripted pressure turns, and the summary's `Held` column |
 | `eval/test_profile.py` | `run-profile.py`: `--out-root` reaches every step, which suites each profile runs (`standard` has no judged suite, `judged` runs learn and tutor at one repeat), and the refresh advice `promote.py` prints |
@@ -955,6 +958,43 @@ at once, which it has. No further work on the cause is planned.
 The notes below are retained for decision history. Prefer the current snapshot
 above when choosing a model today.
 
+### Pi on the shell agent tasks (2026-11-21)
+
+The first scored run of Pi as a harness. `./eval/run-pi.py --models qwen gemma
+lite` worked the 8 shell agent tasks through Pi 1.6.0 in the VM guest, 2
+attempts each, on build 12605. The same hidden tests scored it, run on the host
+in the sandbox. Run folder `eval/runs/20261121T105325Z/pi`. All 48 attempts
+ended by Pi itself, none hit the 600 second limit, and the service journal
+shows no crash during the run.
+
+| Model | Pi: passed | Pi: avg turns | Pi: avg s | `run-agent.py`: passed | `run-agent.py`: avg steps | `run-agent.py`: avg s |
+|---|---|---|---|---|---|---|
+| `qwen` | 16/16 | 6.9 | 29.0 | 16/16 | 10.7 | 35.5 |
+| `gemma` | 15/16 | 11.4 | 77.2 | 15/16 | 12.5 | 41.5 |
+| `lite` | 15/16 | 8.4 | 10.4 | 15/16 | 12.7 | 16.4 |
+
+The `run-agent.py` columns are the same 8 tasks from the 2026-11-20 pass
+(`eval/runs/20261120T205035Z/agent`, build 12439), with the desk tasks left out.
+
+- **The pass counts are the same under both harnesses,** and so are the tasks
+  that failed: `gemma` lost one `cli_bug` attempt and `lite` lost one
+  `implement_spec` attempt in each. Under Pi both were `tests-failed`. Under
+  `run-agent.py` `gemma`'s was a step cap, which Pi does not have.
+- **This is one run per harness, on different builds, with no noise-floor
+  repeat.** It shows Pi's prompt and four tools do not cost these models
+  anything on these tasks. It does not rank the harnesses.
+- **The times are not like for like.** Pi leaves thinking at the template
+  default and has prompt caching on, and a turn can hold several tool calls
+  (`qwen` averaged 10.0 calls in 6.9 turns). `gemma` took about twice as long
+  under Pi (77 against 42 seconds), and the cause was not looked into.
+- **Tool errors under Pi:** `lite` 27, `qwen` 13, `gemma` 9, across 16 attempts
+  each. These are tool calls Pi reported as failed. By tool: `bash` 11, 9 and
+  8, which includes a test command that exits non-zero, and `read` 16 for
+  `lite` and 4 for `qwen`, with one `edit` for `gemma`. Why `lite`'s reads
+  failed was not looked into.
+- The run happened with the guest's network restricted (next entry), so Pi
+  reached nothing but the router.
+
 ### Pi smoke test with qwen (2026-11-21)
 
 A smoke test, not a scored comparison. Pi 1.6.0 ran in a new QEMU guest
@@ -986,13 +1026,53 @@ read on the host.
   calls per run: the router, and two calls to port 0 on `::1` and `127.0.0.1`,
   which is the resolver ordering addresses and sends nothing. The normal run and
   the offline run were identical, so with install telemetry off in
-  `pi/settings.json`, `pi -p` contacted nothing else. Interactive startup was
-  not traced. On first start it downloaded `fd` and `ripgrep` into
-  `~/.pi/agent/bin`.
+  `pi/settings.json`, `pi -p` contacted nothing else. On first start it
+  downloaded `fd` and `ripgrep` into `~/.pi/agent/bin`.
+- **`gemma` and `lite` under Pi, later the same day.** Both were added to
+  `pi/models.json`. `pi --list-models` showed three rows, and each model wrote
+  and read back its own `hello.txt` through Pi's tools (`hi from gemma`, 13
+  bytes, and `hi from lite`, 12 bytes, both checked with `od`). One attempt
+  each, so this says the tool loop works, not how reliable it is.
+- **An interactive start contacts pi.dev.** Traced later the same day: plain
+  `pi` opened a connection to `172.64.80.1` port 443 and looked up
+  `2606:4700:130:436c:6f75:6466:6c61:7265`, the address `pi.dev` resolves to.
+  That is most likely the version check. That trace's filtered summary showed 3
+  of its 4 calls, so one call is not recorded. With `PI_OFFLINE=1` the same
+  start and one prompt made three calls, all local: the router on `::1` port
+  8080 and the resolver's two port 0 probes. So `PI_OFFLINE=1` is how Pi is
+  started here.
+- **The guest's network was then restricted.** Casey set `network="restrict"`
+  in the quickemu conf, which is QEMU's `restrict=on`: the guest can start no
+  connection of its own, and the host's SSH forward still works. Checked from
+  the guest over the tunnel login: the router answered 200 on `localhost:8080`,
+  `deb.debian.org` did not resolve, `172.64.80.1` (pi.dev) was unreachable,
+  `10.0.2.2:8080` was refused, and `pi -p` still answered `ready`. Updating Pi
+  or installing a package needs the line taken out for that boot.
 - **Learned about the config:** the placeholder key was accepted, and Pi's
   installer supplied Node on a guest that had none.
-- **Not determined:** whether `qwen` thinks under Pi. The `ready` reply was 18
-  generated tokens, and the request body was not captured.
+- **What Pi sends, recorded later the same day.** A recording proxy on a spare
+  host port sat between the tunnel and the router for five requests (one
+  prompt, a three-request tool loop, one arithmetic question).
+  - Body keys: `model`, `messages`, `stream` true, `stream_options` with
+    `include_usage`, `store` false, `max_completion_tokens` 16384, `tools`.
+  - **No sampler is sent,** so the `server.ini` baseline applies (temperature
+    0.2 and the rest). Pi's scores are comparable with the repo's runners on
+    that point.
+  - **No thinking flag is sent, and `qwen` thinks.** Every reply carried
+    `reasoning_content`: 54 characters before `ready`, 24 to 183 in the tool
+    loop, and a full worked sum before `391`. Pi lists the model as "thinking
+    no", which only means Pi does not ask for it. Pi sends each turn's
+    `reasoning_content` back in the history.
+  - **Prompt caching is on.** Pi does not set `cache_prompt`, so the server
+    default applies, and 1,475 to 1,666 of about 1,500 to 1,700 prompt tokens
+    were served from the cache after the first request. The eval runners turn
+    this off (`CACHE_PROMPT = False`), so timing and bit-level results under Pi
+    are not like for like with them.
+  - Four tools: `read`, `bash`, `edit`, `write`. The system prompt is 2,335
+    characters, and with the tool schemas a request starts at 1,492 prompt
+    tokens.
+  - Pi did not call `/v1/models`. The user agent is `pi/1.6.0` on Node 22.23.5,
+    which is the Node the installer brought.
 
 ### Pinned split history (moved from README on 2026-11-09)
 
