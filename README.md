@@ -384,9 +384,9 @@ field. Day to day it runs as the `llama-server` user service over
 `~/.config/llama.cpp/models.ini` (see *Serving other apps*). `make serve` runs a
 router in the foreground over the repo's own `models/models.ini`.
 
-The installed build is 12439 (commit `8bfd64b5a`, since 2026-11-16), and the
-leaderboard was measured on it on 2026-11-20. The rollback target is 12155
-(`e30ad80fd`). llama.cpp is built
+The installed build is 12605 (commit `40b7a546d`, since 2026-11-21). The
+leaderboard was measured on build 12439 (`8bfd64b5a`) on 2026-11-20, which is
+now the rollback target. llama.cpp is built
 from source because the AUR `llama.cpp-cuda` package was reported stale. Earlier
 builds and the 2026-09 compiler fixes are in [`TESTING.md`](TESTING.md),
 *llama.cpp build history*.
@@ -903,9 +903,9 @@ Benchmarks are for this box: RTX 3080 10 GB, Ryzen 5900x, 32 GB DDR4-3600.
 Models that fit fully on the GPU run fast. Dense spillover is usually too slow,
 and MoE spillover can stay usable. Desktop apps hold about 1 GB of the card at
 idle, so a model plus its KV cache has about 8.6 GB. Runtime: llama.cpp build
-12439 (`8bfd64b5a`), compiled against CUDA 13.4. The CUDA toolkit has been 13.5.0
-since 2026-11-17, and the build has not been rebuilt or benchmarked on it. The
-leaderboard above was measured on build 12439.
+12605 (`40b7a546d`), compiled against CUDA 13.5, the installed toolkit. It has
+not been benchmarked yet: the leaderboard above was measured on build 12439,
+which was compiled against CUDA 13.4.
 
 ## Docs
 

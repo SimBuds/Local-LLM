@@ -599,7 +599,7 @@ Benchmarks are for this local machine:
 | CPU | Ryzen 5900x |
 | RAM | 32 GB DDR4-3600 |
 | Ollama | 0.30-era testing for the 2026-07-28 snapshot, 0.33.3 at the switch |
-| llama.cpp | build 12439 (`8bfd64b5a`, version 1.0.0) installed 2026-11-16, passed `verify-build` (VRAM against 12155: `freedom` and `gemma` +0, `qwen` +18, `lite` +34 MiB, smoke passed, no GPU fault, KL skipped because 12155 has no `llama-perplexity`), first benchmarked on 2026-11-19 and 2026-11-20. 1.0 makes `--cors-origins localhost` same-origin only: other origins get 403 before generation (README, *Serving other apps*). Build 12155 (`e30ad80fd`) installed 2026-11-05, passed `verify-build` (VRAM +0 MiB against 12009 for all three models, smoke passed, no GPU fault), benchmarked 2026-11-09. Build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), benchmarked the same day at 131072 context and again on 2026-10-31 (the *Current Benchmark Snapshot* above and the README leaderboard), and spike-tested on 2026-10-31 (under *Historical Notes*). Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (under *Historical Notes*). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
+| llama.cpp | build 12605 (`40b7a546d`, version 1.0.0-dev) installed 2026-11-21, passed `verify-build` (VRAM +0 MiB against 12439 for all three models: `gemma` 5878, `lite` 8072, `qwen` 6010, smoke passed, no GPU fault, KL mean 0.000000 for all three with the same top token on 99.980 % of positions for `gemma` and 100 % for `lite` and `qwen`), not yet benchmarked. Build 12439 (`8bfd64b5a`, version 1.0.0) installed 2026-11-16, passed `verify-build` (VRAM against 12155: `freedom` and `gemma` +0, `qwen` +18, `lite` +34 MiB, smoke passed, no GPU fault, KL skipped because 12155 has no `llama-perplexity`), first benchmarked on 2026-11-19 and 2026-11-20. 1.0 makes `--cors-origins localhost` same-origin only: other origins get 403 before generation (README, *Serving other apps*). Build 12155 (`e30ad80fd`) installed 2026-11-05, passed `verify-build` (VRAM +0 MiB against 12009 for all three models, smoke passed, no GPU fault), benchmarked 2026-11-09. Build 12009 (`e216f4ec8`) installed 2026-10-30, passed `verify-build` (VRAM +4 to +12 MiB against 11768, smoke passed, no GPU fault), benchmarked the same day at 131072 context and again on 2026-10-31 (the *Current Benchmark Snapshot* above and the README leaderboard), and spike-tested on 2026-10-31 (under *Historical Notes*). Build 11768 (`1ba568c5a`) installed 2026-10-20 and benchmarked the same day (under *Historical Notes*). 11537 (from 2026-10-09) and 11188 (from 2026-09-25) were never benchmarked. The previous snapshot and the tuning sweep are from build 11022 (`f172be756`, 2026-09-17, under *Historical Notes*), and everything from 2026-09-14 to 2026-09-16 from build 10968 (`41abbfd59`). |
 | Desktop VRAM | about 1 GB held by desktop apps at idle, so about 8.6 GB for model plus KV cache |
 
 Models that fit 100% on GPU are fast. Dense spillover usually collapses
@@ -985,15 +985,18 @@ entirely on the GPU with the 2 GB margin. The full sweep is in
 
 ### llama.cpp build history (moved from README on 2026-11-09)
 
-The installed build is 12439 (commit `8bfd64b5a`, version 1.0.0), swapped in on
-2026-11-16 after `scripts/verify-build` passed it (the *Hardware* table
-has the numbers). It has not been benchmarked yet. It was compiled against CUDA
-13.4, and the CUDA toolkit moved to 13.5.0 on 2026-11-17, which `verify-build`
-did not see. Build 12155 (commit `e30ad80fd`) ran from 2026-11-05 and is now the
-rollback target. `scripts/verify-build` passed it too: at every
+The installed build is 12605 (commit `40b7a546d`, version 1.0.0-dev), swapped in
+on 2026-11-21 after `scripts/verify-build` passed it (the *Hardware* table has
+the numbers). It has not been benchmarked yet. It was compiled against CUDA 13.5
+(nvcc 13.5.37), so the build and the installed toolkit match again. It is 165
+commits past 12439. Build 12439 (commit `8bfd64b5a`, version 1.0.0) ran from
+2026-11-16, is the build the 2026-11-20 leaderboard was measured on, and is now
+the rollback target. It was compiled against CUDA 13.4, and the toolkit moved to
+13.5.0 on 2026-11-17, which `verify-build` did not see. Build 12155 (commit
+`e30ad80fd`) ran from 2026-11-05. `scripts/verify-build` passed it too: at every
 pinned split it needed exactly the same VRAM as 12009 (gemma 6066, lite 8038,
 qwen 5928 MiB), the smoke profile passed, and no GPU fault was logged. The
-current leaderboard was measured on build 12155 on 2026-11-09. Build
+2026-11-09 leaderboard was measured on build 12155. Build
 12009 (commit `e216f4ec8`) ran from 2026-10-30 and was benchmarked on
 2026-10-30 and 2026-10-31 at the same config. The ones before it
 came from build 11768 (2026-10-20) and build 11022 (commit `f172be756`,
@@ -1956,6 +1959,18 @@ not known yet: a gate needs a few real build-to-build readings first. Build
 12155 had no `llama-perplexity`, so the 12155 to 12439 update on 2026-11-16
 skipped KL. Build 12439 has it, so the first real reading comes at the next
 update.
+
+First build-to-build reading, 2026-11-21, build 12439 against 12605 (165 commits
+apart), at the pinned splits of that day:
+
+| Model | Mean KLD | Same top p |
+|---|---|---|
+| `gemma` | 0.000000 | 99.980 % |
+| `lite` | -0.000000 | 100.000 % |
+| `qwen` | -0.000000 | 100.000 % |
+
+The mean rounds to zero for all three, and only `gemma` changed its top token,
+on about 2 positions in 10,000. One reading is not enough to set a gate.
 
 ### Strict-rubric learn run (2026-10-31)
 

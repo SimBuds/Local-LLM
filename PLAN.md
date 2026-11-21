@@ -249,9 +249,8 @@ no row above:
   by about 627 MiB per long prompt, which projects to the 2026-11-04 OOM kill.
 - `reasoning-preserve = true` (2026-11-14). It pins the build 12155 default, so
   a build that changes the default cannot change what `qwen` sees
-  on a multi-turn request. The deployed preset does not carry the line yet.
-  Build 12439 reports the same default, so behaviour matches until it is
-  deployed.
+  on a multi-turn request. The deployed preset carries the line (read
+  2026-11-21), and builds 12439 and 12605 report the same default.
 
 ---
 
