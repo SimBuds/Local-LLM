@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +41,15 @@ END = "<!-- BENCH:END -->"
 
 WINNER_RE = re.compile(r"^##\s*🏆\s*[^:]+:\s*`([^`]+)`\s*—\s*(.+?)\s*$", re.M)
 CLOSE_RE = re.compile(r"^⚠\s*\*\*Close result:\*\*", re.M)
+# A leaderboard row is flagged as an older run when its run began more than this
+# long before the newest one. Long enough for a `deep` pass, short enough that
+# yesterday's runs are still flagged.
+STALE_AFTER_HOURS = 12
+
+# run-json.py states its document length in the summary. Only a normal-length
+# run is the leaderboard's JSON row: a pressure pass is a different measurement,
+# and one that finished last used to replace the row.
+PRESSURE_RE = re.compile(r"^- Context pressure: \*\*(\w+)\*\*", re.M)
 
 # suite -> (display label, preferred metric columns in priority order).
 # The first column present in a summary's table wins, so a runner can rename a
@@ -99,9 +109,20 @@ def newest_runs(pin: str | None) -> dict[str, tuple[str, Path]]:
             continue
         for suite in SUITES:
             s = run / suite / "summary.md"
-            if s.is_file():
+            if s.is_file() and not (suite == "json" and _is_pressure_run(s)):
                 found[suite] = (run.name, s)
     return found
+
+
+def _started(stamp: str) -> datetime:
+    """When a run began, from its folder name (a UTC stamp)."""
+    return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
+
+
+def _is_pressure_run(summary: Path) -> bool:
+    """True for a JSON summary run at other than normal document length."""
+    m = PRESSURE_RE.search(summary.read_text(encoding="utf-8"))
+    return bool(m) and m.group(1) != "normal"
 
 
 def metric(row: dict[str, str], prefs: tuple[str, ...]) -> str:
@@ -148,16 +169,19 @@ def build_block(pin: str | None) -> tuple[str, list[str]]:
 
     # Staleness guard. "Newest per suite" silently mixes a fresh speed run with a
     # learn run from two base swaps ago — which is the exact drift this script was
-    # written to kill, reintroduced one level down. A suite whose run predates the
-    # newest run's DAY is called out inline rather than blended into the table.
+    # written to kill, reintroduced one level down. A suite whose run began more
+    # than STALE_AFTER_HOURS before the newest run is called out inline rather
+    # than blended into the table. It was a UTC-day comparison until 2026-11-21,
+    # which flagged the earlier suites of any pass that ran through midnight.
     stamps = sorted({e["stamp"] for e in parsed.values()})
-    newest_day = stamps[-1][:8]
+    cutoff = _started(stamps[-1]) - timedelta(hours=STALE_AFTER_HOURS)
     for suite, e in parsed.items():
-        e["stale"] = e["stamp"][:8] < newest_day
+        e["stale"] = _started(e["stamp"]) < cutoff
     stale = sorted(s for s, e in parsed.items() if e["stale"])
+    window = f"more than {STALE_AFTER_HOURS} hours before the newest run"
     if stale:
         warnings.append(
-            f"stale suites (older than {newest_day}): {', '.join(stale)} — "
+            f"stale suites ({window}): {', '.join(stale)} — "
             f"rerun ./eval/run-profile.py standard and judged so every row shares a lineup")
 
     L = [START, ""]
@@ -166,8 +190,8 @@ def build_block(pin: str | None) -> tuple[str, list[str]]:
           f"(`eval/runs/`). Do not hand-edit: re-run the script._", ""]
     if stale:
         L += [f"> ⚠ **Mixed run dates.** {len(stale)} suite(s) below "
-              f"(_{', '.join(SUITES[s][0] for s in stale)}_) come from a run older "
-              f"than {newest_day} and may describe a different base or lineup. "
+              f"(_{', '.join(SUITES[s][0] for s in stale)}_) come from a run that began "
+              f"{window} and may describe a different base or lineup. "
               f"Rows marked ⚠ are not comparable with the rest; rerun "
               f"`./eval/run-profile.py standard` and `judged` to refresh them.", ""]
     L += ["| Suite | Winner | " + " | ".join(f"`{m}`" for m in models) + " |",

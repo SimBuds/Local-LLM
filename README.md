@@ -384,9 +384,9 @@ field. Day to day it runs as the `llama-server` user service over
 `~/.config/llama.cpp/models.ini` (see *Serving other apps*). `make serve` runs a
 router in the foreground over the repo's own `models/models.ini`.
 
-The installed build is 12439 (commit `8bfd64b5a`, since 2026-11-16), and it has
-not been benchmarked yet. The rollback target and the leaderboard's build is
-12155 (`e30ad80fd`). llama.cpp is built
+The installed build is 12439 (commit `8bfd64b5a`, since 2026-11-16), and the
+leaderboard was measured on it on 2026-11-20. The rollback target is 12155
+(`e30ad80fd`). llama.cpp is built
 from source because the AUR `llama.cpp-cuda` package was reported stale. Earlier
 builds and the 2026-09 compiler fixes are in [`TESTING.md`](TESTING.md),
 *llama.cpp build history*.
@@ -794,6 +794,11 @@ After a run, promote the numbers instead of copying them:
 ./eval/promote.py --check     # exit 1 if the table is stale
 ```
 
+The JSON row comes from the newest run at normal document length. A
+`--context-pressure` run is a different measurement and never becomes the row.
+A row is marked as an older run when its run began more than 12 hours before the
+newest one, so a pass that runs through midnight UTC still counts as one pass.
+
 ## Benchmark Leaderboard
 
 **Measured on llama.cpp build 12439, 2026-11-20** (`standard` profile, then the
@@ -900,7 +905,7 @@ and MoE spillover can stay usable. Desktop apps hold about 1 GB of the card at
 idle, so a model plus its KV cache has about 8.6 GB. Runtime: llama.cpp build
 12439 (`8bfd64b5a`), compiled against CUDA 13.4. The CUDA toolkit has been 13.5.0
 since 2026-11-17, and the build has not been rebuilt or benchmarked on it. The
-leaderboard above was measured on build 12155.
+leaderboard above was measured on build 12439.
 
 ## Docs
 

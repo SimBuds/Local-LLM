@@ -41,6 +41,27 @@ class DeclaredOffloadTests(unittest.TestCase):
         self.assertEqual(speed.declared_offload(BASE_ARGS + ["--n-cpu-moe", "18"]),
                          "GPU + 18 MoE layers on CPU")
 
+    def test_a_dense_model_pinned_below_all_layers_names_the_count(self):
+        # qwen38 on 2026-11-19 was pinned at 10 of 66 layers and labelled "all GPU".
+        args = [a if a != "99" else "10" for a in BASE_ARGS]
+        self.assertEqual(speed.declared_offload(args), "10 layers on GPU, rest on CPU")
+
+    def test_a_pinned_dense_model_with_mtp_keeps_the_suffix(self):
+        args = [a if a != "99" else "10" for a in BASE_ARGS] + ["--spec-type", "draft-mtp"]
+        self.assertEqual(speed.declared_offload(args), "10 layers on GPU, rest on CPU, MTP")
+
+    def test_no_gpu_layer_flag_is_all_gpu(self):
+        args = [a for a in BASE_ARGS if a not in ("--n-gpu-layers", "99")]
+        self.assertEqual(speed.declared_offload(args), "all GPU")
+
+    def test_a_word_for_the_gpu_layer_count_is_all_gpu(self):
+        args = [a if a != "99" else "auto" for a in BASE_ARGS]
+        self.assertEqual(speed.declared_offload(args), "all GPU")
+
+    def test_expert_layers_on_cpu_win_over_a_gpu_layer_count(self):
+        args = [a if a != "99" else "10" for a in BASE_ARGS] + ["--n-cpu-moe", "18"]
+        self.assertEqual(speed.declared_offload(args), "GPU + 18 MoE layers on CPU")
+
     def test_mtp_is_appended(self):
         args = BASE_ARGS + ["--n-cpu-moe", "32", "--spec-type", "draft-mtp"]
         self.assertEqual(speed.declared_offload(args), "GPU + 32 MoE layers on CPU, MTP")

@@ -21,6 +21,7 @@ import re
 import resource
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -751,6 +752,11 @@ class SandboxUnavailable(RuntimeError):
 
 def _limit_file_size() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (SANDBOX_FILE_MAX, SANDBOX_FILE_MAX))
+    # Without this the limit kills the writer with SIGXFSZ, which the system
+    # records as a core dump and the desktop reports as a crash. Ignored, the
+    # write fails with EFBIG instead. An ignored signal stays ignored across
+    # exec, so it reaches the command inside bwrap.
+    signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
 
 
 def sandbox_exec(argv: list[str], workdir: str, timeout: int,

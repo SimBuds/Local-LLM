@@ -105,8 +105,9 @@ which is what makes it the baseline the other three are measured against.
 `lite` also exists for a measurement reason. The learn and tutor suites grade
 with a leave-one-out judge panel. With two models that leaves exactly one judge
 per response and inter-judge disagreement can never be computed. Three models
-means two judges per response and a real disagreement number. The current four
-models give three judges per response.
+means two judges per response and a real disagreement number. The current three
+models give exactly that. Passes from 2026-11-09 to 2026-11-20 had a fourth
+model in the lineup, which put up to three judges on a response.
 
 A fourth model, `nemotron` (NVIDIA Nemotron 3.5 Lightning 30B-A3B), was served
 from 2026-11-19 and removed on 2026-11-20. After two passes it was last or near
@@ -274,9 +275,12 @@ so the durable detail is in `TESTING.md`.
 
 - Seed reproducibility is unresolved, which is why prompt caching stays off for
   evaluation.
-- Two persona rules, `unverified` and `fields_echo`, are obeyed by `qwen` and by
-  neither of the other two, stacked or not. They are candidates for a rewrite
-  rather than a cut, because deleting them would cost `qwen` a rule it does obey.
+- Two persona rules, `unverified` and `fields_echo`, were obeyed by `qwen` and by
+  neither of the other two, stacked or not, in every pass up to 2026-11-09. On
+  2026-11-20 the new `gemma` file obeyed both (2 of 3 and 3 of 3) in its one
+  pass, and `lite` still obeyed neither. They are candidates for a rewrite
+  rather than a cut, because deleting them would cost a model a rule it does
+  obey.
 - The learn rubric is saturated. A stricter 0 to 4 rubric was run on 2026-11-14
   and `qwen`, `gemma` and `freedom` still tied (`TESTING.md`, *Learn rubric at 0
   to 4*), so the suite cannot order them.

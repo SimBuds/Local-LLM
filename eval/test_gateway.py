@@ -775,6 +775,14 @@ class SandboxExecTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertLessEqual(len(out.encode()), gw.SANDBOX_FILE_MAX)
 
+    def test_hitting_the_size_limit_is_a_write_error_not_a_signal_death(self):
+        # Death by SIGXFSZ makes the system record a core dump and the desktop
+        # show a crash notice, once per unit-suite run. 153 is 128 + SIGXFSZ.
+        code, out = self.run_sh("yes > big; echo rc=$?")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines()[-1], "rc=1", out)
+        self.assertLessEqual((Path(self.wd) / "big").stat().st_size, gw.SANDBOX_FILE_MAX)
+
     def test_oversized_file_write_is_cut_off(self):
         code, _ = gw.sandbox_exec(
             [sys.executable, "-c", "open('big', 'wb').write(b'x' * (64 << 20))"], self.wd, 20)

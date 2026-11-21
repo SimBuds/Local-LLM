@@ -51,6 +51,11 @@ PROMPTS = [
     "Explain how a hash map handles collisions, then sketch one in Python.",
 ]
 
+# server.ini sets `n-gpu-layers = 99`, more layers than any model has, to mean
+# "everything". A builder that pins a lower number is keeping layers on the CPU.
+ALL_GPU_LAYERS = 99
+
+
 def _arg(args: list[str], flag: str) -> str | None:
     """Value following `flag` in a llama-server argv, or None."""
     return args[args.index(flag) + 1] if flag in args[:-1] else None
@@ -63,7 +68,15 @@ def declared_offload(args: list[str]) -> str:
     actually loaded — unlike Ollama, which picked a split and reported a percent.
     """
     moe = int(_arg(args, "--n-cpu-moe") or 0)
-    split = f"GPU + {moe} MoE layers on CPU" if moe else "all GPU"
+    layers = _arg(args, "--n-gpu-layers") or ""
+    if moe:
+        split = f"GPU + {moe} MoE layers on CPU"
+    elif layers.isdigit() and int(layers) < ALL_GPU_LAYERS:
+        # A dense model that does not fit is pinned by GPU layer count, not by
+        # expert layers. The total is not in the argv, so only the count is named.
+        split = f"{layers} layers on GPU, rest on CPU"
+    else:
+        split = "all GPU"
     if _arg(args, "--spec-type") == "draft-mtp":
         split += ", MTP"
     return split
